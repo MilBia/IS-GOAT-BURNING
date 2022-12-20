@@ -8,7 +8,7 @@ https://pypi.org/project/vidgear/
 
 https://pypi.org/project/yt-dlp/
 
-https://github.com/gunarakulangunaretnam/fire-detection-system-in-python-opencv/blob/main/fire-detector.py
+https://github.com/gunarakulangunaretnam/
 
 ## CODING STANDARD
 
