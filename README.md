@@ -4,11 +4,15 @@ We'll checking if [The Gävle Goat](https://www.youtube.com/watch?v=TqvguE5cKT0)
 
 ## SOURCES
 
+https://en.wikipedia.org/wiki/G%C3%A4vle_goat
+
 https://pypi.org/project/vidgear/
 
 https://pypi.org/project/yt-dlp/
 
-https://github.com/gunarakulangunaretnam/
+https://github.com/gunarakulangunaretnam/fire-detection-system-in-python-opencv
+
+https://docs.python.org/3/library/email.examples.html
 
 ## CODING STANDARD
 

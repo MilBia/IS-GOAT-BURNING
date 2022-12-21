@@ -1,3 +1,5 @@
+from typing import Callable
+
 import numpy as np
 from vidgear.gears import CamGear
 
@@ -12,7 +14,9 @@ lower = np.array(_lower, dtype="uint8")
 upper = np.array(_upper, dtype="uint8")
 
 
-async def detect_fire(src: str, fire_border: float = 0.05, logging: bool = False, video_output: bool = False):
+async def detect_fire(
+    src: str, on_fire_action: Callable, fire_border: float = 0.05, logging: bool = False, video_output: bool = False
+):
     if video_output:
         detect_loop = showcase_detect_fire
     else:
@@ -24,5 +28,5 @@ async def detect_fire(src: str, fire_border: float = 0.05, logging: bool = False
     if frame is None:
         return
     margin = frame.shape[0] * frame.shape[1] * fire_border
-    await detect_loop(stream, margin, lower, upper)
+    await detect_loop(stream, margin, lower, upper, on_fire_action)
     stream.stop()

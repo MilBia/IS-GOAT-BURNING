@@ -1,5 +1,8 @@
+from typing import Callable
+
 import cv2
 import numpy as np
+from vidgear.gears import CamGear
 
 from fire_detection.signal_handler import SignalHandler
 
@@ -17,7 +20,7 @@ async def _detect_fire(
     return int(no_red) > fire_border, cv2.bitwise_and(frame, hsv, mask=mask)
 
 
-async def _detect_loop(stream, margin, lower, upper) -> None:
+async def _detect_loop(stream: CamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable) -> None:
     signal_handler = SignalHandler()
     while signal_handler.KEEP_PROCESSING:
         frame = stream.read()
@@ -32,7 +35,7 @@ async def _detect_loop(stream, margin, lower, upper) -> None:
         cv2.imshow("output", output)
 
         if fire:
-            print("FIRE!")
+            on_fire_action()
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
