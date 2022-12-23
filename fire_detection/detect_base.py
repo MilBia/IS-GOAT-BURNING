@@ -1,7 +1,6 @@
 from functools import partial
 from typing import Callable, Optional
 
-import cv2
 import numpy as np
 from vidgear.gears import CamGear
 

@@ -16,8 +16,6 @@ https://docs.python.org/3/library/email.examples.html
 
 ## INSTALLING
 
-build opencv with
-
 ```commandline
 pip install -r requirements.txt
 ```
