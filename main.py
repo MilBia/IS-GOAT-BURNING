@@ -15,18 +15,39 @@ async def main():
         host="smtp.gmail.com",
         port=587,
     )
-    await detect_fire(
-        "https://youtu.be/6jge6uzRl-k", fire_border=0.05, logging=True, video_output=True, on_fire_action=on_fire_action
-    )
-    # await detect_fire(
-    #     "https://youtu.be/TqvguE5cKT0", fire_border=0.05, logging=True, video_output=True, on_fire_action=on_fire_action
-    # )
 
     # await detect_fire(
-    #     "https://youtu.be/6jge6uzRl-k", fire_border=0.05, logging=True, video_output=False, on_fire_action=on_fire_action
+    #     "https://youtu.be/6jge6uzRl-k",
+    #     fire_border=0.05,
+    #     logging=True,
+    #     video_output=True,
+    #     on_fire_action=on_fire_action,
+    #     checks_per_second=1,
+    # )
+    await detect_fire(
+        "https://youtu.be/TqvguE5cKT0",
+        fire_border=0.1,
+        logging=True,
+        video_output=True,
+        on_fire_action=on_fire_action,
+        checks_per_second=1,
+    )
+
+    # await detect_fire(
+    #     "https://youtu.be/6jge6uzRl-k",
+    #     fire_border=0.05,
+    #     logging=True,
+    #     video_output=False,
+    #     on_fire_action=on_fire_action,
+    #     checks_per_second=1,
     # )
     # await detect_fire(
-    #     "https://youtu.be/TqvguE5cKT0", fire_border=0.05, logging=True, video_output=False, on_fire_action=on_fire_action
+    #     "https://youtu.be/TqvguE5cKT0",
+    #     fire_border=0.1,
+    #     logging=True,
+    #     video_output=False,
+    #     on_fire_action=on_fire_action,
+    #     checks_per_second=1,
     # )
 
 
