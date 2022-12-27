@@ -13,7 +13,19 @@ def send_email(
     message_html: Optional[str] = None,
     host: str = None,
     port: int = None,
-):
+) -> None:
+    """
+    Sending an email, probably about burning goat.
+
+    :param sender: email of sender
+    :param sender_password: password of sender
+    :param recipients: list to recipients emails
+    :param subject: subject of email
+    :param message: message to send
+    :param message_html: html message version to send
+    :param host: smtp host url
+    :param port: smtp host port
+    """
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender

@@ -1,6 +1,6 @@
 # IS GOAT BURNING?
 
-We'll checking if [The Gävle Goat](https://www.youtube.com/watch?v=TqvguE5cKT0) is burning 
+We'll checking if [The Gävle Goat](https://www.youtube.com/watch?v=TqvguE5cKT0) is burning
 
 ## SOURCES
 
@@ -18,6 +18,23 @@ https://docs.python.org/3/library/email.examples.html
 
 ```commandline
 pip install -r requirements.txt
+```
+
+## CONFIGURATION
+
+fill ```.evn``` file
+
+example: 
+```
+SOURCE="https://youtu.be/TqvguE5cKT0"
+SENDER="sender"
+SENDER_PASSWORD="password"
+RECIPIENTS="recipient1,recipient2"
+EMAIL_HOST="smtp.gmail.com"
+EMAIL_PORT=587
+LOGGING=true
+VIDEO_OUTPUT=true
+CHECKS_PER_SECOND=1.0
 ```
 
 ## CODING STANDARD

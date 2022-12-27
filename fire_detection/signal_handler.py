@@ -2,6 +2,10 @@ import signal
 
 
 class SignalHandler:
+    """
+    Handle proper exit on quiting quieting CTRL+C
+    """
+
     KEEP_PROCESSING = True
 
     def __init__(self):
