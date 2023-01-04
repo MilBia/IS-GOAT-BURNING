@@ -1,10 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Generator
 
 import cv2
 import numpy as np
-from vidgear.gears import CamGear
 
-from fire_detection.signal_handler import SignalHandler
+from fire_detection.async_frame_generator import frame_gen_with_iterator, frame_gen
+from fire_detection.cam_gear import YTCamGear
 
 
 async def _detect_fire(frame: np.ndarray, fire_border: int, border_lower: np.ndarray, border_upper: np.ndarray) -> bool:
@@ -27,7 +28,7 @@ async def _detect_fire(frame: np.ndarray, fire_border: int, border_lower: np.nda
     return int(no_red) > fire_border
 
 
-async def _detect_loop(stream: CamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable) -> None:
+async def _detect_loop(stream: YTCamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable) -> None:
     """
     Main loop with reading frames from stream and detecting fire on them.
 
@@ -37,24 +38,16 @@ async def _detect_loop(stream: CamGear, margin: int, lower: np.ndarray, upper: n
     :param upper: upper border of HSV values for fire color
     :param on_fire_action: action to perform on case of fire detection
     """
-    signal_handler = SignalHandler()
-    while signal_handler.KEEP_PROCESSING:
-        frame = stream.read()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        async for frame in frame_gen(stream):
+            fire = await _detect_fire(frame, margin, lower, upper)
 
-        if frame is None:
-            break
-
-        fire = await _detect_fire(frame, margin, lower, upper)
-
-        if fire:
-            on_fire_action()
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+            if fire:
+                executor.submit(on_fire_action)
 
 
 async def _detect_loop_with_frequency(
-    stream: CamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable, iterator: Generator
+    stream: YTCamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable, iterator: Generator
 ) -> None:
     """
     Main loop with reading frames from stream and detecting fire on them.
@@ -66,18 +59,9 @@ async def _detect_loop_with_frequency(
     :param on_fire_action: action to perform on case of fire detection
     :param iterator: generating which frame is destine to frame
     """
-    signal_handler = SignalHandler()
-    while signal_handler.KEEP_PROCESSING:
-        frame = stream.read()
-
-        if frame is None:
-            break
-
-        if next(iterator):
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        async for frame in frame_gen_with_iterator(stream, iterator):
             fire = await _detect_fire(frame, margin, lower, upper)
 
             if fire:
-                on_fire_action()
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+                executor.submit(on_fire_action)

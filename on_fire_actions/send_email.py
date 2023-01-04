@@ -2,6 +2,14 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from typing import Optional
+import logging as log
+
+from vidgear.gears.helper import logger_handler
+
+logger = log.getLogger("EmailSender")
+logger.propagate = False
+logger.addHandler(logger_handler())
+logger.setLevel(log.DEBUG)
 
 
 def send_email(
@@ -35,9 +43,9 @@ def send_email(
         msg.add_alternative(message_html, subtype="html")
 
     context = ssl.create_default_context()
-    print("Sending an email...")
+    logger.info("Sending an email...")
     with smtplib.SMTP(host=host, port=port) as s:
         s.starttls(context=context)
         s.login(sender, sender_password)
         s.send_message(msg)
-    print("Email sent")
+    logger.info("Email sent")
