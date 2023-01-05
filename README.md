@@ -22,7 +22,7 @@ pip install -r requirements.txt
 
 ## CONFIGURATION
 
-fill ```.evn``` file
+fill ```.env``` file
 
 example: 
 ```
