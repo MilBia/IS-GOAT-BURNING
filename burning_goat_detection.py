@@ -2,7 +2,17 @@ import asyncio
 
 from fire_detection import detect_fire
 from on_fire_actions import OnceAction, send_email
-from setting import SENDER, SENDER_PASSWORD, RECIPIENTS, LOGGING, EMAIL_HOST, EMAIL_PORT, VIDEO_OUTPUT, SOURCE
+from setting import (
+    SENDER,
+    SENDER_PASSWORD,
+    RECIPIENTS,
+    LOGGING,
+    EMAIL_HOST,
+    EMAIL_PORT,
+    VIDEO_OUTPUT,
+    SOURCE,
+    CHECKS_PER_SECOND,
+)
 
 
 async def main():
@@ -22,7 +32,7 @@ async def main():
         logging=LOGGING,
         video_output=VIDEO_OUTPUT,
         on_fire_action=on_fire_action,
-        checks_per_second=1,
+        checks_per_second=CHECKS_PER_SECOND,
     )
 
 
