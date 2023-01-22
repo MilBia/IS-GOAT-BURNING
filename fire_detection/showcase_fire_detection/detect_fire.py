@@ -14,6 +14,7 @@ if OPEN_CL:
 else:
     from fire_detection.async_frame_generator import frame_gen
     from fire_detection.async_frame_generator import frame_gen_with_iterator
+
 from fire_detection.cam_gear import YTCamGear
 
 

@@ -54,6 +54,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     LOGGING=true                                                     # Enable or disable logging
     VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
     CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
+    OPEN_CL=false                                                    # Enable or disable use od OpenCl
     ```
 
 **Important**:
