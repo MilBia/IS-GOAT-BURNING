@@ -14,6 +14,13 @@ https://github.com/gunarakulangunaretnam/fire-detection-system-in-python-opencv
 
 https://docs.python.org/3/library/email.examples.html
 
+## DOCKER
+
+```commandline
+docker build -t burning_goat_detection .
+docker run -d --name burning_goat_detection_container burning_goat_detection
+```
+
 ## INSTALLING
 
 ```commandline
