@@ -1,4 +1,5 @@
 from .action_containers import OnceAction
-from .send_email import send_email
+from .send_email import SendEmail
+from .send_to_discord import SendToDiscord
 
-__all__ = ["send_email", "OnceAction"]
+__all__ = ["SendEmail", "OnceAction", "SendToDiscord"]
