@@ -6,3 +6,4 @@ opencv-python==4.11.0.86
 vidgear==0.3.3
 yt-dlp==2025.1.15
 setuptools==75.8.0
+aiohttp==3.11.11

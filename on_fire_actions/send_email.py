@@ -1,7 +1,7 @@
+from dataclasses import dataclass
 import smtplib
 import ssl
 from email.message import EmailMessage
-from typing import Optional
 import logging as log
 
 from vidgear.gears.helper import logger_handler
@@ -12,40 +12,39 @@ logger.addHandler(logger_handler())
 logger.setLevel(log.DEBUG)
 
 
-def send_email(
-    sender: str,
-    sender_password: str,
-    recipients: list[str],
-    subject: str,
-    message: str,
-    message_html: Optional[str] = None,
-    host: str = None,
-    port: int = None,
-) -> None:
-    """
-    Sending an email, probably about burning goat.
+@dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
+class SendEmail:
+    sender: str
+    sender_password: str
+    recipients: list[str]
+    subject: str
+    message: str
+    message_html: str | None = None
+    host: str = None
+    port: int = None
 
-    :param sender: email of sender
-    :param sender_password: password of sender
-    :param recipients: list to recipients emails
-    :param subject: subject of email
-    :param message: message to send
-    :param message_html: html message version to send
-    :param host: smtp host url
-    :param port: smtp host port
-    """
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = ", ".join(recipients)
-    msg.set_content(message)
-    if message_html:
-        msg.add_alternative(message_html, subtype="html")
+    async def __call__(self) -> None:
+        msg = EmailMessage()
+        msg["Subject"] = self.subject
+        msg["From"] = self.sender
+        msg["To"] = ", ".join(self.recipients)
+        msg.set_content(self.message)
+        if self.message_html:
+            msg.add_alternative(self.message_html, subtype="html")
 
-    context = ssl.create_default_context()
-    logger.info("Sending an email...")
-    with smtplib.SMTP(host=host, port=port) as s:
-        s.starttls(context=context)
-        s.login(sender, sender_password)
-        s.send_message(msg)
-    logger.info("Email sent")
+        context = ssl.create_default_context()
+        logger.info("Sending an email...")
+        try:
+            with smtplib.SMTP(host=self.host, port=self.port, timeout=1) as s:
+                s.starttls(context=context)
+                logger.info("Context loaded")
+                s.login(self.sender, self.sender_password)
+                logger.info("Logged in")
+                s.send_message(msg)
+                logger.info("Email sent")
+        except smtplib.SMTPAuthenticationError:
+            logger.error("Authentication failed")
+        except TimeoutError:
+            logger.error("Connection timed out")
+        except Exception as e:
+            logger.error(e)

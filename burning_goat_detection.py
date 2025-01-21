@@ -1,7 +1,7 @@
 import asyncio
 
 from fire_detection import detect_fire
-from on_fire_actions import OnceAction, send_email
+from on_fire_actions import OnceAction, SendEmail, SendToDiscord
 from setting import (
     SENDER,
     SENDER_PASSWORD,
@@ -12,20 +12,40 @@ from setting import (
     VIDEO_OUTPUT,
     SOURCE,
     CHECKS_PER_SECOND,
+    USE_EMAILS,
+    USE_DISCORD,
+    DISCORD_HOOKS,
 )
 
 
 async def main():
-    on_fire_action = OnceAction(
-        send_email,
-        sender=SENDER,
-        sender_password=SENDER_PASSWORD,
-        recipients=RECIPIENTS,
-        subject="GOAT ON FIRE!",
-        message="Dear friend... Its time... Its time to Fight Fire With Fire!",
-        host=EMAIL_HOST,
-        port=EMAIL_PORT,
-    )
+    actions = []
+    if USE_EMAILS:
+        actions.append(
+            [
+                SendEmail,
+                {
+                    "sender": SENDER,
+                    "sender_password": SENDER_PASSWORD,
+                    "recipients": RECIPIENTS,
+                    "subject": "GOAT ON FIRE!",
+                    "message": "Dear friend... Its time... Its time to Fight Fire With Fire!",
+                    "host": EMAIL_HOST,
+                    "port": EMAIL_PORT,
+                },
+            ]
+        )
+    if USE_DISCORD:
+        actions.append(
+            [
+                SendToDiscord,
+                {
+                    "message": "Dear friend... Its time... Its time to Fight Fire With Fire!",
+                    "webhooks": DISCORD_HOOKS,
+                },
+            ]
+        )
+    on_fire_action = OnceAction(actions)
     await detect_fire(
         src=SOURCE,
         threshold=0.1,

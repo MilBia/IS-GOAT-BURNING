@@ -42,15 +42,18 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 2. Edit the .env file and fill in your configuration details:
  
     ```
-    SOURCE="https://youtu.be/vDFPpkp9krY"                       # URL of the webcam feed
-    SENDER="your_email@example.com"                             # Your email address
-    SENDER_PASSWORD="your_email_password"                       # Your email password or an app password for Gmail
-    RECIPIENTS="recipient1@example.com,recipient2@example.com"  # Comma-separated list of email addresses to notify
-    EMAIL_HOST="smtp.gmail.com"                                 # Your email host (e.g., smtp.gmail.com)
-    EMAIL_PORT=587                                              # Your email port (e.g., 587 for Gmail)
-    LOGGING=true                                                # Enable or disable logging
-    VIDEO_OUTPUT=true                                           # Display detected video frames (true) or not (false)
-    CHECKS_PER_SECOND=1.0                                       # How many times to check per second (adjust for performance)
+    SOURCE="https://youtu.be/vDFPpkp9krY"                            # URL of the webcam feed
+    USE_EMAILS=true                                                  # Set to true if you want email notifications    
+    SENDER="your_email@example.com"                                  # Your email address
+    SENDER_PASSWORD="your_email_password"                            # Your email password or an app password for Gmail
+    RECIPIENTS="recipient1@example.com,recipient2@example.com"       # Comma-separated list of email addresses to notify
+    EMAIL_HOST="smtp.gmail.com"                                      # Your email host (e.g., smtp.gmail.com)
+    EMAIL_PORT=587                                                   # Your email port (e.g., 587 for Gmail)
+    USE_DISCORD=true                                                 # Set to true if you want Discord notifications
+    DISCORD_HOOKS="/webhooks/webhooks/{webhook.id}/{webhook.token}"  # Your discord webhook
+    LOGGING=true                                                     # Enable or disable logging
+    VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
+    CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
     ```
 
 **Important**:

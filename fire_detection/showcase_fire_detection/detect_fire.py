@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Generator
 
 import cv2
@@ -40,17 +39,16 @@ async def _detect_loop(stream: YTCamGear, margin: int, lower: np.ndarray, upper:
     :param upper: upper border of HSV values for fire color
     :param on_fire_action: action to perform on case of fire detection
     """
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        async for frame in frame_gen(stream):
-            fire, output = await _detect_fire(frame, margin, lower, upper)
+    async for frame in frame_gen(stream):
+        fire, output = await _detect_fire(frame, margin, lower, upper)
 
-            cv2.imshow("output", output)
+        cv2.imshow("output", output)
 
-            if fire:
-                executor.submit(on_fire_action)
+        if fire:
+            await on_fire_action()
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
 
     cv2.destroyAllWindows()
 
@@ -68,16 +66,15 @@ async def _detect_loop_with_frequency(
     :param on_fire_action: action to perform on case of fire detection
     :param iterator: generating which frame is destine to frame
     """
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        async for frame in frame_gen_with_iterator(stream, iterator):
-            fire, output = await _detect_fire(frame, margin, lower, upper)
+    async for frame in frame_gen_with_iterator(stream, iterator):
+        fire, output = await _detect_fire(frame, margin, lower, upper)
 
-            cv2.imshow("output", output)
+        cv2.imshow("output", output)
 
-            if fire:
-                executor.submit(on_fire_action)
+        if fire:
+            await on_fire_action()
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
 
     cv2.destroyAllWindows()
