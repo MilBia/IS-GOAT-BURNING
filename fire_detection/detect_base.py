@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from functools import partial
-from typing import Callable, Optional
 
 import numpy as np
 
@@ -8,7 +8,6 @@ from .base_fire_detection import _detect_loop_with_frequency as base_detect_fire
 from .cam_gear import YTCamGear
 from .showcase_fire_detection import _detect_loop as showcase_detect_fire
 from .showcase_fire_detection import _detect_loop_with_frequency as showcase_detect_fire_with_frequency
-
 
 options = {"STREAM_RESOLUTION": "480p", "CAP_PROP_FPS": 30}
 _lower = [18, 50, 50]
@@ -42,7 +41,7 @@ async def detect_fire(
     threshold: float = 0.05,
     logging: bool = False,
     video_output: bool = False,
-    checks_per_second: Optional[int] = None,
+    checks_per_second: int | None = None,
 ) -> None:
     """
      Fire detection in output
@@ -57,10 +56,7 @@ async def detect_fire(
 
     stream = YTCamGear(source=src, stream_mode=True, logging=logging, **options)
 
-    if video_output:
-        detect_loop = showcase_detect_fire
-    else:
-        detect_loop = base_detect_fire
+    detect_loop = showcase_detect_fire if video_output else base_detect_fire
 
     if checks_per_second:
         if checks_per_second >= stream.framerate:
