@@ -1,4 +1,5 @@
-from typing import Callable, Generator
+from collections.abc import Callable
+from collections.abc import Generator
 
 import cv2
 import numpy as np
@@ -11,11 +12,17 @@ if OPEN_CL:
         frame_gen_cl as frame_gen,
     )
 else:
-    from fire_detection.async_frame_generator import frame_gen_with_iterator, frame_gen
+    from fire_detection.async_frame_generator import frame_gen
+    from fire_detection.async_frame_generator import frame_gen_with_iterator
 from fire_detection.cam_gear import YTCamGear
 
 
-async def _detect_fire(frame: np.ndarray, fire_border: int, border_lower: np.ndarray, border_upper: np.ndarray) -> bool:
+async def _detect_fire(
+    frame: np.ndarray,
+    fire_border: int,
+    border_lower: np.ndarray,
+    border_upper: np.ndarray,
+) -> bool:
     """
     Detecting fire in gaven frame.
 
@@ -35,7 +42,13 @@ async def _detect_fire(frame: np.ndarray, fire_border: int, border_lower: np.nda
     return int(no_red) > fire_border
 
 
-async def _detect_loop(stream: YTCamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable) -> None:
+async def _detect_loop(
+    stream: YTCamGear,
+    margin: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    on_fire_action: Callable,
+) -> None:
     """
     Main loop with reading frames from stream and detecting fire on them.
 
@@ -53,7 +66,12 @@ async def _detect_loop(stream: YTCamGear, margin: int, lower: np.ndarray, upper:
 
 
 async def _detect_loop_with_frequency(
-    stream: YTCamGear, margin: int, lower: np.ndarray, upper: np.ndarray, on_fire_action: Callable, iterator: Generator
+    stream: YTCamGear,
+    margin: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    on_fire_action: Callable,
+    iterator: Generator,
 ) -> None:
     """
     Main loop with reading frames from stream and detecting fire on them.

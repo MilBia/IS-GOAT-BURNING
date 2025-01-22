@@ -3,14 +3,14 @@ import sys
 
 sys.path.append("..")
 from fire_detection import detect_fire  # noqa: E402
-from on_fire_actions import OnceAction, send_email  # noqa: E402
-
-"""
-python online_video_with_output.py sender@gmail.com sender_password recipient1@gmail.com recipient2@gmail.com
-"""
+from on_fire_actions import OnceAction  # noqa: E402
+from on_fire_actions import send_email  # noqa: E402
 
 
 async def main(sender, sender_password, *recipients):
+    """
+    python online_video_with_output.py sender@gmail.com sender_password recipient1@gmail.com recipient2@gmail.com
+    """
     on_fire_action = OnceAction(
         send_email,
         sender=sender,
