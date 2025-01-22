@@ -1,21 +1,21 @@
 import asyncio
 
 from fire_detection import detect_fire
-from on_fire_actions import OnceAction, SendEmail, SendToDiscord
-from setting import (
-    SENDER,
-    SENDER_PASSWORD,
-    RECIPIENTS,
-    LOGGING,
-    EMAIL_HOST,
-    EMAIL_PORT,
-    VIDEO_OUTPUT,
-    SOURCE,
-    CHECKS_PER_SECOND,
-    USE_EMAILS,
-    USE_DISCORD,
-    DISCORD_HOOKS,
-)
+from on_fire_actions import OnceAction
+from on_fire_actions import SendEmail
+from on_fire_actions import SendToDiscord
+from setting import CHECKS_PER_SECOND
+from setting import DISCORD_HOOKS
+from setting import EMAIL_HOST
+from setting import EMAIL_PORT
+from setting import LOGGING
+from setting import RECIPIENTS
+from setting import SENDER
+from setting import SENDER_PASSWORD
+from setting import SOURCE
+from setting import USE_DISCORD
+from setting import USE_EMAILS
+from setting import VIDEO_OUTPUT
 
 
 async def main():

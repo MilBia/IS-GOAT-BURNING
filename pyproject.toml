@@ -1,0 +1,59 @@
+[project]
+name = "IS-GOAT-BURNING"
+version = "0.1.0"
+description = "This project monitors the Gävle Goat webcam feed to detect if the goat is on fire. It uses computer vision techniques to analyze the video feed and sends email and/or discord notifications if fire is detected."
+authors = [
+    { name = "Miłosz Białczak" }
+]
+dependencies = [
+]
+requires-python = ">=3.10"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "ruff",
+]
+[tool.ruff]
+exclude = [
+    "venv",
+    ".venv",
+]
+line-length = 128
+indent-width = 4
+target-version = "py310"
+lint.select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "C",    # flake8-comprehensions
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+    "ARG",  # flake8-unused-arguments
+    "PGH",  # pygrep-hooks
+    "RET",  # flake8-return
+]
+lint.ignore = [
+    "ARG002",
+]
+# Enable sorting of imports
+[tool.ruff.lint.isort]
+force-single-line = true
+force-sort-within-sections = true
+
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

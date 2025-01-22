@@ -1,8 +1,8 @@
 from dataclasses import dataclass
-import smtplib
-import ssl
 from email.message import EmailMessage
 import logging as log
+import smtplib
+import ssl
 
 from vidgear.gears.helper import logger_handler
 

@@ -1,6 +1,6 @@
 # Is the Gävle Goat Burning?
 
-This project monitors the [Gävle Goat webcam](https://youtu.be/vDFPpkp9krY) feed to detect if the goat is on fire.  It uses computer vision techniques to analyze the video feed and sends email notifications if fire is detected.
+This project monitors the [Gävle Goat webcam](https://youtu.be/vDFPpkp9krY) feed to detect if the goat is on fire.  It uses computer vision techniques to analyze the video feed and sends email and/or discord notifications if fire is detected.
 
 ## Project Overview
 
@@ -40,10 +40,10 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     ```
 
 2. Edit the .env file and fill in your configuration details:
- 
+
     ```
     SOURCE="https://youtu.be/vDFPpkp9krY"                            # URL of the webcam feed
-    USE_EMAILS=true                                                  # Set to true if you want email notifications    
+    USE_EMAILS=true                                                  # Set to true if you want email notifications
     SENDER="your_email@example.com"                                  # Your email address
     SENDER_PASSWORD="your_email_password"                            # Your email password or an app password for Gmail
     RECIPIENTS="recipient1@example.com,recipient2@example.com"       # Comma-separated list of email addresses to notify
@@ -84,7 +84,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     ```
 This command will build the image, and run the container in the background, named `burning_goat_detection_container`.
 
-3. Start/Stop existing container 
+3. Start/Stop existing container
     ```bash
     docker start burning_goat_detection_container
     docker stop burning_goat_detection_container
@@ -103,8 +103,15 @@ This command will build the image, and run the container in the background, name
 Contributions are welcome! Please open an issue or submit a pull request.
 
 ## CODING STANDARD
+We use `pre-commit` with `ruff` to ensure consistent code formatting and linting.
 
-- **Black**: Use `black -l 128` . to format the code.
-- **Flake8**: Use  `flake8 --exclude=venv --max-line-length=128` to check for linting errors.
+**Setup:**
+
+1.  Install `pip install -r requirements_dev.txt`
+2.  Activate hooks: `pre-commit install`
+3.  Run checks: `pre-commit run --all-files`
+
+**How to contribute**
+- Ensure you have set up your pre-commit hooks.
 
 Let's keep the Gävle Goat on check! 🐐🔥

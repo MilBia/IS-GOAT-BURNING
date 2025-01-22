@@ -1,10 +1,9 @@
-from dataclasses import dataclass, field
-
 import asyncio
-
-from aiohttp import ClientSession
+from dataclasses import dataclass
+from dataclasses import field
 import logging as log
 
+from aiohttp import ClientSession
 from vidgear.gears.helper import logger_handler
 
 logger = log.getLogger("DiscordSender")

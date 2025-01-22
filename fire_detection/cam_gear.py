@@ -23,7 +23,6 @@ class YTCamGear(CamGear):
 
     async def read(self):
         while self.signal_handler.KEEP_PROCESSING:
-
             # stream not read yet
             self._CamGear__stream_read.clear()
 
@@ -38,20 +37,20 @@ class YTCamGear(CamGear):
                 break
 
             # apply colorspace to frames if valid
-            if not (self.color_space is None):
+            if self.color_space is not None:
                 color_frame = None
                 try:
                     if isinstance(self.color_space, int):
                         color_frame = cv2.cvtColor(frame, self.color_space)
                     else:
-                        raise ValueError("Global color_space parameter value `{}` is not a valid!".format(self.color_space))
+                        raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
                 except Exception as e:
                     # Catch if any error occurred
                     self.color_space = None
                     if self._CamGear__logging:
                         logger.exception(str(e))
                         logger.warning("Input colorspace is not a valid colorspace!")
-                if not (color_frame is None):
+                if color_frame is not None:
                     yield color_frame
                 else:
                     yield frame

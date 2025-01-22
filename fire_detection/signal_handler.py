@@ -1,5 +1,5 @@
-import signal
 import logging as log
+import signal
 
 from vidgear.gears.helper import logger_handler
 
@@ -20,6 +20,6 @@ class SignalHandler:
         signal.signal(signal.SIGINT, self.exit_gracefully)
         signal.signal(signal.SIGTERM, self.exit_gracefully)
 
-    def exit_gracefully(self, signum, frame):
+    def exit_gracefully(self, *args, **kwargs):
         logger.info("Terminating processes.")
         self.KEEP_PROCESSING = False

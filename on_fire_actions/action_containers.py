@@ -1,7 +1,7 @@
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable
 
 
 @dataclass(init=False, repr=False, eq=False, order=False, kw_only=True, slots=True)
