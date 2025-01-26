@@ -2,7 +2,12 @@ from collections.abc import AsyncGenerator
 
 import numpy as np
 
-from fire_detection.cam_gear import YTCamGear
+from setting import OPEN_CL
+
+if OPEN_CL:
+    from fire_detection.cam_gear_opencl import YTCamGear
+else:
+    from fire_detection.cam_gear import YTCamGear
 
 
 async def frame_gen(stream: YTCamGear):
