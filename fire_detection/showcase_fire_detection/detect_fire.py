@@ -4,18 +4,14 @@ from collections.abc import Generator
 import cv2
 import numpy as np
 
+from fire_detection.async_frame_generator import frame_gen
+from fire_detection.async_frame_generator import frame_gen_with_iterator
 from setting import OPEN_CL
 
 if OPEN_CL:
-    from fire_detection.async_frame_generator import (
-        frame_gen_with_iterator_cl as frame_gen_with_iterator,
-        frame_gen_cl as frame_gen,
-    )
+    from fire_detection.cam_gear_opencl import YTCamGear
 else:
-    from fire_detection.async_frame_generator import frame_gen
-    from fire_detection.async_frame_generator import frame_gen_with_iterator
-
-from fire_detection.cam_gear import YTCamGear
+    from fire_detection.cam_gear import YTCamGear
 
 
 async def _detect_fire(

@@ -3,9 +3,16 @@ from functools import partial
 
 import numpy as np
 
+from setting import OPEN_CL
+
 from .base_fire_detection import _detect_loop as base_detect_fire
 from .base_fire_detection import _detect_loop_with_frequency as base_detect_fire_with_frequency
-from .cam_gear import YTCamGear
+
+if OPEN_CL:
+    from fire_detection.cam_gear_opencl import YTCamGear
+else:
+    from fire_detection.cam_gear import YTCamGear
+
 from .showcase_fire_detection import _detect_loop as showcase_detect_fire
 from .showcase_fire_detection import _detect_loop_with_frequency as showcase_detect_fire_with_frequency
 

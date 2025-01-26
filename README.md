@@ -54,11 +54,13 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     LOGGING=true                                                     # Enable or disable logging
     VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
     CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
-    OPEN_CL=false                                                    # Enable or disable use od OpenCl
+    OPEN_CL=false                                                    # Enable or disable use of OpenCL for faster processing (experimental)
     ```
 
 **Important**:
 
+- OpenCL (`OPEN_CL=true`) for faster processing is experimental and requires `VIDEO_OUTPUT=false`.
+- OpenCL (`OPEN_CL=true`) is currently not supported in Docker containers.
 - For Gmail, it's often necessary to generate an app password in your Google account settings, instead of your regular password.
 - When using Docker, setting `VIDEO_OUTPUT` to `false` is necessary.
 
