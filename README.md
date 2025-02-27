@@ -41,7 +41,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     cp .env.example .env
     ```
 
-2.  Edit the `.env` file and fill in your configuration details:
+2.  Edit the `.env` file and fill in your configuration details.  Here's a breakdown of each setting:
 
     ```
     SOURCE="https://youtu.be/vDFPpkp9krY"                            # URL of the webcam feed
@@ -52,7 +52,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     EMAIL_HOST="smtp.gmail.com"                                      # Your email host (e.g., smtp.gmail.com)
     EMAIL_PORT=587                                                   # Your email port (e.g., 587 for Gmail)
     USE_DISCORD=true                                                 # Set to true if you want Discord notifications
-    DISCORD_HOOKS="/webhooks/webhooks/{webhook.id}/{webhook.token}"  # Your discord webhook
+    DISCORD_HOOKS="/webhooks/webhooks/{webhook.id}/{webhook.token}"  # Your discord webhook URL.  See Discord documentation for how to create one.
     LOGGING=true                                                     # Enable or disable logging
     VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
     CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
@@ -62,18 +62,25 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 
 **Important**:
 
+-   **Email Configuration Notes:**
+    -   For Gmail, you *must* generate an "App Password" in your Google account settings (Security -> App Passwords) and use that instead of your regular password.  Enable "Less secure app access" is usually *not* sufficient anymore and is a security risk.
+    -   For other email providers, consult their documentation for the correct `EMAIL_HOST` and `EMAIL_PORT` settings.
 -   OpenCL (`OPEN_CL=true`) for faster processing is experimental and requires `VIDEO_OUTPUT=false`.
--   OpenCL (`OPEN_CL=true`) is currently not supported in Docker containers.
--   For Gmail, it's often necessary to generate an app password in your Google account settings, instead of your regular password.
--   When using Docker, setting `VIDEO_OUTPUT` to `false` is necessary if you are running in a headless environment.
--   **CUDA (`CUDA=true`) requires an NVIDIA GPU with CUDA drivers installed and a CUDA-enabled build of OpenCV.**  See the Docker section below for instructions on setting up CUDA in Docker.
--   Ensure your CUDA_ARCH_BIN is set to your appropriate compute capability.
+-   When using Docker, setting `VIDEO_OUTPUT` to `false` is necessary if you are running in a headless environment (without a display).  Otherwise, you will need to configure X11 forwarding, which is beyond the scope of this README.
+-   **CUDA (`CUDA=true`) requires an NVIDIA GPU with CUDA drivers installed and a CUDA-enabled build of OpenCV.**  See the Docker section below for detailed instructions on setting up CUDA in Docker.  If you set `CUDA=true` without proper CUDA setup, the application will likely crash or fail to detect fire.
+-   Ensure your `CUDA_ARCH_BIN` is set to your appropriate compute capability.
 
 ## HOW TO RUN
 
 ### Usage Python Directly:
 
 1.  Ensure you have CUDA-enabled OpenCV installed if `CUDA` is set to `true`.
+
+    - To verify CUDA-enabled OpenCV: after installing opencv run this command:
+      ```bash
+      python -c "import cv2; print(cv2.cuda.getCudaEnabledDeviceCount())"
+      ```
+      If it outputs a number greater than 0, CUDA is enabled.
 
 2.  Run the project:
 
@@ -83,45 +90,70 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 
 ### Use Docker:
 
-1.  **Install the NVIDIA Container Toolkit:**
-    If you want to use CUDA acceleration within Docker, you must install the NVIDIA Container Toolkit on your host machine. Follow the instructions for your operating system here: [container toolkit install guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+Docker allows you to run the application in a consistent and isolated environment.  The following steps guide you through building and running the Docker image, with and without GPU support.
 
-2.  Build the Docker image:
-   -  **base run:**
+1.  **Install Docker:** If you haven't already, install Docker Desktop from [docker-desktop](https://www.docker.com/products/docker-desktop/). Follow the instructions for your operating system.
 
+2.  **Install the NVIDIA Container Toolkit (REQUIRED for CUDA):**
+    If you want to use CUDA acceleration within Docker, you *must* install the NVIDIA Container Toolkit on your host machine. This toolkit allows Docker containers to access your NVIDIA GPU.
+
+    -   Follow the instructions for your operating system here: [NVIDIA Container Toolkit Installation Guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+    -   **Important:**  After installing the NVIDIA Container Toolkit, you may need to restart your Docker daemon or your entire system for the changes to take effect.
+
+3.  **Determine your GPU's Compute Capability (REQUIRED for CUDA):**
+    -  CUDA applications are compiled for specific GPU architectures, identified by their "compute capability".  You need to determine your GPU's compute capability and set the `CUDA_ARCH_BIN` build argument accordingly.
+    -  You can find your GPU's compute capability on NVIDIA's website.
+    -  You will use this value in the `docker build` command.
+
+4.  **Build the Docker image:**
+
+    -  **Base run (CPU only):** This build uses the `Dockerfile` and will run the application using the CPU. This is suitable if you don't have an NVIDIA GPU or don't want to use CUDA.
         ```bash
         docker build -f dockerfile -t burning_goat_detection .
         ```
 
-   -  **with GPU support:**
-
+    -  **With GPU support (CUDA):** This build uses the `Dockerfile_cuda` and will run the application using the GPU.
         ```bash
-        docker build -f dockerfile_cuda -t burning_goat_detection .
+        docker build -f dockerfile_cuda --build-arg CUDA_ARCH=YOUR_GPU_COMPUTE_CAPABILITY -t burning_goat_detection .
+        ```
+        -   **Replace `YOUR_GPU_COMPUTE_CAPABILITY` with the compute capability you determined in the previous step.** For example, if your GPU's compute capability is 8.6, the command would be:
+            ```bash
+            docker build -f dockerfile_cuda --build-arg CUDA_ARCH=8.6 -t burning_goat_detection .
+            ```
+        -   The `--build-arg CUDA_ARCH` flag passes the GPU architecture to the Dockerfile, which uses it to optimize the OpenCV build for your specific GPU.  If you skip this step, the application might not run correctly or might not use the GPU effectively.
+
+5.  **Run the Docker container:**
+
+    -  **Base run (CPU only):**
+        ```bash
+        docker run --name burning_goat_detection_container -d burning_goat_detection
         ```
 
-3.  Run the Docker container:
-   -  **base run:**
+    -  **With GPU support (CUDA):**
+        ```bash
+        docker run --gpus all --name burning_goat_detection_container -d burning_goat_detection
+        ```
+        -   `--gpus all`:  This flag is **critical** for enabling CUDA acceleration. It tells Docker to make all available GPUs accessible to the container. If you only want to use specific GPUs, you can specify their IDs instead (e.g., `--gpus device=0,1`).
 
-       ```bash
-       docker run --name burning_goat_detection_container -d burning_goat_detection
-       ```
-
-   -  **with GPU support:**
-
-       ```bash
-       docker run --gpus all --name burning_goat_detection_container -d burning_goat_detection
-       ```
-
-       *   `--gpus all`:  This flag is **critical** for enabling CUDA acceleration. It tells Docker to make all available GPUs accessible to the container. If you only want to use specific GPUs, you can specify their IDs instead (e.g., `--gpus device=0,1`).
-
-This command will build the image, and run the container in the background, named `burning_goat_detection_container`.
-
-4.  Start/Stop existing container
-
+6.  **Accessing Container Logs:** To view the application's output and check for errors, you can view the container's logs:
     ```bash
-    docker start burning_goat_detection_container
-    docker stop burning_goat_detection_container
+    docker logs burning_goat_detection_container
     ```
+
+7.  **Stopping and Starting the Container:**
+    ```bash
+    docker stop burning_goat_detection_container
+    docker start burning_goat_detection_container
+    ```
+
+## Troubleshooting Docker/CUDA Issues
+
+*   **"CUDA driver version is insufficient for CUDA runtime version" Error:** This usually means that the CUDA drivers on your host machine are older than the CUDA version used in the Docker image. Update your NVIDIA drivers to the latest version.
+*   **Application Runs on CPU Instead of GPU:**
+    *   Ensure that you have correctly installed the NVIDIA Container Toolkit.
+    *   Verify that you are passing the `--gpus all` flag to the `docker run` command.
+    *   Check the application logs within the container for any CUDA-related errors.
+*   **"Could not load cuDNN" Error:** This indicates that the cuDNN libraries are not correctly installed or configured in the Docker image.  Verify that the base image in your `Dockerfile_cuda` includes cuDNN (e.g., `nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04`).
 
 ## SOURCES
 

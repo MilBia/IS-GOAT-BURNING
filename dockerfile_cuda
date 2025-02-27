@@ -1,5 +1,5 @@
-# Use a base image with CUDA and cuDNN pre-installed
-FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
+# --- Stage 1: Builder Stage ---
+FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04 AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -47,12 +47,13 @@ RUN wget https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSI
 RUN mkdir -p /app/opencv/build
 
 # Configure and build OpenCV with CUDA support
-#replace "8.6" with your GPU architecture, check with nvidia-smi
+# Allow GPU architecture to be passed as an argument
+ARG CUDA_ARCH=8.6
 RUN cd /app/opencv/build && \
     cmake -D CMAKE_BUILD_TYPE=RELEASE \
           -D CMAKE_INSTALL_PREFIX=/usr/local \
           -D WITH_CUDA=ON \
-          -D CUDA_ARCH_BIN="8.6" \
+          -D CUDA_ARCH_BIN="${CUDA_ARCH}" \
           -D CUDA_ARCH_PTX="" \
           -D WITH_CUDNN=ON \
           -D OPENCV_DNN_CUDA=ON \
@@ -76,18 +77,40 @@ RUN cd /app/opencv/build && \
     make install && \
     ldconfig
 
+# --- Stage 2: Runtime Stage ---
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04 AS runtime
 
-COPY requirements_cuda.txt .
-RUN pip install -r requirements_cuda.txt
+# Set the working directory
+WORKDIR /app
 
-# Remove the opencv-python package installed by pip (if any) to avoid conflicts
-RUN pip3 uninstall -y opencv-python opencv-python-headless
+# Install minimal runtime dependencies
+# libgtk-3-0 Required for OpenCV GUI elements (if used)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    libgtk-3-0 \
+    python3 \
+    python3-pip \
+    python3-numpy \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Clean up to reduce image size
-RUN rm -rf /app/opencv.zip /app/opencv_contrib.zip /app/opencv /app/opencv_contrib
+# Copy OpenCV from the builder stage
+COPY --from=builder /usr/local /usr/local
 
 # Copy the application code
 COPY . .
+
+# Install Python dependencies using pip
+RUN pip3 install -r requirements_cuda.txt
+
+# Remove the opencv-python package installed by pip (if any) to avoid conflicts
+# Ignore error if package does not exist.
+RUN pip3 uninstall -y opencv-python opencv-python-headless || true
 
 # Set environment variables (Optional, but good practice)
 ENV PYTHONPATH "${PYTHONPATH}:/app"
