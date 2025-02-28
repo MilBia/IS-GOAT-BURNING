@@ -1,0 +1,5 @@
+environs==14.1.0
+vidgear==0.3.3
+yt-dlp==2025.1.15
+setuptools==75.8.0
+aiohttp==3.11.11

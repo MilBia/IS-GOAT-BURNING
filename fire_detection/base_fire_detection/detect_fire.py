@@ -6,10 +6,13 @@ import numpy as np
 
 from fire_detection.async_frame_generator import frame_gen
 from fire_detection.async_frame_generator import frame_gen_with_iterator
+from setting import CUDA
 from setting import OPEN_CL
 
 if OPEN_CL:
     from fire_detection.cam_gear_opencl import YTCamGear
+elif CUDA:
+    from fire_detection.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.cam_gear import YTCamGear
 

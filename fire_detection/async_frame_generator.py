@@ -2,10 +2,13 @@ from collections.abc import AsyncGenerator
 
 import numpy as np
 
+from setting import CUDA
 from setting import OPEN_CL
 
 if OPEN_CL:
     from fire_detection.cam_gear_opencl import YTCamGear
+elif CUDA:
+    from fire_detection.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.cam_gear import YTCamGear
 
