@@ -17,7 +17,12 @@ class YTCamGear(CamGear):
     def __init__(self, *args, **kwargs):
         device_count = cv2.cuda.getCudaEnabledDeviceCount()
         logger.info(f"Number of CUDA-capable GPUs: {device_count}")
-        kwargs["THREADED_QUEUE_MODE"] = False
+        if device_count > 0:
+            logger.info("CUDA enabled for processing.")
+        else:
+            logger.error("No CUDA-capable GPUs found")
+            raise RuntimeError("No CUDA-capable GPUs found")
+        kwargs["THREADED_QUEUE_MODE"] = True
         self.signal_handler = SignalHandler()
         super().__init__(*args, **kwargs)
         self.framerate = self.ytv_metadata.get("fps", 30)
@@ -29,7 +34,7 @@ class YTCamGear(CamGear):
             self._CamGear__stream_read.clear()
 
             # otherwise, read the next frame from the stream
-            (grabbed, frame) = self.stream.retrieve()
+            (grabbed, frame) = self.stream.read()
             src = cv2.cuda.GpuMat()
             src.upload(frame)
 
@@ -45,7 +50,7 @@ class YTCamGear(CamGear):
                 color_frame = None
                 try:
                     if isinstance(self.color_space, int):
-                        color_frame = cv2.cvtColor(frame, self.color_space)
+                        color_frame = cv2.cuda.cvtColor(src, self.color_space)
                     else:
                         raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
                 except Exception as e:
@@ -57,7 +62,7 @@ class YTCamGear(CamGear):
                 if color_frame is not None:
                     yield color_frame
                 else:
-                    yield frame
+                    yield src
             else:
-                yield frame
+                yield src
             await asyncio.sleep(self.frame_wait_time)
