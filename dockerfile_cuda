@@ -28,7 +28,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-numpy \
     && rm -rf /var/lib/apt/lists/*
 
-
 # Download OpenCV source code (choose a specific version)
 # Or any other version
 ARG OPENCV_VERSION=4.11.0
@@ -42,6 +41,9 @@ ARG OPENCV_CONTRIB_VERSION=4.11.0
 RUN wget https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSION}.zip -O opencv_contrib.zip && \
     unzip opencv_contrib.zip && \
     mv opencv_contrib-${OPENCV_CONTRIB_VERSION} opencv_contrib
+
+# Clean build directory (important!)
+RUN rm -rf /app/opencv/build
 
 # Create a build directory
 RUN mkdir -p /app/opencv/build

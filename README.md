@@ -13,6 +13,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 - **Discord Notifications:** Sends Discord alerts immediately upon detecting fire, notifying designated recipients.
 - **Configurable Monitoring:** Allows adjustment of monitoring frequency to control resource usage and sensitivity.
 - **Dockerized Deployment:** Easily deployable with Docker, ensuring consistent performance across different environments.
+- **CUDA Acceleration (Optional):** Supports CUDA for significantly faster processing on NVIDIA GPUs.
 
 ## Prerequisites
 
@@ -57,7 +58,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
     CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
     OPEN_CL=false                                                    # Enable or disable use of OpenCL for faster processing (experimental)
-    CUDA=false                                                       # Enable or disable use of CUDA for faster processing (experimental)
+    CUDA=false                                                       # Enable or disable use of CUDA for faster processing
     ```
 
 **Important**:
@@ -67,7 +68,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     -   For other email providers, consult their documentation for the correct `EMAIL_HOST` and `EMAIL_PORT` settings.
 -   OpenCL (`OPEN_CL=true`) for faster processing is experimental and requires `VIDEO_OUTPUT=false`.
 -   When using Docker, setting `VIDEO_OUTPUT` to `false` is necessary if you are running in a headless environment (without a display).  Otherwise, you will need to configure X11 forwarding, which is beyond the scope of this README.
--   **CUDA (`CUDA=true`) requires an NVIDIA GPU with CUDA drivers installed and a CUDA-enabled build of OpenCV.**  See the Docker section below for detailed instructions on setting up CUDA in Docker.  If you set `CUDA=true` without proper CUDA setup, the application will likely crash or fail to detect fire.
+-   **CUDA (`CUDA=true`) provides significant performance improvements when using an NVIDIA GPU. It requires NVIDIA GPU with CUDA drivers installed and a CUDA-enabled build of OpenCV.**  See the Docker section below for detailed instructions on setting up CUDA in Docker.  If you set `CUDA=true` without proper CUDA setup, the application will likely crash or fail to detect fire.
 -   Ensure your `CUDA_ARCH_BIN` is set to your appropriate compute capability.
 
 ## HOW TO RUN
