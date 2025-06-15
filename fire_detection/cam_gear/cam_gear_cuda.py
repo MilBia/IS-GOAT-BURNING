@@ -31,18 +31,18 @@ class YTCamGear(BaseYTCamGear):
             # otherwise, read the next frame from the stream
             (grabbed, frame) = self.stream.read()
 
-            # Put the frame into the queue (this is non-blocking)
-            self.video_saver(frame)
-
-            src = cv2.cuda.GpuMat()
-            src.upload(frame)
-
             # stream read completed
             self._CamGear__stream_read.set()
 
             # check for valid frame if received
             if not grabbed:
                 break
+
+            # Put the frame into the queue (this is non-blocking)
+            self.video_saver(frame)
+
+            src = cv2.cuda.GpuMat()
+            src.upload(frame)
 
             # apply colorspace to frames if valid
             if self.color_space is not None:

@@ -134,8 +134,11 @@ class AsyncVideoChunkSaver:
             try:
                 # Run the blocking write operation in a separate thread
                 await loop.run_in_executor(None, self._write_frame_blocking, frame)
-            except asyncio.CancelledError as e:
-                logger.error(f"Could not write frame: {e}")
+            except asyncio.CancelledError:
+                logger.info("Writer task was cancelled.")
+                break  # Exit if task is cancelled
+            except Exception as e:
+                logger.error(f"Error writing frame: {e}")
                 break  # Exit the writer task on error to prevent repeated failures
 
         # Final cleanup when the loop is broken
