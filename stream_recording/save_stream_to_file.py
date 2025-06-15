@@ -131,8 +131,12 @@ class AsyncVideoChunkSaver:
             if frame is None:
                 break
 
-            # Run the blocking write operation in a separate thread
-            await loop.run_in_executor(None, self._write_frame_blocking, frame)
+            try:
+                # Run the blocking write operation in a separate thread
+                await loop.run_in_executor(None, self._write_frame_blocking, frame)
+            except asyncio.CancelledError as e:
+                logger.error(f"Could not write frame: {e}")
+                break  # Exit the writer task on error to prevent repeated failures
 
         # Final cleanup when the loop is broken
         if self.writer is not None:
@@ -146,10 +150,3 @@ class AsyncVideoChunkSaver:
         Calling it on a non-initialized instance will raise an error.
         """
         raise NotImplementedError("This class must be initialized before it can be called.")
-
-    def __del__(self) -> None:
-        """
-        Destructor method. Releases the video writer resource to save the last chunk.
-        This is called automatically when the object is garbage collected.
-        """
-        self.stop()

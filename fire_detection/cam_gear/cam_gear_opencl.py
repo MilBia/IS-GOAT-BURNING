@@ -54,3 +54,5 @@ class YTCamGear(BaseYTCamGear):
             else:
                 yield frame
             await asyncio.sleep(self.frame_wait_time)
+        else:
+            await self.video_saver.stop()
