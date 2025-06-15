@@ -10,11 +10,11 @@ from .base_fire_detection import _detect_loop as base_detect_fire
 from .base_fire_detection import _detect_loop_with_frequency as base_detect_fire_with_frequency
 
 if OPEN_CL:
-    from fire_detection.cam_gear_opencl import YTCamGear
+    from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
 elif CUDA:
-    from fire_detection.cam_gear_cuda import YTCamGear
+    from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
-    from fire_detection.cam_gear import YTCamGear
+    from fire_detection.cam_gear.cam_gear import YTCamGear
 
 from .showcase_fire_detection import _detect_loop as showcase_detect_fire
 from .showcase_fire_detection import _detect_loop_with_frequency as showcase_detect_fire_with_frequency

@@ -59,6 +59,9 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
     OPEN_CL=false                                                    # Enable or disable use of OpenCL for faster processing (experimental)
     CUDA=false                                                       # Enable or disable use of CUDA for faster processing
+    SAVE_VIDEO_CHUNKS=false                                          # Set to true to save video chunks to disk
+    VIDEO_OUTPUT_DIRECTORY="./recordings"                            # Directory to save the video files
+    VIDEO_CHUNK_LENGTH_SECONDS=300                                   # Length of each video chunk in seconds (e.g., 300 = 5 minutes)
     ```
 
 **Important**:

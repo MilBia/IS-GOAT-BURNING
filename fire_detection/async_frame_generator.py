@@ -6,11 +6,11 @@ from setting import CUDA
 from setting import OPEN_CL
 
 if OPEN_CL:
-    from fire_detection.cam_gear_opencl import YTCamGear
+    from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
 elif CUDA:
-    from fire_detection.cam_gear_cuda import YTCamGear
+    from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
-    from fire_detection.cam_gear import YTCamGear
+    from fire_detection.cam_gear.cam_gear import YTCamGear
 
 
 async def frame_gen(stream: YTCamGear):

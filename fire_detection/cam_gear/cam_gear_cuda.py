@@ -2,10 +2,9 @@ import asyncio
 import logging as log
 
 import cv2
-from vidgear.gears import CamGear
 from vidgear.gears.helper import logger_handler
 
-from fire_detection.signal_handler import SignalHandler
+from fire_detection.cam_gear.base_cam_gear import BaseYTCamGear
 
 logger = log.getLogger("YTCamGear")
 logger.propagate = False
@@ -13,13 +12,16 @@ logger.addHandler(logger_handler())
 logger.setLevel(log.DEBUG)
 
 
-class YTCamGear(CamGear):
-    def __init__(self, *args, **kwargs):
-        kwargs["THREADED_QUEUE_MODE"] = False
-        self.signal_handler = SignalHandler()
-        super().__init__(*args, **kwargs)
-        self.framerate = self.ytv_metadata.get("fps", 30)
-        self.frame_wait_time = 1 / self.framerate - 0.01
+class YTCamGear(BaseYTCamGear):
+    def _pre__init__(self, *args, **kwargs):
+        device_count = cv2.cuda.getCudaEnabledDeviceCount()
+        logger.info(f"Number of CUDA-capable GPUs: {device_count}")
+        if device_count > 0:
+            logger.info("CUDA enabled for processing.")
+        else:
+            logger.error("No CUDA-capable GPUs found")
+            raise RuntimeError("No CUDA-capable GPUs found")
+        kwargs["THREADED_QUEUE_MODE"] = True
 
     async def read(self):
         while self.signal_handler.KEEP_PROCESSING:
@@ -36,12 +38,18 @@ class YTCamGear(CamGear):
             if not grabbed:
                 break
 
+            # Put the frame into the queue (this is non-blocking)
+            self.video_saver(frame)
+
+            src = cv2.cuda.GpuMat()
+            src.upload(frame)
+
             # apply colorspace to frames if valid
             if self.color_space is not None:
                 color_frame = None
                 try:
                     if isinstance(self.color_space, int):
-                        color_frame = cv2.cvtColor(frame, self.color_space)
+                        color_frame = cv2.cuda.cvtColor(src, self.color_space)
                     else:
                         raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
                 except Exception as e:
@@ -53,7 +61,9 @@ class YTCamGear(CamGear):
                 if color_frame is not None:
                     yield color_frame
                 else:
-                    yield frame
+                    yield src
             else:
-                yield frame
+                yield src
             await asyncio.sleep(self.frame_wait_time)
+        else:
+            await self.video_saver.stop()
