@@ -6,6 +6,7 @@ from vidgear.gears import CamGear
 from vidgear.gears.helper import logger_handler
 
 from fire_detection.signal_handler import SignalHandler
+from stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 
 logger = log.getLogger("YTCamGear")
 logger.propagate = False
@@ -13,13 +14,23 @@ logger.addHandler(logger_handler())
 logger.setLevel(log.DEBUG)
 
 
-class YTCamGear(CamGear):
-    def __init__(self, *args, **kwargs):
+class BaseYTCamGear(CamGear):
+    video_saver: AsyncVideoChunkSaver
+
+    def _pre__init__(self, *args, **kwargs):
         kwargs["THREADED_QUEUE_MODE"] = False
+
+    def _post__init__(self, *args, **kwargs):
+        self.video_saver = AsyncVideoChunkSaver(fps=self.framerate)
+        self.video_saver.start()
+
+    def __init__(self, *args, **kwargs):
+        self._pre__init__(*args, **kwargs)
         self.signal_handler = SignalHandler()
         super().__init__(*args, **kwargs)
         self.framerate = self.ytv_metadata.get("fps", 30)
         self.frame_wait_time = 1 / self.framerate - 0.01
+        self._post__init__(*args, **kwargs)
 
     async def read(self):
         while self.signal_handler.KEEP_PROCESSING:
@@ -27,8 +38,10 @@ class YTCamGear(CamGear):
             self._CamGear__stream_read.clear()
 
             # otherwise, read the next frame from the stream
-            (grabbed, frame) = self.stream.retrieve()
-            frame = cv2.UMat(frame)
+            (grabbed, frame) = self.stream.read()
+
+            # Put the frame into the queue (this is non-blocking)
+            self.video_saver(frame)
 
             # stream read completed
             self._CamGear__stream_read.set()

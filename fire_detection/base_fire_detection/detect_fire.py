@@ -11,15 +11,15 @@ from setting import OPEN_CL
 if OPEN_CL:
     from fire_detection.base_fire_detection.utils import _data_preparation
     from fire_detection.base_fire_detection.utils import _detect_fire
-    from fire_detection.cam_gear_opencl import YTCamGear
+    from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
 elif CUDA:
     from fire_detection.base_fire_detection.utils import _cuda_data_preparation as _data_preparation
     from fire_detection.base_fire_detection.utils import _cuda_detect_fire as _detect_fire
-    from fire_detection.cam_gear_cuda import YTCamGear
+    from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.base_fire_detection.utils import _data_preparation
     from fire_detection.base_fire_detection.utils import _detect_fire
-    from fire_detection.cam_gear import YTCamGear
+    from fire_detection.cam_gear.cam_gear import YTCamGear
 
 
 async def _detect_loop(
