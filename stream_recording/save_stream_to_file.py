@@ -83,22 +83,23 @@ class AsyncVideoChunkSaver:
         await self._task
 
     def _enforce_chunk_limit_blocking(self):
-        """Checks and removes the oldest chunk(s) if the max limit is reached."""
+        """
+        Checks and removes the oldest chunk(s) if the max limit is reached.
+        """
         try:
-            # Get all video chunks matching the naming convention
-            # Sort files alphabetically to find the oldest.
-            # This works because of the YYYY-MM-DD_HH-MM-SS timestamp format.
             files = sorted(
                 f
                 for f in os.listdir(self.output_dir)
-                if f.startswith(self.FILENAME_PREFIX) and f.endswith(self.FILENAME_SUFFIX)
+                if f.startswith(self.FILENAME_PREFIX)
+                and f.endswith(self.FILENAME_SUFFIX)
+                and os.path.isfile(os.path.join(self.output_dir, f))
             )
 
             # Calculate the number of files to delete.
             num_to_delete = len(files) - self.max_chunks + 1
 
             if num_to_delete > 0:
-                # Iterate over a slice of the oldest files
+                # Iterate over a slice of the oldest files.
                 for oldest_file in files[:num_to_delete]:
                     file_path_to_delete = os.path.join(self.output_dir, oldest_file)
                     # Remove the oldest file
@@ -106,9 +107,11 @@ class AsyncVideoChunkSaver:
                         os.remove(file_path_to_delete)
                         logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
                     except OSError as e:
+                        # Log errors on a per-file basis.
                         logger.error(f"Could not remove file {file_path_to_delete}: {e}")
 
         except OSError as e:
+            # Catches critical errors from os.listdir().
             logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
 
     def _start_new_chunk_blocking(self, frame_size: tuple):
