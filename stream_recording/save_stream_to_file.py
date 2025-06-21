@@ -55,6 +55,7 @@ class AsyncVideoChunkSaver:
                 self.chunk_limit_action = self._noop
         else:
             self.__call__ = self._noop
+            self.chunk_limit_action = self._noop
 
     def create_storage_directory(self) -> None:
         try:
@@ -93,15 +94,19 @@ class AsyncVideoChunkSaver:
                 if f.startswith(self.FILENAME_PREFIX) and f.endswith(self.FILENAME_SUFFIX)
             )
 
-            # Remove the oldest files until we are under the limit.
-            while len(files) >= self.max_chunks:
-                oldest_file = files.pop(0)
-                file_path_to_delete = os.path.join(self.output_dir, oldest_file)
-                try:
-                    os.remove(file_path_to_delete)
-                    logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
-                except OSError as e:
-                    logger.error(f"Could not remove file {file_path_to_delete}: {e}")
+            # Calculate the number of files to delete.
+            num_to_delete = len(files) - self.max_chunks + 1
+
+            if num_to_delete > 0:
+                # Iterate over a slice of the oldest files
+                for oldest_file in files[:num_to_delete]:
+                    file_path_to_delete = os.path.join(self.output_dir, oldest_file)
+                    # Remove the oldest file
+                    try:
+                        os.remove(file_path_to_delete)
+                        logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
+                    except OSError as e:
+                        logger.error(f"Could not remove file {file_path_to_delete}: {e}")
 
         except OSError as e:
             logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
