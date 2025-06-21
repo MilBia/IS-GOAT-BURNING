@@ -10,6 +10,7 @@ import time
 import cv2
 from vidgear.gears.helper import logger_handler
 
+from setting import MAX_VIDEO_CHUNKS
 from setting import SAVE_VIDEO_CHUNKS
 from setting import VIDEO_CHUNK_LENGTH_SECONDS
 from setting import VIDEO_OUTPUT_DIRECTORY
@@ -30,6 +31,7 @@ class AsyncVideoChunkSaver:
     enabled: bool = SAVE_VIDEO_CHUNKS
     output_dir: str = VIDEO_OUTPUT_DIRECTORY
     chunk_length_seconds: int = VIDEO_CHUNK_LENGTH_SECONDS
+    max_chunks: int = MAX_VIDEO_CHUNKS
     fps: float = 30.0
 
     # --- Internal State ---
@@ -39,11 +41,19 @@ class AsyncVideoChunkSaver:
     current_video_path: str = field(init=False, default=None)
     _task: asyncio.Task = field(init=False, default=None, repr=False)
     __call__: Callable
+    chunk_limit_action: Callable = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         if self.enabled:
             self.__call__ = self._write_frame
             self.create_storage_directory()
+            print(f"{self.max_chunks <= 0=}")
+            if self.max_chunks > 0:
+                print("A")
+                self.chunk_limit_action = self._enforce_chunk_limit_blocking
+            else:
+                print("B")
+                self.chunk_limit_action = self._noop
         else:
             self.__call__ = self._noop
 
@@ -72,6 +82,26 @@ class AsyncVideoChunkSaver:
         # Wait for the task to complete
         await self._task
 
+    def _enforce_chunk_limit_blocking(self):
+        """Checks and removes the oldest chunk(s) if the max limit is reached."""
+        try:
+            # Get all video chunks matching the naming convention
+            files = [f for f in os.listdir(self.output_dir) if f.startswith("goat-cam_") and f.endswith(".mp4")]
+
+            # Sort files alphabetically to find the oldest.
+            # This works because of the YYYY-MM-DD_HH-MM-SS timestamp format.
+            files.sort()
+
+            # Remove the oldest files until we are under the limit.
+            while len(files) >= self.max_chunks:
+                oldest_file = files.pop(0)
+                file_path_to_delete = os.path.join(self.output_dir, oldest_file)
+                os.remove(file_path_to_delete)
+                logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
+
+        except OSError as e:
+            logger.error(f"Error enforcing chunk limit in {self.output_dir}: {e}")
+
     def _start_new_chunk_blocking(self, frame_size: tuple):
         """
         Synchronous method to set up the cv2.VideoWriter.
@@ -79,6 +109,9 @@ class AsyncVideoChunkSaver:
         Args:
             frame_size (tuple): A tuple of (width, height) for the video frame.
         """
+        # Enforce the chunk limit before creating a new file
+        self.chunk_limit_action()
+
         # Release the previous writer if it exists
         if self.writer is not None:
             self.writer.release()
@@ -116,7 +149,7 @@ class AsyncVideoChunkSaver:
             # You might want to log this or drop the frame.
             logger.warning("Frame queue is full, dropping a frame.")
 
-    def _noop(self, frame):
+    def _noop(self, *args, **kwargs) -> None:
         """A "no-operation" method that does nothing, used when saving is disabled."""
         pass
 
