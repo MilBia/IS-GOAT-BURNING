@@ -97,11 +97,14 @@ class AsyncVideoChunkSaver:
             while len(files) >= self.max_chunks:
                 oldest_file = files.pop(0)
                 file_path_to_delete = os.path.join(self.output_dir, oldest_file)
-                os.remove(file_path_to_delete)
-                logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
+                try:
+                    os.remove(file_path_to_delete)
+                    logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
+                except OSError as e:
+                    logger.error(f"Could not remove file {file_path_to_delete}: {e}")
 
         except OSError as e:
-            logger.error(f"Error enforcing chunk limit in {self.output_dir}: {e}")
+            logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
 
     def _start_new_chunk_blocking(self, frame_size: tuple):
         """
