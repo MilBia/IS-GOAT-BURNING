@@ -46,16 +46,15 @@ class AsyncVideoChunkSaver:
     chunk_limit_action: Callable = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
-        if self.enabled:
-            self.__call__ = self._write_frame
-            self.create_storage_directory()
-            if self.max_chunks > 0:
-                self.chunk_limit_action = self._enforce_chunk_limit_blocking
-            else:
-                self.chunk_limit_action = self._noop
-        else:
-            self.__call__ = self._noop
-            self.chunk_limit_action = self._noop
+        self.__call__ = self._noop
+        self.chunk_limit_action = self._noop
+        if not self.enabled:
+            return
+
+        self.__call__ = self._write_frame
+        self.create_storage_directory()
+        if self.max_chunks > 0:
+            self.chunk_limit_action = self._enforce_chunk_limit_blocking
 
     def create_storage_directory(self) -> None:
         try:
