@@ -33,6 +33,8 @@ class AsyncVideoChunkSaver:
     chunk_length_seconds: int = VIDEO_CHUNK_LENGTH_SECONDS
     max_chunks: int = MAX_VIDEO_CHUNKS
     fps: float = 30.0
+    FILENAME_PREFIX: str = "goat-cam_"
+    FILENAME_SUFFIX: str = ".mp4"
 
     # --- Internal State ---
     frame_queue: asyncio.Queue = field(init=False, default_factory=asyncio.Queue)
@@ -83,11 +85,13 @@ class AsyncVideoChunkSaver:
         """Checks and removes the oldest chunk(s) if the max limit is reached."""
         try:
             # Get all video chunks matching the naming convention
-            files = [f for f in os.listdir(self.output_dir) if f.startswith("goat-cam_") and f.endswith(".mp4")]
-
             # Sort files alphabetically to find the oldest.
             # This works because of the YYYY-MM-DD_HH-MM-SS timestamp format.
-            files.sort()
+            files = sorted(
+                f
+                for f in os.listdir(self.output_dir)
+                if f.startswith(self.FILENAME_PREFIX) and f.endswith(self.FILENAME_SUFFIX)
+            )
 
             # Remove the oldest files until we are under the limit.
             while len(files) >= self.max_chunks:
@@ -116,7 +120,7 @@ class AsyncVideoChunkSaver:
 
         # Generate a new timestamped filename
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.current_video_path = os.path.join(self.output_dir, f"goat-cam_{timestamp}.mp4")
+        self.current_video_path = os.path.join(self.output_dir, f"{self.FILENAME_PREFIX}{timestamp}{self.FILENAME_SUFFIX}")
 
         # Define the codec and create the VideoWriter object
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
