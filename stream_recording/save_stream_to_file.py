@@ -47,12 +47,9 @@ class AsyncVideoChunkSaver:
         if self.enabled:
             self.__call__ = self._write_frame
             self.create_storage_directory()
-            print(f"{self.max_chunks <= 0=}")
             if self.max_chunks > 0:
-                print("A")
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
             else:
-                print("B")
                 self.chunk_limit_action = self._noop
         else:
             self.__call__ = self._noop
