@@ -63,6 +63,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     VIDEO_OUTPUT_DIRECTORY="./recordings"                            # Directory to save the video files
     VIDEO_CHUNK_LENGTH_SECONDS=300                                   # Length of each video chunk in seconds (e.g., 300 = 5 minutes)
     MAX_VIDEO_CHUNKS=20                                              # Maximum number of video chunks to keep on disk. Set to 0 or less to disable.
+    CHUNKS_TO_KEEP_AFTER_FIRE=10                                     # Number of additional chunks to save AFTER a fire is first detected.
     ```
 
 **Important**:
