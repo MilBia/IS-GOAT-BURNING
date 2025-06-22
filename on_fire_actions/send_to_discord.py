@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from dataclasses import field
 import logging as log
+from urllib.parse import urlparse
 
 from aiohttp import ClientSession
 from vidgear.gears.helper import logger_handler
@@ -49,7 +50,8 @@ class SendToDiscord:
             for url, result in zip(self.webhooks, results, strict=False):
                 if isinstance(result, Exception):
                     # This catches TimeoutError, ClientError, etc.
-                    logger.error(f"Failed to send to webhook {url}: [{result.__class__.__name__}] {result}")
+                    sanitized_host = urlparse(url).hostname or "invalid-host"
+                    logger.error(f"Failed to send to webhook {sanitized_host}: [{result.__class__.__name__}] {result}")
                 else:
                     success_count += 1
 
