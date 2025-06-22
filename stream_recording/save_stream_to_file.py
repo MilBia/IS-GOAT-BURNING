@@ -274,17 +274,58 @@ class AsyncVideoChunkSaver:
             return
 
         # 2. Identify "cold" vs "hot" files and start moving cold files immediately.
-        logger.info(f"Queueing {len(self.pre_fire_buffer)} pre-fire chunks for archiving.")
-        for path in self.pre_fire_buffer:
+        cold_chunks = list(self.pre_fire_buffer)[:-1]
+        logger.info(f"Queueing {len(cold_chunks)} pre-fire chunks for archiving.")
+        for path in cold_chunks:
             try:
                 self.archive_queue.put_nowait((path, event_dir))
             except asyncio.QueueFull:
                 logger.error(f"Archive queue is full. Failed to queue chunk for archiving {path}.")
 
-        # 3. Continue to save the declared number of post-fire chunks.
+        # 3. Call the specialized handlers for live chunks seving
+        await self._finalize_active_chunk_async(event_dir)
+        await self._save_post_fire_chunks_async(event_dir)
+
+    async def _finalize_active_chunk_async(self, event_dir: str):
+        """
+        Phase 1 of fire event handling: continues recording until the currently
+        active video chunk is finalized and queued for archiving.
+        """
+        logger.info("Finalizing the video chunk active during fire detection...")
+        loop = asyncio.get_running_loop()
+        active_chunk_saved = False
+
+        while not active_chunk_saved:
+            try:
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                if frame is None or not self.signal_handler.KEEP_PROCESSING:
+                    logger.warning("Shutdown signaled while finalizing active chunk.")
+                    break  # Exit this loop
+
+                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame)
+
+                if closed_chunk:
+                    # The active chunk is now closed and saved. Queue it for archiving.
+                    logger.info("Active chunk finalized and queued for archive.")
+                    self.archive_queue.put_nowait((closed_chunk, event_dir))
+                    active_chunk_saved = True  # Signal to exit this loop
+
+            except asyncio.TimeoutError:
+                logger.error("Timeout waiting for frame while finalizing active chunk. Aborting event.")
+                break  # Exit this loop
+
+    async def _save_post_fire_chunks_async(self, event_dir: str):
+        """
+        Phase 2 of fire event handling: saves a configured number of additional
+        chunks after the initial event.
+        """
+        if self.chunks_to_keep_after_fire <= 0:
+            return
+
+        logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks...")
         loop = asyncio.get_running_loop()
         chunks_saved_count = 0
-        logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks...")
+
         while chunks_saved_count < self.chunks_to_keep_after_fire:
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
