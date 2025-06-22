@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from dataclasses import field
 import logging as log
+from urllib.parse import urlparse
 
 from aiohttp import ClientSession
 from vidgear.gears.helper import logger_handler
@@ -30,11 +31,28 @@ class SendToDiscord:
             headers={"User-Agent": "Python/3", "Content-Type": "application/json"},
             timeout=3,
         ) as response:
+            # Raise an exception for non-2xx status codes to catch them later
+            response.raise_for_status()
             return response
 
     async def __call__(self):
+        """
+        Sends messages concurrently and handles exceptions for each request
+        individually, ensuring that one failed request does not stop others.
+        """
         async with ClientSession() as session:
-            logger.info("Sending messages...")
+            logger.info(f"Sending message to {len(self.webhooks)} webhook(s)...")
             tasks = [self.send_to_webhook(session, url) for url in self.webhooks]
-            await asyncio.gather(*tasks)
-            logger.info("Sent message to hooks")
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            success_count = 0
+            for url, result in zip(self.webhooks, results, strict=True):
+                if isinstance(result, Exception):
+                    # This catches TimeoutError, ClientError, etc.
+                    sanitized_host = urlparse(url).hostname or "invalid-host"
+                    logger.error(f"Failed to send to webhook {sanitized_host}: [{result.__class__.__name__}] {result}")
+                else:
+                    success_count += 1
+
+            logger.info(f"Message sending complete. Successful: {success_count}/{len(self.webhooks)}.")
