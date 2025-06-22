@@ -120,7 +120,7 @@ class AsyncVideoChunkSaver:
                     # Remove the oldest file
                     try:
                         os.remove(file_path_to_delete)
-                        logger.info(f"Removed oldest chunk to maintain limit: {oldest_file}")
+                        logger.debug(f"Removed oldest chunk: {oldest_file}")
                     except OSError as e:
                         # Log errors on a per-file basis.
                         logger.error(f"Could not remove file {file_path_to_delete}: {e}")
@@ -143,7 +143,7 @@ class AsyncVideoChunkSaver:
         previous_chunk_path = self.current_video_path
         if self.writer is not None:
             self.writer.release()
-            logger.info(f"Saved video chunk: {self.current_video_path}")
+            logger.info(f"Saved video chunk: {os.path.basename(previous_chunk_path)}")
 
         # Generate a new timestamped filename
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -156,7 +156,7 @@ class AsyncVideoChunkSaver:
         # Reset the chunk timer
         self.chunk_start_time = time.time()
         self.pre_fire_buffer.append(self.current_video_path)
-        logger.info(f"Started new video chunk: {self.current_video_path}")
+        logger.info(f"Started new video chunk: {os.path.basename(self.current_video_path)}")
         return previous_chunk_path
 
     def _write_frame_blocking(self, frame) -> str | None:
@@ -201,7 +201,7 @@ class AsyncVideoChunkSaver:
                     # Re-enable normal chunk cleanup after event is handled
                     self.reset_after_fire()
                     self.chunk_limit_action = original_cleanup_action
-                    logger.info("Restored normal chunk rotation policy.")
+                    logger.info("Fire event handled. Restoring normal chunk rotation policy.")
 
             try:
                 # Wait for a frame with a timeout to remain responsive to signals.
@@ -217,7 +217,7 @@ class AsyncVideoChunkSaver:
                 logger.info("Writer task was cancelled.")
                 break  # Exit if task is cancelled
             except Exception as e:
-                logger.error(f"Error writing frame: {e}")
+                logger.error(f"Error writing frame: {e}", exc_info=True)
                 break  # Exit the writer task on error to prevent repeated failures
 
         # Final cleanup when the loop is broken
@@ -239,7 +239,7 @@ class AsyncVideoChunkSaver:
         try:
             if os.path.exists(chunk_path):
                 shutil.move(chunk_path, event_dir)
-                logger.info(f"Archived {os.path.basename(chunk_path)}.")
+                logger.debug(f"Archived {os.path.basename(chunk_path)}.")
             else:
                 logger.warning(f"Chunk {chunk_path} not found for archiving.")
         except (OSError, shutil.Error) as e:
@@ -274,6 +274,7 @@ class AsyncVideoChunkSaver:
             return
 
         # 2. Identify "cold" vs "hot" files and start moving cold files immediately.
+        logger.info(f"Queueing {len(self.pre_fire_buffer)} pre-fire chunks for archiving.")
         for path in self.pre_fire_buffer:
             try:
                 self.archive_queue.put_nowait((path, event_dir))
@@ -305,9 +306,3 @@ class AsyncVideoChunkSaver:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for frame during post-fire recording.")
                 break
-
-        # Reset the system state.
-        # self.reset_after_fire()
-        # self.pre_fire_buffer.clear()
-        # self.signal_handler.reset_fire_event()
-        # logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
