@@ -159,7 +159,7 @@ class AsyncVideoChunkSaver:
         logger.info(f"Started new video chunk: {self.current_video_path}")
         return previous_chunk_path
 
-    def _write_frame_blocking(self, frame) -> None:
+    def _write_frame_blocking(self, frame) -> str | None:
         """The actual blocking I/O call. This runs in the thread pool."""
         closed_chunk_path = None
         is_new_chunk_needed = self.writer is None or (time.time() - self.chunk_start_time) >= self.chunk_length_seconds
@@ -181,6 +181,11 @@ class AsyncVideoChunkSaver:
             # You might want to log this or drop the frame.
             logger.warning("Frame queue is full, dropping a frame.")
 
+    def reset_after_fire(self):
+        self.pre_fire_buffer.clear()
+        self.signal_handler.reset_fire_event()
+        logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
+
     async def _writer_task(self):
         """The main consumer task that runs in the background."""
         loop = asyncio.get_running_loop()
@@ -194,6 +199,7 @@ class AsyncVideoChunkSaver:
                     await self._handle_fire_event_async()
                 finally:
                     # Re-enable normal chunk cleanup after event is handled
+                    self.reset_after_fire()
                     self.chunk_limit_action = original_cleanup_action
                     logger.info("Restored normal chunk rotation policy.")
 
@@ -269,7 +275,10 @@ class AsyncVideoChunkSaver:
 
         # 2. Identify "cold" vs "hot" files and start moving cold files immediately.
         for path in self.pre_fire_buffer:
-            self.archive_queue.put_nowait((path, event_dir))
+            try:
+                self.archive_queue.put_nowait((path, event_dir))
+            except asyncio.QueueFull:
+                logger.error(f"Archive queue is full. Failed to queue chunk for archiving {path}.")
 
         # 3. Continue to save the declared number of post-fire chunks.
         loop = asyncio.get_running_loop()
@@ -288,13 +297,17 @@ class AsyncVideoChunkSaver:
                 # The newly closed chunk is now "cold" and can be archived.
                 if closed_chunk:
                     chunks_saved_count += 1
-                    self.archive_queue.put_nowait((closed_chunk, event_dir))
+                    try:
+                        self.archive_queue.put_nowait((closed_chunk, event_dir))
+                    except asyncio.QueueFull:
+                        logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
 
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for frame during post-fire recording.")
                 break
 
         # Reset the system state.
-        self.pre_fire_buffer.clear()
-        self.signal_handler.reset_fire_event()
-        logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
+        # self.reset_after_fire()
+        # self.pre_fire_buffer.clear()
+        # self.signal_handler.reset_fire_event()
+        # logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
