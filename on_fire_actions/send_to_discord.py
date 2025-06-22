@@ -47,7 +47,7 @@ class SendToDiscord:
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             success_count = 0
-            for url, result in zip(self.webhooks, results, strict=False):
+            for url, result in zip(self.webhooks, results, strict=True):
                 if isinstance(result, Exception):
                     # This catches TimeoutError, ClientError, etc.
                     sanitized_host = urlparse(url).hostname or "invalid-host"
