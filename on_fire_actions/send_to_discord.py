@@ -43,19 +43,14 @@ class SendToDiscord:
             logger.info(f"Sending message to {len(self.webhooks)} webhook(s)...")
             tasks = [self.send_to_webhook(session, url) for url in self.webhooks]
 
-            # --- The Fix: Use return_exceptions=True ---
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # --- Post-processing to log results ---
             success_count = 0
             for url, result in zip(self.webhooks, results, strict=False):
                 if isinstance(result, Exception):
                     # This catches TimeoutError, ClientError, etc.
-                    # We log the specific URL that failed, which is crucial for debugging.
                     logger.error(f"Failed to send to webhook {url}: {result.__class__.__name__}")
                 else:
-                    # Optional: Log success for verbosity
-                    logger.debug(f"Successfully sent to webhook {url} with status {result.status}")
                     success_count += 1
 
             logger.info(f"Message sending complete. Successful: {success_count}/{len(self.webhooks)}.")
