@@ -6,6 +6,7 @@ import numpy as np
 
 from fire_detection.async_frame_generator import frame_gen
 from fire_detection.async_frame_generator import frame_gen_with_iterator
+from fire_detection.signal_handler import SignalHandler
 from setting import CUDA
 from setting import OPEN_CL
 
@@ -15,6 +16,9 @@ elif CUDA:
     from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.cam_gear.cam_gear import YTCamGear
+
+
+signal_handler = SignalHandler()
 
 
 async def _detect_fire(
@@ -64,6 +68,7 @@ async def _detect_loop(
         cv2.imshow("output", output)
 
         if fire:
+            signal_handler.fire_detected()
             await on_fire_action()
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -96,6 +101,7 @@ async def _detect_loop_with_frequency(
         cv2.imshow("output", output)
 
         if fire:
+            signal_handler.fire_detected()
             await on_fire_action()
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
