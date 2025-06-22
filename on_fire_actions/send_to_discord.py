@@ -49,7 +49,7 @@ class SendToDiscord:
             for url, result in zip(self.webhooks, results, strict=False):
                 if isinstance(result, Exception):
                     # This catches TimeoutError, ClientError, etc.
-                    logger.error(f"Failed to send to webhook {url}: {result.__class__.__name__}")
+                    logger.error(f"Failed to send to webhook {url}: [{result.__class__.__name__}] {result}")
                 else:
                     success_count += 1
 
