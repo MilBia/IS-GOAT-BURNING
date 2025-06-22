@@ -40,6 +40,7 @@ class AsyncVideoChunkSaver:
     fps: float = 30.0
     FILENAME_PREFIX: str = "goat-cam_"
     FILENAME_SUFFIX: str = ".mp4"
+    MAX_TIMEOUT_RETRIES: int = 3
 
     # --- Internal State ---
     frame_queue: asyncio.Queue = field(init=False, default_factory=asyncio.Queue)
@@ -53,6 +54,7 @@ class AsyncVideoChunkSaver:
     chunk_limit_action: Callable = field(init=False, default=None, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
     pre_fire_buffer: deque = field(init=False)
+    is_new_chunk: bool = field(init=False, default=False)
 
     def __post_init__(self):
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
@@ -91,7 +93,11 @@ class AsyncVideoChunkSaver:
         await self.frame_queue.put(None)
         await self.archive_queue.put(None)
         # Wait for the task to complete
-        await asyncio.gather(self._task, self._archive_task, return_exceptions=True)
+        await asyncio.gather(
+            asyncio.shield(self._task),
+            asyncio.shield(self._archive_task),
+            return_exceptions=True,
+        )
 
     def _noop(self, *args, **kwargs) -> None:
         """A "no-operation" method that does nothing, used when saving is disabled."""
@@ -155,7 +161,7 @@ class AsyncVideoChunkSaver:
 
         # Reset the chunk timer
         self.chunk_start_time = time.time()
-        self.pre_fire_buffer.append(self.current_video_path)
+        self.is_new_chunk = True
         logger.info(f"Started new video chunk: {os.path.basename(self.current_video_path)}")
         return previous_chunk_path
 
@@ -170,6 +176,9 @@ class AsyncVideoChunkSaver:
 
         if self.writer:
             self.writer.write(frame)
+            if self.is_new_chunk:
+                self.pre_fire_buffer.append(self.current_video_path)
+                self.is_new_chunk = False
         return closed_chunk_path
 
     def _write_frame(self, frame) -> None:
@@ -294,10 +303,14 @@ class AsyncVideoChunkSaver:
         logger.info("Finalizing the video chunk active during fire detection...")
         loop = asyncio.get_running_loop()
         active_chunk_saved = False
+        timeout_retries = 0
 
         while not active_chunk_saved:
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+
+                timeout_retries = 0
+
                 if frame is None or not self.signal_handler.KEEP_PROCESSING:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     break  # Exit this loop
@@ -307,12 +320,21 @@ class AsyncVideoChunkSaver:
                 if closed_chunk:
                     # The active chunk is now closed and saved. Queue it for archiving.
                     logger.info("Active chunk finalized and queued for archive.")
-                    self.archive_queue.put_nowait((closed_chunk, event_dir))
+                    try:
+                        self.archive_queue.put_nowait((closed_chunk, event_dir))
+                    except asyncio.QueueFull:
+                        logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
                     active_chunk_saved = True  # Signal to exit this loop
 
             except asyncio.TimeoutError:
-                logger.error("Timeout waiting for frame while finalizing active chunk. Aborting event.")
-                break  # Exit this loop
+                timeout_retries += 1
+                logger.warning(
+                    f"Timeout waiting for frame while finalizing active chunk. "
+                    f"Retry {timeout_retries}/{self.MAX_TIMEOUT_RETRIES}..."
+                )
+                if timeout_retries >= self.MAX_TIMEOUT_RETRIES:
+                    logger.error("Timeout waiting for frame while finalizing active chunk. Aborting event.")
+                    break  # Exit this loop
 
     async def _save_post_fire_chunks_async(self, event_dir: str):
         """
@@ -325,10 +347,14 @@ class AsyncVideoChunkSaver:
         logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks...")
         loop = asyncio.get_running_loop()
         chunks_saved_count = 0
+        timeout_retries = 0
 
         while chunks_saved_count < self.chunks_to_keep_after_fire:
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+
+                timeout_retries = 0
+
                 if frame is None or not self.signal_handler.KEEP_PROCESSING:
                     logger.warning("Shutdown signaled during post-fire recording.")
                     break
@@ -345,5 +371,11 @@ class AsyncVideoChunkSaver:
                         logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
 
             except asyncio.TimeoutError:
-                logger.error("Timeout waiting for frame during post-fire recording.")
-                break
+                timeout_retries += 1
+                logger.warning(
+                    f"Timeout waiting for frame while finalizing active chunk. "
+                    f"Retry {timeout_retries}/{self.MAX_TIMEOUT_RETRIES}..."
+                )
+                if timeout_retries >= self.MAX_TIMEOUT_RETRIES:
+                    logger.error("Timeout waiting for frame during post-fire recording.")
+                    break
