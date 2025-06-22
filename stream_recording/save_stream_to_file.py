@@ -1,7 +1,6 @@
 import asyncio
 from collections import deque
 from collections.abc import Callable
-from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -92,7 +91,7 @@ class AsyncVideoChunkSaver:
         await self.frame_queue.put(None)
         await self.archive_queue.put(None)
         # Wait for the task to complete
-        await asyncio.gather(self._writer_task, self._archive_task, return_exceptions=True)
+        await asyncio.gather(self._task, self._archive_task, return_exceptions=True)
 
     def _noop(self, *args, **kwargs) -> None:
         """A "no-operation" method that does nothing, used when saving is disabled."""
@@ -141,7 +140,7 @@ class AsyncVideoChunkSaver:
         self.chunk_limit_action()
 
         # Release the previous writer if it exists
-        previous_chunk_path = deepcopy(self.current_video_path)
+        previous_chunk_path = self.current_video_path
         if self.writer is not None:
             self.writer.release()
             logger.info(f"Saved video chunk: {self.current_video_path}")
@@ -191,11 +190,12 @@ class AsyncVideoChunkSaver:
                 # Disable normal chunk cleanup during event handling
                 original_cleanup_action = self.chunk_limit_action
                 self.chunk_limit_action = self._noop
-                await self._handle_fire_event_async()
-                # Re-enable normal chunk cleanup after event is handled
-                self.chunk_limit_action = original_cleanup_action
-                logger.info("Restored normal chunk rotation policy.")
-                continue
+                try:
+                    await self._handle_fire_event_async()
+                finally:
+                    # Re-enable normal chunk cleanup after event is handled
+                    self.chunk_limit_action = original_cleanup_action
+                    logger.info("Restored normal chunk rotation policy.")
 
             try:
                 # Wait for a frame with a timeout to remain responsive to signals.
