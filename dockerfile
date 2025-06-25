@@ -5,6 +5,8 @@ ENV PYTHONUNBUFFERED 1
 ENV PIP_NO_CACHE_DIR 1
 ENV PIP_DISABLE_PIP_VERSION_CHECK 1
 
+WORKDIR /app
+
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
     libgl1-mesa-glx libglib2.0-0 && \
@@ -12,13 +14,11 @@ RUN apt-get update && \
     apt-get autoremove --yes && \
     pip install --upgrade pip
 
-WORKDIR /code
-
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY . .
 
-USER nobody:nogroup
+ENV PYTHONPATH "${PYTHONPATH}:/app"
 
-CMD ["python", "./burning_goat_detection.py"]
+CMD ["python3", "burning_goat_detection.py"]

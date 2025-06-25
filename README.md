@@ -134,12 +134,24 @@ Docker allows you to run the application in a consistent and isolated environmen
         ```bash
         docker run --name burning_goat_detection_container -d burning_goat_detection
         ```
+        -   To save video chunks to your local machine, you need to mount a volume using the `-v` flag. This maps a directory on your host machine to the `VIDEO_OUTPUT_DIRECTORY` inside the container.
+            -   **Example:**
+                ```bash
+                docker run --name burning_goat_detection_container -v /path/to/your/local/recordings:/app/recordings -d burning_goat_detection
+                ```
+            -   In this example, `/path/to/your/local/recordings` is a directory on your computer where you want to save the videos. The `/app/recordings` part should match the `VIDEO_OUTPUT_DIRECTORY` in your `.env` file if you have changed it from the default.
 
     -  **With GPU support (CUDA):**
         ```bash
         docker run --gpus all --name burning_goat_detection_container -d burning_goat_detection
         ```
         -   `--gpus all`:  This flag is **critical** for enabling CUDA acceleration. It tells Docker to make all available GPUs accessible to the container. If you only want to use specific GPUs, you can specify their IDs instead (e.g., `--gpus device=0,1`).
+        -   To save video chunks to your local machine, you need to mount a volume using the `-v` flag. This maps a directory on your host machine to the `VIDEO_OUTPUT_DIRECTORY` inside the container.
+            -   **Example:**
+                ```bash
+                docker run --gpus all --name burning_goat_detection_container -v /path/to/your/local/recordings:/app/recordings -d burning_goat_detection
+                ```
+            -   In this example, `/path/to/your/local/recordings` is a directory on your computer where you want to save the videos. The `/app/recordings` part should match the `VIDEO_OUTPUT_DIRECTORY` in your `.env` file if you have changed it from the default.
 
 6.  **Accessing Container Logs:** To view the application's output and check for errors, you can view the container's logs:
     ```bash
