@@ -12,7 +12,8 @@ RUN apt-get update && \
     libgl1-mesa-glx libglib2.0-0 gosu && \
     apt-get clean autoclean && \
     apt-get autoremove --yes && \
-    pip install --upgrade pip
+    pip install --upgrade pip && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
