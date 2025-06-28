@@ -9,7 +9,7 @@ WORKDIR /app
 
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
-    libgl1-mesa-glx libglib2.0-0 && \
+    libgl1-mesa-glx libglib2.0-0 gosu && \
     apt-get clean autoclean && \
     apt-get autoremove --yes && \
     pip install --upgrade pip
@@ -17,7 +17,17 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# Create the recordings directory. The RUN chown from your original fix is no longer needed here.
+RUN mkdir -p /app/recordings
+
 COPY . .
+
+# Copy the entrypoint script and make it executable
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set the entrypoint to our script
+ENTRYPOINT ["entrypoint.sh"]
 
 ENV PYTHONPATH "${PYTHONPATH}:/app"
 

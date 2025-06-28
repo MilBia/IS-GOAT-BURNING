@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# Set the ownership of the recordings directory to the nobody user and group.
+# This ensures that the application, running as nobody, can write to the volume.
+chown nobody:nogroup /app/recordings
+
+# Execute the command passed to this script (the Dockerfile's CMD)
+# as the nobody user. `exec` replaces the shell process with the new process,
+# ensuring that signals are passed correctly.
+#
+# We use `gosu` here, which is a lightweight `sudo` alternative perfect for containers.
+exec gosu nobody:nogroup "$@"

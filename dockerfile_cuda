@@ -99,10 +99,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-numpy \
     libgl1 \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage
 COPY --from=builder /usr/local /usr/local
+
+# Create the recordings directory. The RUN chown from your original fix is no longer needed here.
+RUN mkdir -p /app/recordings
 
 # Copy the application code
 COPY . .
@@ -113,6 +117,13 @@ RUN pip3 install -r requirements_cuda.txt
 # Remove the opencv-python package installed by pip (if any) to avoid conflicts
 # Ignore error if package does not exist.
 RUN pip3 uninstall -y opencv-python opencv-python-headless || true
+
+# Copy the entrypoint script and make it executable
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set the entrypoint to our script
+ENTRYPOINT ["entrypoint.sh"]
 
 # Set environment variables (Optional, but good practice)
 ENV PYTHONPATH "${PYTHONPATH}:/app"
