@@ -134,12 +134,46 @@ Docker allows you to run the application in a consistent and isolated environmen
         ```bash
         docker run --name burning_goat_detection_container -d burning_goat_detection
         ```
+        -   To save video chunks to your local machine, you need to mount a volume using the `-v` flag. By default, this maps to `/app/recordings` inside the container.
+            -   **Example:**
+                ```bash
+                docker run --name burning_goat_detection_container -v /path/to/your/local/recordings:/app/recordings -d burning_goat_detection
+                ```
+            -   In this example, `/path/to/your/local/recordings` is a directory on your computer where you want to save the videos. The `/app/recordings` part is the default path inside the container. If you need to change this, please see the **Using a Custom Recordings Directory** section below.
 
     -  **With GPU support (CUDA):**
         ```bash
         docker run --gpus all --name burning_goat_detection_container -d burning_goat_detection
         ```
         -   `--gpus all`:  This flag is **critical** for enabling CUDA acceleration. It tells Docker to make all available GPUs accessible to the container. If you only want to use specific GPUs, you can specify their IDs instead (e.g., `--gpus device=0,1`).
+        -   To save video chunks, mount a volume as shown above.
+            -   **Example:**
+                ```bash
+                docker run --gpus all --name burning_goat_detection_container -v /path/to/your/local/recordings:/app/recordings -d burning_goat_detection
+                ```
+            -   In this example, `/path/to/your/local/recordings` is a directory on your computer where you want to save the videos. The `/app/recordings` part is the default path inside the container. If you need to change this, please see the **Using a Custom Recordings Directory** section below.
+
+    -  **Configuring with an `.env` file:**
+        The recommended way to provide configuration (like email credentials or Discord webhooks) is to use an `.env` file with the `--env-file` flag. This securely injects all your settings into the container.
+
+        - **Example:**
+          ```bash
+          docker run --name burning_goat_detection_container \
+            --env-file .env \
+            -v /path/to/your/local/recordings:/app/recordings \
+            -d burning_goat_detection
+          ```
+
+    -  **Using a Custom Recordings Directory:**
+        If you wish to change the directory where videos are saved inside the container, you must update both the volume mount (`-v`) and provide the `VIDEO_OUTPUT_DIRECTORY` environment variable (`-e`). **The path for the environment variable must match the container-side path of the volume mount.**
+
+        -   **Example with a custom directory:**
+            ```bash
+            docker run --name burning_goat_detection_container \
+              -v /path/to/your/local/custom_vids:/app/custom_vids \
+              -e VIDEO_OUTPUT_DIRECTORY=/app/custom_vids \
+              -d burning_goat_detection
+            ```
 
 6.  **Accessing Container Logs:** To view the application's output and check for errors, you can view the container's logs:
     ```bash
