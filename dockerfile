@@ -10,7 +10,7 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
     libgl1-mesa-glx libglib2.0-0 gosu && \
-    apt-get clean autoclean && \
+    apt-get clean && \
     apt-get autoremove --yes && \
     pip install --upgrade pip && \
     rm -rf /var/lib/apt/lists/*

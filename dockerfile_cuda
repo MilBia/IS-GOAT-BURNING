@@ -100,6 +100,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-numpy \
     libgl1 \
     gosu \
+    apt-get clean && \
+    apt-get autoremove --yes && \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage
