@@ -1,8 +1,5 @@
 #!/bin/sh
 
-# Set the ownership of the recordings directory to the nobody user and group.
-# This ensures that the application, running as nobody, can write to the volume.
-chown nobody:nogroup "${VIDEO_OUTPUT_DIRECTORY:-/app/recordings}"
 # Ensure the recordings directory exists and has the correct permissions.
 VIDEO_DIR="${VIDEO_OUTPUT_DIRECTORY:-/app/recordings}"
 mkdir -p "$VIDEO_DIR"
