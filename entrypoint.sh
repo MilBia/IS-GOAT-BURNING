@@ -28,7 +28,7 @@ case "$VIDEO_DIR" in
     ;;
 esac
 
-mkdir -p "$VIDEO_DIR"
+mkdir -p "$VIDEO_DIR" || { echo "Error: Failed to create directory '$VIDEO_DIR'. It might be a file or you may not have permissions." >&2; exit 1; }
 chown nobody:nogroup "$VIDEO_DIR"
 
 # Execute the command passed to this script (the Dockerfile's CMD)

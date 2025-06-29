@@ -1,9 +1,9 @@
 FROM python:3.13-slim-bullseye
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV PIP_NO_CACHE_DIR 1
-ENV PIP_DISABLE_PIP_VERSION_CHECK 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
@@ -30,6 +30,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Set the entrypoint to our script
 ENTRYPOINT ["entrypoint.sh"]
 
-ENV PYTHONPATH "${PYTHONPATH}:/app"
+ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
 CMD ["python3", "burning_goat_detection.py"]
