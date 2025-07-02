@@ -120,6 +120,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 *   **`FindFiles`:** Use to locate relevant modules or discover the project structure.
 *   **`Edit`:** Apply changes surgically. Do not rewrite entire files.
 *   **`Shell`:** Use for all command-line operations. This is **REQUIRED** for running `pre-commit`.
+    *   **Docker Multi-Stage Builds:** When building Docker images with multiple stages, use the `--target` flag to specify the desired build stage (e.g., `docker build --target cpu .`).
 
 ## 10. Directory- and File-Specific Instructions
 
