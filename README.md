@@ -113,18 +113,18 @@ Docker allows you to run the application in a consistent and isolated environmen
 
 4.  **Build the Docker image:**
 
-    -  **Base run (CPU only):** This build uses the `Dockerfile` and will run the application using the CPU. This is suitable if you don't have an NVIDIA GPU or don't want to use CUDA.
+    -  **Base run (CPU only):** This build will run the application using the CPU. This is suitable if you don't have an NVIDIA GPU or don't want to use CUDA.
         ```bash
-        docker build -f dockerfile -t burning_goat_detection .
+        docker build --target cpu -t burning_goat_detection .
         ```
 
-    -  **With GPU support (CUDA):** This build uses the `Dockerfile_cuda` and will run the application using the GPU.
+    -  **With GPU support (CUDA):** This build will run the application using the GPU.
         ```bash
-        docker build -f dockerfile_cuda --build-arg CUDA_ARCH=YOUR_GPU_COMPUTE_CAPABILITY -t burning_goat_detection .
+        docker build --target gpu --build-arg CUDA_ARCH=YOUR_GPU_COMPUTE_CAPABILITY -t burning_goat_detection .
         ```
         -   **Replace `YOUR_GPU_COMPUTE_CAPABILITY` with the compute capability you determined in the previous step.** For example, if your GPU's compute capability is 8.6, the command would be:
             ```bash
-            docker build -f dockerfile_cuda --build-arg CUDA_ARCH=8.6 -t burning_goat_detection .
+            docker build --target gpu --build-arg CUDA_ARCH=8.6 -t burning_goat_detection .
             ```
         -   The `--build-arg CUDA_ARCH` flag passes the GPU architecture to the Dockerfile, which uses it to optimize the OpenCV build for your specific GPU.  If you skip this step, the application might not run correctly or might not use the GPU effectively.
 
