@@ -2,7 +2,7 @@
 
 # --- Base Stage ---
 # Use a specific Python version for consistency.
-FROM python:3.10-slim-bullseye AS base
+FROM python:3.13-slim-bullseye AS base
 
 # Set environment variables for Python and PIP.
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -51,18 +51,27 @@ CMD ["python3", "burning_goat_detection.py"]
 
 # --- GPU Builder Stage ---
 # This stage builds OpenCV with CUDA support.
-FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04 AS gpu_builder
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS gpu_builder
 
 # Set the working directory.
 WORKDIR /app
 
+ENV TZ=Etc/UTC
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install system dependencies for building OpenCV.
+RUN apt-get update && apt-get install software-properties-common -y --no-install-recommends && add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends python3.13-full python3.13-dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
-    libx264-dev libgtk-3-dev python3-dev python3-pip wget unzip curl \
-    python3-numpy && \
+    libx264-dev libgtk-3-dev python3-pip wget unzip curl \
+    python3-numpy gosu && \
     rm -rf /var/lib/apt/lists/*
+
+# CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
+RUN python3.13 -m ensurepip --upgrade --default-pip && \
+    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools numpy
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -90,9 +99,10 @@ RUN mkdir -p /app/opencv/build && \
           -D WITH_TBB=ON \
           -D BUILD_opencv_python3=ON \
           -D BUILD_opencv_python2=OFF \
-          -D PYTHON_EXECUTABLE=$(which python3) \
-          -D PYTHON3_LIBRARY=$(python3 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/site-packages \
-          -D PYTHON3_INCLUDE_DIR=$(python3 -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())") \
+          -D PYTHON_EXECUTABLE=$(which python3.13) \
+          -D PYTHON3_LIBRARY=$(python3.13 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/site-packages \
+          -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())") \
+          -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
           -D INSTALL_PYTHON_EXAMPLES=OFF \
           -D BUILD_EXAMPLES=OFF \
           -D OPENCV_ENABLE_NONFREE=ON \
@@ -101,6 +111,11 @@ RUN mkdir -p /app/opencv/build && \
     make -j$(nproc) && \
     make install && \
     ldconfig
+
+# Clean dependencies.
+RUN apt-get autoremove --yes && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the entrypoint script and make it executable.
 COPY entrypoint.sh /usr/local/bin/
@@ -114,33 +129,37 @@ ENTRYPOINT ["entrypoint.sh"]
 
 # --- GPU Runtime Stage ---
 # This stage is for the GPU-accelerated image.
-FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04 AS gpu
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS gpu
 
 # Set the working directory.
 WORKDIR /app
 
-# Install minimal runtime dependencies.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
-    libx264-dev libgtk-3-0 python3 python3-pip python3-numpy libgl1 gosu && \
-    pip3 install --upgrade pip && \
-    apt-get autoremove --yes && \
+ENV TZ=Etc/UTC
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends  \
+    python3.13-full \
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local /usr/local
 
+RUN ldconfig
+
 # Copy GPU-specific requirements and install them.
-COPY requirements.txt .
 COPY requirements_cuda.txt .
-RUN pip install -r requirements_cuda.txt
+RUN python3.13 -m ensurepip --upgrade --default-pip
+RUN python3.13 -m pip install --no-cache-dir -r requirements_cuda.txt
 
 # Uninstall conflicting OpenCV packages.
-RUN pip3 uninstall -y opencv-python opencv-python-headless || true
+RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the application code.
 COPY . .
 
 # Default command to run the application.
-CMD ["python3", "burning_goat_detection.py"]
+CMD ["python3.13", "burning_goat_detection.py"]
