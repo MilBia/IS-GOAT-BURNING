@@ -60,7 +60,7 @@ ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies for building OpenCV.
-RUN apt-get update && apt-get install software-properties-common -y --no-install-recommends && add-apt-repository ppa:deadsnakes/ppa && \
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends python3.13-full python3.13-dev
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
@@ -100,8 +100,8 @@ RUN mkdir -p /app/opencv/build && \
           -D BUILD_opencv_python3=ON \
           -D BUILD_opencv_python2=OFF \
           -D PYTHON_EXECUTABLE=$(which python3.13) \
-          -D PYTHON3_LIBRARY=$(python3.13 -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")/site-packages \
-          -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())") \
+          -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
+          -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
           -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
           -D INSTALL_PYTHON_EXAMPLES=OFF \
           -D BUILD_EXAMPLES=OFF \
@@ -129,7 +129,7 @@ ENTRYPOINT ["entrypoint.sh"]
 
 # --- GPU Runtime Stage ---
 # This stage is for the GPU-accelerated image.
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS gpu
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 
 # Set the working directory.
 WORKDIR /app
@@ -140,7 +140,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends  \
-    python3.13-full \
+    python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
