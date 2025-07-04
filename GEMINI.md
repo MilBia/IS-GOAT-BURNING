@@ -58,20 +58,66 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
         - Added `SLACK_HOOK` to `.env.example` and `setting.py`.
         ```
 
-## 4. Security Mandates
+## 4. Responding to Pull Request Reviews
+
+When asked to apply changes from a pull request review, you **MUST** act as a developer by following this three-phase process.
+
+### Phase 1: Ingest and Plan
+
+1.  **Request Context:** You **MUST** ask the user to provide the following:
+    *   The complete `git diff` of the code that was reviewed.
+    *   A list of all review comments, grouped by filename.
+2.  **Formulate a Plan:** You **MUST** process each review comment as a distinct sub-task. Create a checklist of the changes you will make.
+    *   **Example Plan:**
+        ```
+        My plan is to address the review comments as follows:
+        - [ ] In `on_fire_actions/send_email.py`: Change the `timeout` from 1 to 3 seconds.
+        - [ ] In `fire_detection/utils.py`: Add a comment explaining the HSV color range.
+        - [ ] In `README.md`: Fix the typo in the Docker run command.
+        ```
+3.  **Confirm the Plan:** Present this checklist to the user for approval before you begin editing files.
+
+### Phase 2: Execute and Validate
+
+1.  **Iterate and Implement:** Address each item on your plan one by one, using the `ReadFile` and `Edit` tools for each file modification.
+2.  **Final Validation:** After all changes have been applied, you are **REQUIRED** to run a final validation using the `Shell` tool:
+    ```bash
+    pre-commit run --all-files
+    ```
+3.  **Debugging Loop:** If validation fails, analyze the error, state a hypothesis, propose a fix, and re-run validation until it passes.
+
+### Phase 3: Summarize and Report
+
+1.  **Confirm Completion:** Present your initial checklist again, this time with all items checked off, to confirm you have addressed all review feedback.
+2.  **Propose Commit Message:** Generate a single, well-formatted commit message that summarizes the changes.
+    *   **Example Commit Message:**
+        ```
+        refactor: apply suggestions from PR review
+
+        - Increased email timeout for better reliability.
+        - Improved code comments in the fire detection utility.
+        - Corrected a typo in the documentation.
+        ```
+3.  **Propose PR Comment:** Provide a template for the user to post back on the GitHub PR.
+    *   **Example PR Comment:**
+        ```
+        Thank you for the review! I have addressed all your feedback and pushed the changes. Please take another look when you have a moment.
+        ```
+
+## 5. Security Mandates
 
 *   **NEVER log secrets:** Under no circumstances should credentials, API keys, or personal information be logged. When logging objects or data, ensure sensitive fields are excluded.
 *   **Sanitize Shell Inputs:** Be extremely cautious with commands passed to the `Shell` tool. Never pass user-provided or dynamically generated strings directly to shell commands without validation.
 *   **Validate Webhook URLs:** Before using a Discord or other webhook URL, ensure it has a valid format.
 
-## 5. Testing Guidelines
+## 6. Testing Guidelines
 
 *   **Location:** All tests should be placed in a `tests/` directory, mirroring the main project structure (e.g., `tests/on_fire_actions/test_send_email.py`).
 *   **Framework:** Use `pytest` for running tests and `unittest.mock` for mocking external services like SMTP servers or Discord webhooks.
 *   **Requirement:** Any new feature (e.g., a new notification service) or significant bug fix **SHOULD** be accompanied by corresponding tests that validate its behavior.
 *   **Execution:** Instruct the user on how to run tests using `pytest`.
 
-## 6. Core Principles
+## 7. Core Principles
 
 These are the fundamental architectural philosophies of this project. Adhere to them in all your work.
 
@@ -79,7 +125,7 @@ These are the fundamental architectural philosophies of this project. Adhere to 
 *   **Configuration via Environment:** All settings are managed through environment variables. **DO NOT** hardcode configuration values. `setting.py` is the single source of truth for accessing these values in the application.
 *   **Strict Modularity:** Major components are isolated in their respective directories (`fire_detection`, `on_fire_actions`, `stream_recording`). You **MUST** respect this separation of concerns.
 
-## 7. Global Rules
+## 8. Global Rules
 
 These rules are non-negotiable and apply to the entire project.
 
@@ -103,7 +149,7 @@ These rules are non-negotiable and apply to the entire project.
     *   Use `try...except` blocks to gracefully handle potential exceptions (e.g., `TimeoutError`, `SMTPAuthenticationError`).
 
 
-## 8. Code Style and Quality
+## 9. Code Style and Quality
 
 This project enforces a strict code style using `ruff` and `pre-commit`.
 
@@ -114,7 +160,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 *   If the user has not set up the environment, you MUST instruct them to run `pip install -r requirements_dev.txt` and `pre-commit install` first.
 *   **Style Adherence:** Your code must follow PEP 8, use double quotes for strings, and conform to the `isort` configuration in `pyproject.toml`.
 
-## 9. Tool Usage Directives
+## 10. Tool Usage Directives
 
 *   **`ReadFile`:** **MUST** be used to understand a file's existing implementation, conventions, and context before you suggest any edits.
 *   **`FindFiles`:** Use to locate relevant modules or discover the project structure.
@@ -122,7 +168,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 *   **`Shell`:** Use for all command-line operations. This is **REQUIRED** for running `pre-commit`.
     *   **Docker Multi-Stage Builds:** When building Docker images with multiple stages, use the `--target` flag to specify the desired build stage (e.g., `docker build --target cpu .`).
 
-## 10. Directory- and File-Specific Instructions
+## 11. Directory- and File-Specific Instructions
 
 *   #### `on_fire_actions/`
     *   **Rule:** Any new notification service **MUST** be implemented in its own file as a class with an `async def __call__(self)` method.
@@ -137,7 +183,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 *   #### `burning_goat_detection.py`
     *   **Role:** This file is the central coordinator. **DO NOT** add business logic directly into this file.
 
-## 11. Project Context Map
+## 12. Project Context Map
 
 *   **Entry Point & Orchestration:** `burning_goat_detection.py`
 *   **Core CV Logic:** `fire_detection/`
