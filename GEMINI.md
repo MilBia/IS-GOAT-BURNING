@@ -98,7 +98,8 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
         - Improved code comments in the fire detection utility.
         - Corrected a typo in the documentation.
         ```
-3.  **Propose PR Comment:** Provide a template for the user to post back on the GitHub PR.
+3.  **Generate Commit Message:** You **MUST** generate a well-formatted commit message that follows the "Conventional Commits" standard.
+4.  **Propose PR Comment:** Provide a template for the user to post back on the GitHub PR.
     *   **Example PR Comment:**
         ```
         Thank you for the review! I have addressed all your feedback and pushed the changes. Please take another look when you have a moment.
