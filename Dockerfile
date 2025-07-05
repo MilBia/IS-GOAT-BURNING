@@ -112,7 +112,9 @@ RUN mkdir -p /app/opencv/build && \
           .. && \
     make -j$(nproc) && \
     make install && \
-    ldconfig
+    ldconfig && \
+    rm -rf /app/opencv && \
+    rm -rf /app/opencv_contrib
 
 # Clean dependencies.
 RUN apt-get autoremove --yes && \
@@ -126,8 +128,10 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 # Set the working directory.
 WORKDIR /app
 
-ENV TZ=Etc/UTC
-ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends  \

@@ -136,8 +136,8 @@ These rules are non-negotiable and apply to the entire project.
     3.  Import the setting from `setting.py` where needed. **DO NOT** call `os.environ` or `env()` anywhere else.
 
 2.  **Dependency Management:** To add a new Python dependency:
-    1.  Add the package to `requirements.txt`.
-    2.  If the package is not specific to the CUDA environment, you **MUST** also add it to `requirements_cuda.txt`.
+    1.  For a dependency needed by **both CPU and GPU**, add it to `requirements.txt` and `requirements_cuda.txt`.
+    2.  For a **CPU-only** dependency (like `opencv-python`), add it only to `requirements.txt`.
     3.  Add it to the `[project]` section in `pyproject.toml`.
     4.  If the package is for development purposes, add it to `requirements_dev.txt` and to the `[project.optional-dependencies]` section in `pyproject.toml`.
 
