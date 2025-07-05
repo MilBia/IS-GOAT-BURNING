@@ -68,7 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev python3-pip wget unzip curl \
-    python3-numpy gosu && \
+    gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
