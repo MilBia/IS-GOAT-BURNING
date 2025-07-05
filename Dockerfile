@@ -119,16 +119,6 @@ RUN apt-get autoremove --yes && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the entrypoint script and make it executable.
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# Create the recordings directory.
-RUN mkdir -p /app/recordings
-
-# Set the entrypoint.
-ENTRYPOINT ["entrypoint.sh"]
-
 # --- GPU Runtime Stage ---
 # This stage is for the GPU-accelerated image.
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
