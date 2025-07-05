@@ -60,9 +60,11 @@ ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies for building OpenCV.
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y --no-install-recommends python3.13-full python3.13-dev
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends  \
+    software-properties-common &&  \
+    add-apt-repository ppa:deadsnakes/ppa
+RUN apt-get update && apt-get install -y --no-install-recommends  \
+    python3.13-full python3.13-dev \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev python3-pip wget unzip curl \
@@ -138,7 +140,9 @@ ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies.
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && add-apt-repository ppa:deadsnakes/ppa && \
+RUN apt-get update && apt-get install -y --no-install-recommends  \
+    software-properties-common
+RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
@@ -160,6 +164,19 @@ RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the application code.
 COPY . .
+
+# Copy the entrypoint script and make it executable.
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Create the recordings directory.
+RUN mkdir -p /app/recordings
+
+# Set the entrypoint.
+ENTRYPOINT ["entrypoint.sh"]
+
+# Set the Python path.
+ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
 # Default command to run the application.
 CMD ["python3.13", "burning_goat_detection.py"]
