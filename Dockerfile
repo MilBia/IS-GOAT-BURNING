@@ -60,7 +60,11 @@ ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies for building OpenCV.
-RUN apt-get update && apt-get install -y --no-install-recommends  \n    software-properties-common &&  \n    add-apt-repository ppa:deadsnakes/ppa && \n    apt-get update && apt-get install -y --no-install-recommends  \n    python3.13-full python3.13-dev \n
+RUN apt-get update && apt-get install -y --no-install-recommends  \
+    software-properties-common &&  \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends  \
+    python3.13-full python3.13-dev \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev python3-pip wget unzip curl \
