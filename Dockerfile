@@ -131,7 +131,9 @@ WORKDIR /app
 ENV TZ=Etc/UTC \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
@@ -156,15 +158,15 @@ RUN python3.13 -m ensurepip --upgrade --default-pip && \
 # Uninstall conflicting OpenCV packages.
 RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
-# Copy the application code.
-COPY . .
-
 # Copy the entrypoint script and make it executable.
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create the recordings directory.
 RUN mkdir -p /app/recordings
+
+# Copy the application code.
+COPY . .
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
