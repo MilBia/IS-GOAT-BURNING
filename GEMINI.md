@@ -136,9 +136,9 @@ These rules are non-negotiable and apply to the entire project.
 
 2.  **Dependency Management:** To add a new Python dependency:
     1.  Add the package to `requirements.txt`.
-    2.  If not CUDA-specific, also add it to `requirements_cuda.txt`.
+    2.  If the package is not specific to the CUDA environment, you **MUST** also add it to `requirements_cuda.txt`.
     3.  Add it to the `[project]` section in `pyproject.toml`.
-    4.  If for development, add to `requirements_dev.txt` and `[project.optional-dependencies]`.
+    4.  If the package is for development purposes, add it to `requirements_dev.txt` and to the `[project.optional-dependencies]` section in `pyproject.toml`.
 
 3.  **Idempotent Actions:** All fire-response actions **MUST** be wrapped by the `OnceAction` class in `burning_goat_detection.py` to ensure they are triggered only once per execution.
 4.  **Error Handling and Logging:**
