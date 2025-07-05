@@ -112,13 +112,11 @@ RUN mkdir -p /app/opencv/build && \
           .. && \
     make -j$(nproc) && \
     make install && \
+    apt-get autoremove --yes && \
+    apt-get clean && \
     ldconfig && \
     rm -rf /app/opencv && \
-    rm -rf /app/opencv_contrib
-
-# Clean dependencies.
-RUN apt-get autoremove --yes && \
-    apt-get clean && \
+    rm -rf /app/opencv_contrib \
     rm -rf /var/lib/apt/lists/*
 
 # --- GPU Runtime Stage ---
@@ -138,10 +136,11 @@ ENV TZ=Etc/UTC \
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
     software-properties-common && \
-    add-apt-repository ppa:deadsnakes/ppa && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
+    apt-get remove -y --autoremove software-properties-common && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
