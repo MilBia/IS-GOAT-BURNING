@@ -9,7 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    XDG_CACHE_HOME=/app/.cache
+    XDG_CACHE_HOME=/app/.cache \
+    TZ=Etc/UTC \
+    DEBIAN_FRONTEND=noninteractive
 
 # Set the working directory.
 WORKDIR /app
@@ -135,7 +137,8 @@ ENV TZ=Etc/UTC \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    XDG_CACHE_HOME=/app/.cache
 
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
