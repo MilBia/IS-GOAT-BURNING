@@ -7,7 +7,9 @@ __pycache__
 *.pyd
 env
 venv
+.env
 
 # Ignore docker-related files
 .dockerignore
 recordings
+Dockerfile
