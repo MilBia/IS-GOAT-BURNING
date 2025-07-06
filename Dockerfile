@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     rm -rf /var/lib/apt/lists/*
 
 # CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
+# This prevents issues with cmake finding the correct python version
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
     python3.13 -m pip install --no-cache-dir --upgrade pip setuptools numpy
 
@@ -158,10 +159,11 @@ COPY requirements_cuda.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
     python3.13 -m pip install --no-cache-dir -r requirements_cuda.txt
 
-# Uninstall conflicting OpenCV packages.
-RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
+# Ensure that conflicting packages are uninstalled, but don't error if they are not present
+RUN python3.13 -m pip show opencv-python opencv-python-headless || python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the entrypoint script and make it executable.
+# This script is used to set the correct user permissions and execute the main application.
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
@@ -169,13 +171,16 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN mkdir -p /app/recordings
 
 # Copy the application code.
+# This includes all the python scripts and other resources needed to run the application.
 COPY . .
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
 
 # Set the Python path.
+# This ensures that the application can find its modules.
 ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
 # Default command to run the application.
+# This starts the main application script.
 CMD ["python3.13", "burning_goat_detection.py"]
