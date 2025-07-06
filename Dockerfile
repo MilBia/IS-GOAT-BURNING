@@ -8,7 +8,8 @@ FROM python:3.13-slim-bullseye AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    XDG_CACHE_HOME=/app/.cache
 
 # Set the working directory.
 WORKDIR /app
@@ -26,8 +27,10 @@ RUN apt-get update && \
 COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Create the recordings directory.
-RUN mkdir -p /app/recordings
+# Create the recordings and cache directories and set permissions.
+RUN mkdir -p /app/recordings && \
+    mkdir -p /app/.cache && \
+    chown -R nobody:nogroup /app/.cache
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
