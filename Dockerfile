@@ -116,7 +116,7 @@ RUN mkdir -p /app/opencv/build && \
     apt-get clean && \
     ldconfig && \
     rm -rf /app/opencv && \
-    rm -rf /app/opencv_contrib \
+    rm -rf /app/opencv_contrib && \
     rm -rf /var/lib/apt/lists/*
 
 # --- GPU Runtime Stage ---
