@@ -149,8 +149,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage.
-COPY --from=gpu_builder /usr/local /usr/local
-
+COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
+COPY --from=gpu_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
+COPY --from=gpu_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
