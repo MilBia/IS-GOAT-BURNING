@@ -49,7 +49,10 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # Copy the rest of the application code.
-COPY . .
+COPY burning_goat_detection.py setting.py .env ./
+COPY fire_detection/ ./fire_detection/
+COPY on_fire_actions/ ./on_fire_actions/
+COPY stream_recording/ ./stream_recording/
 
 # Default command to run the application.
 CMD ["python3.13", "burning_goat_detection.py"]
@@ -176,7 +179,10 @@ RUN mkdir -p /app/recordings && \
     chown -R nobody:nogroup /app/.cache
 # Copy the application code.
 # This includes all the python scripts and other resources needed to run the application.
-COPY . .
+COPY burning_goat_detection.py setting.py .env ./
+COPY fire_detection/ ./fire_detection/
+COPY on_fire_actions/ ./on_fire_actions/
+COPY stream_recording/ ./stream_recording/
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
