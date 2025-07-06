@@ -70,8 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full python3.13-dev \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
-    libx264-dev libgtk-3-dev wget unzip curl \
-    gosu && \
+    libx264-dev libgtk-3-dev wget unzip curl && \
     rm -rf /var/lib/apt/lists/*
 
 # CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
@@ -116,7 +115,7 @@ RUN mkdir -p /app/opencv/build && \
           .. && \
     make -j$(nproc) && \
     make install && \
-    apt-get purge -y --auto-remove wget unzip && \
+    apt-get purge -y --auto-remove wget unzip curl && \
     apt-get autoremove --yes && \
     apt-get clean && \
     ldconfig && \
