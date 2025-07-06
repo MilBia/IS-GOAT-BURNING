@@ -11,3 +11,4 @@ venv
 # Ignore docker-related files
 .dockerignore
 recordings
+Dockerfile
