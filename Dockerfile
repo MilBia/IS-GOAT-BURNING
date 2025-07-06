@@ -112,6 +112,7 @@ RUN mkdir -p /app/opencv/build && \
           .. && \
     make -j$(nproc) && \
     make install && \
+    apt-get purge -y --auto-remove wget unzip && \
     apt-get autoremove --yes && \
     apt-get clean && \
     ldconfig && \
