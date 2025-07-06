@@ -171,8 +171,9 @@ COPY entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create the recordings directory.
-RUN mkdir -p /app/recordings
-
+RUN mkdir -p /app/recordings && \
+    mkdir -p /app/.cache && \
+    chown -R nobody:nogroup /app/.cache
 # Copy the application code.
 # This includes all the python scripts and other resources needed to run the application.
 COPY . .
