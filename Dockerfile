@@ -70,7 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full python3.13-dev \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
-    libx264-dev libgtk-3-dev python3-pip wget unzip curl \
+    libx264-dev libgtk-3-dev wget unzip curl \
     gosu && \
     rm -rf /var/lib/apt/lists/*
 
@@ -159,8 +159,8 @@ COPY requirements_cuda.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
     python3.13 -m pip install --no-cache-dir -r requirements_cuda.txt
 
-# Ensure that conflicting packages are uninstalled, but don't error if they are not present
-RUN python3.13 -m pip show opencv-python opencv-python-headless || python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
+# Uninstall conflicting OpenCV packages.
+RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the entrypoint script and make it executable.
 # This script is used to set the correct user permissions and execute the main application.
