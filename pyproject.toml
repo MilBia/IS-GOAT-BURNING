@@ -6,6 +6,12 @@ authors = [
     { name = "Miłosz Białczak" }
 ]
 dependencies = [
+    "environs==14.1.0",
+    "numpy==2.2.2",
+    "vidgear==0.3.3",
+    "yt-dlp==2025.6.9",
+    "setuptools==75.8.0",
+    "aiohttp==3.11.11",
 ]
 requires-python = ">=3.10"
 readme = "README.md"
@@ -18,9 +24,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+cpu = [
+    "opencv-python==4.11.0.86",
+]
 dev = [
-    "pre-commit",
-    "ruff",
+    "ruff==0.9.2",
+    "pre-commit==4.1.0",
+    "pip-tools",
 ]
 [tool.ruff]
 exclude = [
@@ -57,3 +67,6 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.setuptools.packages.find]
+include = ["fire_detection*", "on_fire_actions*", "stream_recording*"]

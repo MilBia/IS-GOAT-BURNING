@@ -26,13 +26,38 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 1.  Clone the repository:
     ```bash
     git clone https://github.com/MilBia/IS-GOAT-BURNING.git
-    cd burning-goat-detection
+    cd IS-GOAT-BURNING
     ```
 
-2.  Install dependencies
+2.  Create and activate a virtual environment:
     ```bash
-    pip install -r requirements.txt
+    python3 -m venv .venv
+    source .venv/bin/activate
     ```
+
+3.  Install dependencies:
+    *   For a CPU-based installation:
+        ```bash
+        pip install .[cpu]
+        ```
+    *   For a GPU-based installation (requires a manual build of OpenCV with CUDA, see Docker instructions):
+        ```bash
+        pip install .
+        ```
+
+## Dependency Management
+
+This project uses `pyproject.toml` as the single source of truth for all Python dependencies. The `requirements.txt`, `requirements-cpu.txt`, and `requirements-dev.txt` files are auto-generated from this file using `pip-tools`.
+
+**Important: Do not edit the `requirements*.txt` files manually.**
+
+If you need to add or change a dependency, edit `pyproject.toml` and then run the following commands from the root of the project to regenerate the files:
+
+```bash
+pip-compile --resolver=backtracking -o requirements.txt pyproject.toml
+pip-compile --resolver=backtracking --extra=cpu -o requirements-cpu.txt pyproject.toml
+pip-compile --resolver=backtracking --extra=dev,cpu -o requirements-dev.txt pyproject.toml
+```
 
 ## CONFIGURATION
 
@@ -213,7 +238,10 @@ We use `pre-commit` with `ruff` to ensure consistent code formatting and linting
 
 **Setup:**
 
-1.  Install `pip install -r requirements_dev.txt`
+1.  Install development dependencies:
+    ```bash
+    pip install -e .[dev,cpu]
+    ```
 2.  Activate hooks: `pre-commit install`
 3.  Run checks: `pre-commit run --all-files`
 

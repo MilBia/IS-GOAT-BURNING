@@ -45,8 +45,8 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements-cpu.txt .
+RUN pip install setuptools && pip install -r requirements-cpu.txt
 
 # Copy the rest of the application code.
 COPY burning_goat_detection.py setting.py ./
@@ -161,12 +161,11 @@ COPY --from=gpu_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
-COPY requirements_cuda.txt .
+COPY requirements.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir -r requirements_cuda.txt
+    python3.13 -m pip install setuptools && \
+    python3.13 -m pip install --no-cache-dir -r requirements.txt
 
-# Uninstall conflicting OpenCV packages.
-RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the entrypoint script and make it executable.
 # This script is used to set the correct user permissions and execute the main application.
