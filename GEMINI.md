@@ -28,24 +28,27 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
 
 1.  **Execute the Plan:** Follow your approved plan, using the `ReadFile`, `Edit`, and `Shell` tools as required.
 2.  **Adhere to All Rules:** During implementation, you **MUST** adhere to all rules specified in the "Core Principles", "Global Rules", "Code Style", and "Directory- and File-Specific Instructions" sections of this document.
-3.  **Validate Changes:** After making your code changes, you are **REQUIRED** to run the `pre-commit` validation as specified in the "Code Style and Quality" section.
+3.  **Validate Changes:** After making your code changes, you are **REQUIRED** to run the following validation steps:
+    *   Run the `pre-commit` validation as specified in the "Code Style and Quality" section.
+    *   Build and run the Docker containers to ensure that the changes do not break the containerized environments.
+        *   Build both the CPU and GPU containers.
+        *   Run each container for a few seconds and check the logs to ensure they start without errors.
+        *   Use the `.env.example` file for environment variables during testing.
 
 ### Phase 3: Summarize and Propose Commit
 
 1.  **Provide a Summary:** Once the implementation is complete and validated, provide a clear summary of the work you have done.
 2.  **Propose a Commit Message:** You **MUST** generate a well-formatted commit message that follows the "Conventional Commits" standard.
-    *   **Format:** `<type>(<scope>): <description>`
+    *   **Format:** `<type>(<scope>): <description> (#<issue_number>)`
     *   **Types:** `feat` (new feature), `fix` (bug fix), `docs` (documentation), `style`, `refactor`, `test`, `chore`.
     *   **Scope:** The module affected (e.g., `notifications`, `docker`, `fire-detection`).
     *   **Example Commit Message:**
         ```
-        feat(notifications): add Slack notification service
+        feat(notifications): add Slack notification service (#42)
 
         Implement a new SendToSlack class in on_fire_actions/ to send
         notifications to a configured Slack webhook when a fire is detected.
         Configuration is loaded from the .env file via setting.py.
-
-        Closes #42
         ```
 3.  **Propose a Pull Request Description:** If applicable, also provide a template for the Pull Request body.
     *   **Example PR Description:**
@@ -81,18 +84,21 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 
 1.  **Iterate and Implement:** Address each item on your plan one by one, using the `ReadFile` and `Edit` tools for each file modification.
 2.  **Final Validation:** After all changes have been applied, you are **REQUIRED** to run a final validation using the `Shell` tool:
-    ```bash
-    pre-commit run --all-files
-    ```
+    *   Run `pre-commit run --all-files`.
+    *   Build and run the Docker containers to ensure that the changes do not break the containerized environments.
+        *   Build both the CPU and GPU containers.
+        *   Run each container for a few seconds and check the logs to ensure they start without errors.
+        *   Use the `.env.example` file for environment variables during testing.
 3.  **Debugging Loop:** If validation fails, analyze the error, state a hypothesis, propose a fix, and re-run validation until it passes.
 
 ### Phase 3: Summarize and Report
 
 1.  **Confirm Completion:** Present your initial checklist again, this time with all items checked off, to confirm you have addressed all review feedback.
 2.  **Propose Commit Message:** Generate a single, well-formatted commit message that summarizes the changes.
+    *   **Format:** `<type>(<scope>): <description> (#<issue_number>)`
     *   **Example Commit Message:**
         ```
-        refactor: apply suggestions from PR review
+        refactor: apply suggestions from PR review (#27)
 
         - Increased email timeout for better reliability.
         - Improved code comments in the fire detection utility.
@@ -135,11 +141,17 @@ These rules are non-negotiable and apply to the entire project.
     2.  Load it in `setting.py` using the appropriate `env()` method (e.g., `env.bool()`, `env.list()`).
     3.  Import the setting from `setting.py` where needed. **DO NOT** call `os.environ` or `env()` anywhere else.
 
-2.  **Dependency Management:** To add a new Python dependency:
-    1.  For a dependency needed by **both CPU and GPU**, add it to `requirements.txt` and `requirements_cuda.txt`.
-    2.  For a **CPU-only** dependency (like `opencv-python`), add it only to `requirements.txt`.
-    3.  Add it to the `[project]` section in `pyproject.toml`.
-    4.  If the package is for development purposes, add it to `requirements_dev.txt` and to the `[project.optional-dependencies]` section in `pyproject.toml`.
+2.  **Dependency Management:** This project uses `pyproject.toml` as the single source of truth for all Python dependencies. The `requirements.txt`, `requirements-cpu.txt`, and `requirements-dev.txt` files are auto-generated from this file using `pip-tools`.
+
+    **Important: Do not edit the `requirements*.txt` files manually.**
+
+    If you need to add or change a dependency, edit `pyproject.toml` and then run the following commands from the root of the project to regenerate the files:
+
+    ```bash
+    pip-compile --output-file=requirements.txt pyproject.toml
+    pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
+    pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+    ```
 
 3.  **Idempotent Actions:** All fire-response actions **MUST** be wrapped by the `OnceAction` class in `burning_goat_detection.py` to ensure they are triggered only once per execution.
 4.  **Error Handling and Logging:**
@@ -154,6 +166,7 @@ These rules are non-negotiable and apply to the entire project.
 
 This project enforces a strict code style using `ruff` and `pre-commit`.
 
+*   **Note:** If you have a virtual environment set up in the `.venv` directory and a command is not found, try running the executable directly from the virtual environment's `bin` directory (e.g., `.venv/bin/pre-commit`).
 *   **MANDATORY:** Before finalizing any code changes, you **MUST** validate them by executing the following command from the project root using the `Shell` tool:
     ```bash
     pre-commit run --all-files

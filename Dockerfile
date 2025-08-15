@@ -45,8 +45,8 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements-cpu.txt .
+RUN pip install -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
 COPY burning_goat_detection.py setting.py ./
@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
 # CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
 # This prevents issues with cmake finding the correct python version
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools numpy
+    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools==75.8.0 numpy
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -161,12 +161,10 @@ COPY --from=gpu_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
-COPY requirements_cuda.txt .
+COPY requirements.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir -r requirements_cuda.txt
+    python3.13 -m pip install --no-cache-dir -r requirements.txt setuptools==75.8.0
 
-# Uninstall conflicting OpenCV packages.
-RUN python3.13 -m pip uninstall -y opencv-python opencv-python-headless || true
 
 # Copy the entrypoint script and make it executable.
 # This script is used to set the correct user permissions and execute the main application.
