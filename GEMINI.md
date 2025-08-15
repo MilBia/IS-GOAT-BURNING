@@ -142,11 +142,17 @@ These rules are non-negotiable and apply to the entire project.
     2.  Load it in `setting.py` using the appropriate `env()` method (e.g., `env.bool()`, `env.list()`).
     3.  Import the setting from `setting.py` where needed. **DO NOT** call `os.environ` or `env()` anywhere else.
 
-2.  **Dependency Management:** To add a new Python dependency:
-    1.  For a dependency needed by **both CPU and GPU**, add it to `requirements.txt` and `requirements_cuda.txt`.
-    2.  For a **CPU-only** dependency (like `opencv-python`), add it only to `requirements.txt`.
-    3.  Add it to the `[project]` section in `pyproject.toml`.
-    4.  If the package is for development purposes, add it to `requirements_dev.txt` and to the `[project.optional-dependencies]` section in `pyproject.toml`.
+2.  **Dependency Management:** This project uses `pyproject.toml` as the single source of truth for all Python dependencies. The `requirements.txt`, `requirements-cpu.txt`, and `requirements-dev.txt` files are auto-generated from this file using `pip-tools`.
+
+    **Important: Do not edit the `requirements*.txt` files manually.**
+
+    If you need to add or change a dependency, edit `pyproject.toml` and then run the following commands from the root of the project to regenerate the files:
+
+    ```bash
+    pip-compile --resolver=backtracking --unsafe-package setuptools --output-file=requirements.txt pyproject.toml
+    pip-compile --resolver=backtracking --unsafe-package setuptools --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
+    pip-compile --resolver=backtracking --unsafe-package setuptools --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+    ```
 
 3.  **Idempotent Actions:** All fire-response actions **MUST** be wrapped by the `OnceAction` class in `burning_goat_detection.py` to ensure they are triggered only once per execution.
 4.  **Error Handling and Logging:**
@@ -161,6 +167,7 @@ These rules are non-negotiable and apply to the entire project.
 
 This project enforces a strict code style using `ruff` and `pre-commit`.
 
+*   **Note:** If you have a virtual environment set up in the `.venv` directory and a command is not found, try running the executable directly from the virtual environment's `bin` directory (e.g., `.venv/bin/pre-commit`).
 *   **MANDATORY:** Before finalizing any code changes, you **MUST** validate them by executing the following command from the project root using the `Shell` tool:
     ```bash
     pre-commit run --all-files
