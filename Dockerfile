@@ -46,7 +46,7 @@ FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
 COPY requirements-cpu.txt .
-RUN pip install setuptools==75.8.0 && pip install -r requirements-cpu.txt
+RUN pip install -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
 COPY burning_goat_detection.py setting.py ./
@@ -163,8 +163,7 @@ RUN ldconfig
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install setuptools==75.8.0 && \
-    python3.13 -m pip install --no-cache-dir -r requirements.txt
+    python3.13 -m pip install --no-cache-dir -r requirements.txt setuptools==75.8.0
 
 
 # Copy the entrypoint script and make it executable.
