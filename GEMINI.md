@@ -39,18 +39,16 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
 
 1.  **Provide a Summary:** Once the implementation is complete and validated, provide a clear summary of the work you have done.
 2.  **Propose a Commit Message:** You **MUST** generate a well-formatted commit message that follows the "Conventional Commits" standard.
-    *   **Format:** `<type>(<scope>): <description>`
+    *   **Format:** `<type>(<scope>): <description> (#<issue_number>)`
     *   **Types:** `feat` (new feature), `fix` (bug fix), `docs` (documentation), `style`, `refactor`, `test`, `chore`.
     *   **Scope:** The module affected (e.g., `notifications`, `docker`, `fire-detection`).
     *   **Example Commit Message:**
         ```
-        feat(notifications): add Slack notification service
+        feat(notifications): add Slack notification service (#42)
 
         Implement a new SendToSlack class in on_fire_actions/ to send
         notifications to a configured Slack webhook when a fire is detected.
         Configuration is loaded from the .env file via setting.py.
-
-        Closes #42
         ```
 3.  **Propose a Pull Request Description:** If applicable, also provide a template for the Pull Request body.
     *   **Example PR Description:**
@@ -97,9 +95,10 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 
 1.  **Confirm Completion:** Present your initial checklist again, this time with all items checked off, to confirm you have addressed all review feedback.
 2.  **Propose Commit Message:** Generate a single, well-formatted commit message that summarizes the changes.
+    *   **Format:** `<type>(<scope>): <description> (#<issue_number>)`
     *   **Example Commit Message:**
         ```
-        refactor: apply suggestions from PR review
+        refactor: apply suggestions from PR review (#27)
 
         - Increased email timeout for better reliability.
         - Improved code comments in the fire detection utility.
