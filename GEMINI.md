@@ -28,7 +28,12 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
 
 1.  **Execute the Plan:** Follow your approved plan, using the `ReadFile`, `Edit`, and `Shell` tools as required.
 2.  **Adhere to All Rules:** During implementation, you **MUST** adhere to all rules specified in the "Core Principles", "Global Rules", "Code Style", and "Directory- and File-Specific Instructions" sections of this document.
-3.  **Validate Changes:** After making your code changes, you are **REQUIRED** to run the `pre-commit` validation as specified in the "Code Style and Quality" section.
+3.  **Validate Changes:** After making your code changes, you are **REQUIRED** to run the following validation steps:
+    *   Run the `pre-commit` validation as specified in the "Code Style and Quality" section.
+    *   Build and run the Docker containers to ensure that the changes do not break the containerized environments.
+        *   Build both the CPU and GPU containers.
+        *   Run each container for a few seconds and check the logs to ensure they start without errors.
+        *   Use the `.env.example` file for environment variables during testing.
 
 ### Phase 3: Summarize and Propose Commit
 
@@ -81,9 +86,11 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 
 1.  **Iterate and Implement:** Address each item on your plan one by one, using the `ReadFile` and `Edit` tools for each file modification.
 2.  **Final Validation:** After all changes have been applied, you are **REQUIRED** to run a final validation using the `Shell` tool:
-    ```bash
-    pre-commit run --all-files
-    ```
+    *   Run `pre-commit run --all-files`.
+    *   Build and run the Docker containers to ensure that the changes do not break the containerized environments.
+        *   Build both the CPU and GPU containers.
+        *   Run each container for a few seconds and check the logs to ensure they start without errors.
+        *   Use the `.env.example` file for environment variables during testing.
 3.  **Debugging Loop:** If validation fails, analyze the error, state a hypothesis, propose a fix, and re-run validation until it passes.
 
 ### Phase 3: Summarize and Report
