@@ -54,9 +54,9 @@ This project uses `pyproject.toml` as the single source of truth for all Python 
 If you need to add or change a dependency, edit `pyproject.toml` and then run the following commands from the root of the project to regenerate the files:
 
 ```bash
-pip-compile --resolver=backtracking --unsafe-package setuptools --output-file=requirements.txt pyproject.toml
-pip-compile --resolver=backtracking --unsafe-package setuptools --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
-pip-compile --resolver=backtracking --unsafe-package setuptools --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+pip-compile --output-file=requirements.txt pyproject.toml
+pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
+pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
 ```
 
 ## CONFIGURATION
