@@ -46,7 +46,7 @@ FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
 COPY requirements-cpu.txt .
-RUN pip install setuptools && pip install -r requirements-cpu.txt
+RUN pip install setuptools==75.8.0 && pip install -r requirements-cpu.txt
 
 # Copy the rest of the application code.
 COPY burning_goat_detection.py setting.py ./
@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
 # CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
 # This prevents issues with cmake finding the correct python version
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools numpy
+    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools==75.8.0 numpy
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -163,7 +163,7 @@ RUN ldconfig
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
 RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install setuptools && \
+    python3.13 -m pip install setuptools==75.8.0 && \
     python3.13 -m pip install --no-cache-dir -r requirements.txt
 
 
