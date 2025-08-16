@@ -28,11 +28,11 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = settings.video.save_video_chunks
-    output_dir: str = settings.video.video_output_directory
-    chunk_length_seconds: int = settings.video.video_chunk_length_seconds
-    max_chunks: int = settings.video.max_video_chunks
-    chunks_to_keep_after_fire: int = settings.video.chunks_to_keep_after_fire
+    enabled: bool = False
+    output_dir: str = ""
+    chunk_length_seconds: int = 10
+    max_chunks: int = 0
+    chunks_to_keep_after_fire: int = 0
     fps: float = 30.0
     FILENAME_PREFIX: str = "goat-cam_"
     FILENAME_SUFFIX: str = ".mp4"
@@ -53,6 +53,12 @@ class AsyncVideoChunkSaver:
     is_new_chunk: bool = field(init=False, default=False)
 
     def __post_init__(self):
+        self.enabled = settings.video.save_video_chunks
+        self.output_dir = settings.video.video_output_directory
+        self.chunk_length_seconds = settings.video.video_chunk_length_seconds
+        self.max_chunks = settings.video.max_video_chunks
+        self.chunks_to_keep_after_fire = settings.video.chunks_to_keep_after_fire
+
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
         self.__call__ = self._noop
         self.chunk_limit_action = self._noop

@@ -17,8 +17,8 @@ async def main():
                     "sender": settings.email.sender,
                     "sender_password": settings.email.sender_password,
                     "recipients": settings.email.recipients,
-                    "subject": "GOAT ON FIRE!",
-                    "message": "Dear friend... Its time... Its time to Fight Fire With Fire!",
+                    "subject": settings.email.subject,
+                    "message": settings.email.message,
                     "host": settings.email.email_host,
                     "port": settings.email.email_port,
                 },
@@ -29,7 +29,7 @@ async def main():
             [
                 SendToDiscord,
                 {
-                    "message": "Dear friend... Its time... Its time to Fight Fire With Fire!",
+                    "message": settings.discord.message,
                     "webhooks": settings.discord.hooks,
                 },
             ]
