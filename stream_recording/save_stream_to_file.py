@@ -12,7 +12,6 @@ import time
 import cv2
 from vidgear.gears.helper import logger_handler
 
-from config import settings
 from fire_detection.signal_handler import SignalHandler
 
 logger = log.getLogger("AsyncVideoChunkSaver")
@@ -28,12 +27,12 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = field(init=False, default=False)
-    output_dir: str = field(init=False, default="")
-    chunk_length_seconds: int = field(init=False, default=10)
-    max_chunks: int = field(init=False, default=0)
-    chunks_to_keep_after_fire: int = field(init=False, default=0)
-    fps: float = field(default=30.0)
+    enabled: bool
+    output_dir: str
+    chunk_length_seconds: int
+    max_chunks: int
+    chunks_to_keep_after_fire: int
+    fps: float = 30.0
     FILENAME_PREFIX: str = field(init=False, default="goat-cam_")
     FILENAME_SUFFIX: str = field(init=False, default=".mp4")
     MAX_TIMEOUT_RETRIES: int = field(init=False, default=3)
@@ -53,12 +52,6 @@ class AsyncVideoChunkSaver:
     is_new_chunk: bool = field(init=False, default=False)
 
     def __post_init__(self):
-        self.enabled = settings.video.save_video_chunks
-        self.output_dir = settings.video.video_output_directory
-        self.chunk_length_seconds = settings.video.video_chunk_length_seconds
-        self.max_chunks = settings.video.max_video_chunks
-        self.chunks_to_keep_after_fire = settings.video.chunks_to_keep_after_fire
-
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
         self.__call__ = self._noop
         self.chunk_limit_action = self._noop

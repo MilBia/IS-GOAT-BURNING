@@ -5,6 +5,7 @@ import cv2
 from vidgear.gears import CamGear
 from vidgear.gears.helper import logger_handler
 
+from config import settings
 from fire_detection.signal_handler import SignalHandler
 from stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 
@@ -21,7 +22,14 @@ class BaseYTCamGear(CamGear):
         kwargs["THREADED_QUEUE_MODE"] = False
 
     def _post__init__(self, *args, **kwargs):
-        self.video_saver = AsyncVideoChunkSaver(fps=self.framerate)
+        self.video_saver = AsyncVideoChunkSaver(
+            fps=self.framerate,
+            enabled=settings.video.save_video_chunks,
+            output_dir=settings.video.video_output_directory,
+            chunk_length_seconds=settings.video.video_chunk_length_seconds,
+            max_chunks=settings.video.max_video_chunks,
+            chunks_to_keep_after_fire=settings.video.chunks_to_keep_after_fire,
+        )
         self.video_saver.start()
 
     def __init__(self, *args, **kwargs):

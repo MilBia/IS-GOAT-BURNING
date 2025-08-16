@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import model_validator
@@ -16,7 +18,7 @@ class EmailSettings(BaseModel):
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
     @model_validator(mode="after")
-    def check_required_fields(self) -> "EmailSettings":
+    def check_required_fields(self) -> EmailSettings:
         if self.use_emails:
             required_fields = {
                 "sender": "EMAIL__SENDER",
@@ -38,7 +40,7 @@ class DiscordSettings(BaseModel):
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
     @model_validator(mode="after")
-    def check_required_fields(self) -> "DiscordSettings":
+    def check_required_fields(self) -> DiscordSettings:
         if self.use_discord and not self.hooks:
             raise ValueError("DISCORD__HOOKS must be set when use_discord is true")
         return self
@@ -52,7 +54,7 @@ class VideoSettings(BaseModel):
     chunks_to_keep_after_fire: int = Field(default=5)
 
     @model_validator(mode="after")
-    def check_required_fields(self) -> "VideoSettings":
+    def check_required_fields(self) -> VideoSettings:
         if self.save_video_chunks and not self.video_output_directory:
             raise ValueError("VIDEO__VIDEO_OUTPUT_DIRECTORY must be set when save_video_chunks is true")
         return self
