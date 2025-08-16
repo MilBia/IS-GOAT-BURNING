@@ -52,9 +52,9 @@ class DiscordSettings(BaseModel):
 class VideoSettings(BaseModel):
     save_video_chunks: bool = Field(default=False)
     video_output_directory: str | None = Field(default=None)
-    video_chunk_length_seconds: int = Field(default=60)
-    max_video_chunks: int = Field(default=10)
-    chunks_to_keep_after_fire: int = Field(default=5)
+    video_chunk_length_seconds: int = Field(default=300)
+    max_video_chunks: int = Field(default=20)
+    chunks_to_keep_after_fire: int = Field(default=10)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
     logging: bool = Field(validation_alias="LOGGING", default=True)
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
-    checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=2.0)
+    checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
 
