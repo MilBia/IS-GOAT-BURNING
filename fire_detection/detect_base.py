@@ -3,15 +3,14 @@ from functools import partial
 
 import numpy as np
 
-from setting import CUDA
-from setting import OPEN_CL
+from config import settings
 
 from .base_fire_detection import _detect_loop as base_detect_fire
 from .base_fire_detection import _detect_loop_with_frequency as base_detect_fire_with_frequency
 
-if OPEN_CL:
+if settings.open_cl:
     from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
-elif CUDA:
+elif settings.cuda:
     from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.cam_gear.cam_gear import YTCamGear

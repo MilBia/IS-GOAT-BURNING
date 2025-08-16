@@ -49,7 +49,7 @@ COPY requirements-cpu.txt .
 RUN pip install -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
-COPY burning_goat_detection.py setting.py ./
+COPY burning_goat_detection.py config.py ./
 COPY fire_detection/ ./fire_detection/
 COPY on_fire_actions/ ./on_fire_actions/
 COPY stream_recording/ ./stream_recording/
@@ -177,7 +177,7 @@ RUN mkdir -p /app/recordings && \
     chown -R nobody:nogroup /app/.cache
 # Copy the application code.
 # This includes all the python scripts and other resources needed to run the application.
-COPY burning_goat_detection.py setting.py ./
+COPY burning_goat_detection.py config.py ./
 COPY fire_detection/ ./fire_detection/
 COPY on_fire_actions/ ./on_fire_actions/
 COPY stream_recording/ ./stream_recording/

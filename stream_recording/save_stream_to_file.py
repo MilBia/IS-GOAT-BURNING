@@ -8,16 +8,12 @@ import logging as log
 import os
 import shutil
 import time
+from typing import ClassVar
 
 import cv2
 from vidgear.gears.helper import logger_handler
 
 from fire_detection.signal_handler import SignalHandler
-from setting import CHUNKS_TO_KEEP_AFTER_FIRE
-from setting import MAX_VIDEO_CHUNKS
-from setting import SAVE_VIDEO_CHUNKS
-from setting import VIDEO_CHUNK_LENGTH_SECONDS
-from setting import VIDEO_OUTPUT_DIRECTORY
 
 logger = log.getLogger("AsyncVideoChunkSaver")
 logger.propagate = False
@@ -32,15 +28,15 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = SAVE_VIDEO_CHUNKS
-    output_dir: str = VIDEO_OUTPUT_DIRECTORY
-    chunk_length_seconds: int = VIDEO_CHUNK_LENGTH_SECONDS
-    max_chunks: int = MAX_VIDEO_CHUNKS
-    chunks_to_keep_after_fire: int = CHUNKS_TO_KEEP_AFTER_FIRE
+    enabled: bool
+    output_dir: str
+    chunk_length_seconds: int
+    max_chunks: int
+    chunks_to_keep_after_fire: int
     fps: float = 30.0
-    FILENAME_PREFIX: str = "goat-cam_"
-    FILENAME_SUFFIX: str = ".mp4"
-    MAX_TIMEOUT_RETRIES: int = 3
+    FILENAME_PREFIX: ClassVar[str] = "goat-cam_"
+    FILENAME_SUFFIX: ClassVar[str] = ".mp4"
+    MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
 
     # --- Internal State ---
     frame_queue: asyncio.Queue = field(init=False, default_factory=asyncio.Queue)
