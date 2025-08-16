@@ -28,15 +28,15 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = field(default=False)
-    output_dir: str = field(default="")
-    chunk_length_seconds: int = field(default=10)
-    max_chunks: int = field(default=0)
-    chunks_to_keep_after_fire: int = field(default=0)
+    enabled: bool = field(init=False, default=False)
+    output_dir: str = field(init=False, default="")
+    chunk_length_seconds: int = field(init=False, default=10)
+    max_chunks: int = field(init=False, default=0)
+    chunks_to_keep_after_fire: int = field(init=False, default=0)
     fps: float = field(default=30.0)
-    FILENAME_PREFIX: str = "goat-cam_"
-    FILENAME_SUFFIX: str = ".mp4"
-    MAX_TIMEOUT_RETRIES: int = 3
+    FILENAME_PREFIX: str = field(init=False, default="goat-cam_")
+    FILENAME_SUFFIX: str = field(init=False, default=".mp4")
+    MAX_TIMEOUT_RETRIES: int = field(init=False, default=3)
 
     # --- Internal State ---
     frame_queue: asyncio.Queue = field(init=False, default_factory=asyncio.Queue)
