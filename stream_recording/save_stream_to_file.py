@@ -8,6 +8,7 @@ import logging as log
 import os
 import shutil
 import time
+from typing import ClassVar
 
 import cv2
 from vidgear.gears.helper import logger_handler
@@ -33,9 +34,9 @@ class AsyncVideoChunkSaver:
     max_chunks: int
     chunks_to_keep_after_fire: int
     fps: float = 30.0
-    FILENAME_PREFIX: str = field(init=False, default="goat-cam_")
-    FILENAME_SUFFIX: str = field(init=False, default=".mp4")
-    MAX_TIMEOUT_RETRIES: int = field(init=False, default=3)
+    FILENAME_PREFIX: ClassVar[str] = "goat-cam_"
+    FILENAME_SUFFIX: ClassVar[str] = ".mp4"
+    MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
 
     # --- Internal State ---
     frame_queue: asyncio.Queue = field(init=False, default_factory=asyncio.Queue)
