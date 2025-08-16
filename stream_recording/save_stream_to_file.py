@@ -28,12 +28,12 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = False
-    output_dir: str = ""
-    chunk_length_seconds: int = 10
-    max_chunks: int = 0
-    chunks_to_keep_after_fire: int = 0
-    fps: float = 30.0
+    enabled: bool = field(default=False)
+    output_dir: str = field(default="")
+    chunk_length_seconds: int = field(default=10)
+    max_chunks: int = field(default=0)
+    chunks_to_keep_after_fire: int = field(default=0)
+    fps: float = field(default=30.0)
     FILENAME_PREFIX: str = "goat-cam_"
     FILENAME_SUFFIX: str = ".mp4"
     MAX_TIMEOUT_RETRIES: int = 3

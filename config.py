@@ -18,16 +18,17 @@ class EmailSettings(BaseModel):
     @model_validator(mode="after")
     def check_required_fields(self) -> "EmailSettings":
         if self.use_emails:
-            if not self.sender:
-                raise ValueError("EMAIL__SENDER must be set when USE_EMAILS is true")
-            if not self.sender_password:
-                raise ValueError("EMAIL__SENDER_PASSWORD must be set when USE_EMAILS is true")
-            if not self.recipients:
-                raise ValueError("EMAIL__RECIPIENTS must be set when USE_EMAILS is true")
-            if not self.email_host:
-                raise ValueError("EMAIL__EMAIL_HOST must be set when USE_EMAILS is true")
-            if self.email_port is None:
-                raise ValueError("EMAIL__EMAIL_PORT must be set when USE_EMAILS is true")
+            required_fields = {
+                "sender": "EMAIL__SENDER",
+                "sender_password": "EMAIL__SENDER_PASSWORD",
+                "recipients": "EMAIL__RECIPIENTS",
+                "email_host": "EMAIL__EMAIL_HOST",
+                "email_port": "EMAIL__EMAIL_PORT",
+            }
+            for field_name, env_var in required_fields.items():
+                value = getattr(self, field_name)
+                if value is None or (hasattr(value, "__len__") and not value):
+                    raise ValueError(f"{env_var} must be set when USE_EMAILS is true")
         return self
 
 
