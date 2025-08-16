@@ -15,7 +15,7 @@ async def main():
                 SendEmail,
                 {
                     "sender": settings.email.sender,
-                    "sender_password": settings.email.sender_password,
+                    "sender_password": settings.email.sender_password.get_secret_value(),
                     "recipients": settings.email.recipients,
                     "subject": settings.email.subject,
                     "message": settings.email.message,

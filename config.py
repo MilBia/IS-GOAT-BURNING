@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import SecretStr
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 
 class EmailSettings(BaseModel):
+    _REQUIRED_FIELDS = {
+        "sender": "EMAIL__SENDER",
+        "sender_password": "EMAIL__SENDER_PASSWORD",
+        "recipients": "EMAIL__RECIPIENTS",
+        "email_host": "EMAIL__EMAIL_HOST",
+        "email_port": "EMAIL__EMAIL_PORT",
+    }
+
     use_emails: bool = Field(default=False)
     sender: str | None = Field(default=None)
-    sender_password: str | None = Field(default=None)
+    sender_password: SecretStr | None = Field(default=None)
     recipients: list[str] = Field(default_factory=list)
     email_host: str | None = Field(default=None)
     email_port: int | None = Field(default=None)
@@ -20,14 +29,7 @@ class EmailSettings(BaseModel):
     @model_validator(mode="after")
     def check_required_fields(self) -> EmailSettings:
         if self.use_emails:
-            required_fields = {
-                "sender": "EMAIL__SENDER",
-                "sender_password": "EMAIL__SENDER_PASSWORD",
-                "recipients": "EMAIL__RECIPIENTS",
-                "email_host": "EMAIL__EMAIL_HOST",
-                "email_port": "EMAIL__EMAIL_PORT",
-            }
-            for field_name, env_var in required_fields.items():
+            for field_name, env_var in self._REQUIRED_FIELDS.items():
                 value = getattr(self, field_name)
                 if value is None or (hasattr(value, "__len__") and not value):
                     raise ValueError(f"{env_var} must be set when USE_EMAILS is true")
