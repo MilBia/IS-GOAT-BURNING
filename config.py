@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
@@ -14,11 +15,32 @@ class EmailSettings(BaseModel):
     subject: str = Field(default="GOAT ON FIRE!")
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
+    @model_validator(mode="after")
+    def check_required_fields(self) -> "EmailSettings":
+        if self.use_emails:
+            if not self.sender:
+                raise ValueError("EMAIL__SENDER must be set when USE_EMAILS is true")
+            if not self.sender_password:
+                raise ValueError("EMAIL__SENDER_PASSWORD must be set when USE_EMAILS is true")
+            if not self.recipients:
+                raise ValueError("EMAIL__RECIPIENTS must be set when USE_EMAILS is true")
+            if not self.email_host:
+                raise ValueError("EMAIL__EMAIL_HOST must be set when USE_EMAILS is true")
+            if self.email_port is None:
+                raise ValueError("EMAIL__EMAIL_PORT must be set when USE_EMAILS is true")
+        return self
+
 
 class DiscordSettings(BaseModel):
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
+
+    @model_validator(mode="after")
+    def check_required_fields(self) -> "DiscordSettings":
+        if self.use_discord and not self.hooks:
+            raise ValueError("DISCORD__HOOKS must be set when use_discord is true")
+        return self
 
 
 class VideoSettings(BaseModel):
@@ -28,16 +50,23 @@ class VideoSettings(BaseModel):
     max_video_chunks: int = Field(default=10)
     chunks_to_keep_after_fire: int = Field(default=5)
 
+    @model_validator(mode="after")
+    def check_required_fields(self) -> "VideoSettings":
+        if self.save_video_chunks and not self.video_output_directory:
+            raise ValueError("VIDEO__VIDEO_OUTPUT_DIRECTORY must be set when save_video_chunks is true")
+        return self
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__")
 
     source: str = Field(validation_alias="SOURCE")
-    logging: bool = Field(alias="LOGGING", default=True)
-    video_output: bool = Field(alias="VIDEO_OUTPUT", default=False)
-    checks_per_second: float = Field(alias="CHECKS_PER_SECOND", default=2.0)
-    open_cl: bool = Field(alias="OPEN_CL", default=False)
-    cuda: bool = Field(alias="CUDA", default=False)
+    fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
+    logging: bool = Field(validation_alias="LOGGING", default=True)
+    video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
+    checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=2.0)
+    open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
+    cuda: bool = Field(validation_alias="CUDA", default=False)
 
     # Nested settings
     email: EmailSettings

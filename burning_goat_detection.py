@@ -37,7 +37,7 @@ async def main():
     on_fire_action = OnceAction(actions)
     await detect_fire(
         src=settings.source,
-        threshold=0.1,
+        threshold=settings.fire_detection_threshold,
         logging=settings.logging,
         video_output=settings.video_output,
         on_fire_action=on_fire_action,
