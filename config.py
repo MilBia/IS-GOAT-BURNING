@@ -11,7 +11,6 @@ from pydantic_settings import SettingsConfigDict
 class EmailSettings(BaseModel):
     _REQUIRED_FIELDS = {
         "sender": "EMAIL__SENDER",
-        "sender_password": "EMAIL__SENDER_PASSWORD",
         "recipients": "EMAIL__RECIPIENTS",
         "email_host": "EMAIL__EMAIL_HOST",
         "email_port": "EMAIL__EMAIL_PORT",
@@ -33,6 +32,8 @@ class EmailSettings(BaseModel):
                 value = getattr(self, field_name)
                 if value is None or (hasattr(value, "__len__") and not value):
                     raise ValueError(f"{env_var} must be set when USE_EMAILS is true")
+            if self.sender_password is None or not self.sender_password.get_secret_value():
+                raise ValueError("EMAIL__SENDER_PASSWORD must be set when USE_EMAILS is true")
         return self
 
 
