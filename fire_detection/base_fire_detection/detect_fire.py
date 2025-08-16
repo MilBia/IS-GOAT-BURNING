@@ -3,17 +3,16 @@ from collections.abc import Generator
 
 import numpy as np
 
+from config import settings
 from fire_detection.async_frame_generator import frame_gen
 from fire_detection.async_frame_generator import frame_gen_with_iterator
 from fire_detection.signal_handler import SignalHandler
-from setting import CUDA
-from setting import OPEN_CL
 
-if OPEN_CL:
+if settings.open_cl:
     from fire_detection.base_fire_detection.utils import _data_preparation
     from fire_detection.base_fire_detection.utils import _detect_fire
     from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
-elif CUDA:
+elif settings.cuda:
     from fire_detection.base_fire_detection.utils import _cuda_data_preparation as _data_preparation
     from fire_detection.base_fire_detection.utils import _cuda_detect_fire as _detect_fire
     from fire_detection.cam_gear.cam_gear_cuda import YTCamGear

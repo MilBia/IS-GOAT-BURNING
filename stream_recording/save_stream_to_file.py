@@ -12,12 +12,8 @@ import time
 import cv2
 from vidgear.gears.helper import logger_handler
 
+from config import settings
 from fire_detection.signal_handler import SignalHandler
-from setting import CHUNKS_TO_KEEP_AFTER_FIRE
-from setting import MAX_VIDEO_CHUNKS
-from setting import SAVE_VIDEO_CHUNKS
-from setting import VIDEO_CHUNK_LENGTH_SECONDS
-from setting import VIDEO_OUTPUT_DIRECTORY
 
 logger = log.getLogger("AsyncVideoChunkSaver")
 logger.propagate = False
@@ -32,11 +28,11 @@ class AsyncVideoChunkSaver:
     """
 
     # --- Configuration ---
-    enabled: bool = SAVE_VIDEO_CHUNKS
-    output_dir: str = VIDEO_OUTPUT_DIRECTORY
-    chunk_length_seconds: int = VIDEO_CHUNK_LENGTH_SECONDS
-    max_chunks: int = MAX_VIDEO_CHUNKS
-    chunks_to_keep_after_fire: int = CHUNKS_TO_KEEP_AFTER_FIRE
+    enabled: bool = settings.video.save_video_chunks
+    output_dir: str = settings.video.video_output_directory
+    chunk_length_seconds: int = settings.video.video_chunk_length_seconds
+    max_chunks: int = settings.video.max_video_chunks
+    chunks_to_keep_after_fire: int = settings.video.chunks_to_keep_after_fire
     fps: float = 30.0
     FILENAME_PREFIX: str = "goat-cam_"
     FILENAME_SUFFIX: str = ".mp4"

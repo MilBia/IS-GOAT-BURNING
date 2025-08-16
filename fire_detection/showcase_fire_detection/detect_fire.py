@@ -4,15 +4,14 @@ from collections.abc import Generator
 import cv2
 import numpy as np
 
+from config import settings
 from fire_detection.async_frame_generator import frame_gen
 from fire_detection.async_frame_generator import frame_gen_with_iterator
 from fire_detection.signal_handler import SignalHandler
-from setting import CUDA
-from setting import OPEN_CL
 
-if OPEN_CL:
+if settings.open_cl:
     from fire_detection.cam_gear.cam_gear_opencl import YTCamGear
-elif CUDA:
+elif settings.cuda:
     from fire_detection.cam_gear.cam_gear_cuda import YTCamGear
 else:
     from fire_detection.cam_gear.cam_gear import YTCamGear
