@@ -31,9 +31,9 @@ class EmailSettings(BaseModel):
             for field_name, env_var in self._REQUIRED_FIELDS.items():
                 value = getattr(self, field_name)
                 if value is None or (hasattr(value, "__len__") and not value):
-                    raise ValueError(f"{env_var} must be set when USE_EMAILS is true")
+                    raise ValueError(f"{env_var} must be set when EMAIL__USE_EMAILS is true")
             if self.sender_password is None or not self.sender_password.get_secret_value():
-                raise ValueError("EMAIL__SENDER_PASSWORD must be set when USE_EMAILS is true")
+                raise ValueError("EMAIL__SENDER_PASSWORD must be set when EMAIL__USE_EMAILS is true")
         return self
 
 
@@ -45,7 +45,7 @@ class DiscordSettings(BaseModel):
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
         if self.use_discord and not self.hooks:
-            raise ValueError("DISCORD__HOOKS must be set when use_discord is true")
+            raise ValueError("DISCORD__HOOKS must be set when DISCORD__USE_DISCORD is true")
         return self
 
 
@@ -59,7 +59,7 @@ class VideoSettings(BaseModel):
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
         if self.save_video_chunks and not self.video_output_directory:
-            raise ValueError("VIDEO__VIDEO_OUTPUT_DIRECTORY must be set when save_video_chunks is true")
+            raise ValueError("VIDEO__VIDEO_OUTPUT_DIRECTORY must be set when VIDEO__SAVE_VIDEO_CHUNKS is true")
         return self
 
 
