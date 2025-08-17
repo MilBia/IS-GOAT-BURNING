@@ -7,7 +7,7 @@ from config import settings
 
 
 class FireDetector(Protocol):
-    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]: ...
+    def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]: ...
 
 
 class CPUFireDetector:
@@ -21,7 +21,7 @@ class CPUFireDetector:
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
         no_red = cv2.countNonZero(mask)
-        return int(no_red) > self.margin, cv2.bitwise_and(frame, hsv, mask=mask)
+        return int(no_red) > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
 
 
 class CUDAFireDetector:
@@ -44,7 +44,7 @@ class CUDAFireDetector:
         upper_channel_mask = cv2.cuda.compare(channel, upper_channel_gpu, cv2.CMP_LE)
         return cv2.cuda.bitwise_and(lower_channel_mask, upper_channel_mask)
 
-    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    def detect(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         blur = self.gaussian_filter.apply(frame)
         hsv = cv2.cuda.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
@@ -82,7 +82,9 @@ class OpenCLFireDetector(CPUFireDetector):
     and when input frames are of type cv2.UMat.
     """
 
-    pass
+    def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
+        fire, annotated_frame = super().detect(frame)
+        return fire, annotated_frame.get()
 
 
 def create_fire_detector(margin: int, lower: np.ndarray, upper: np.ndarray) -> FireDetector:

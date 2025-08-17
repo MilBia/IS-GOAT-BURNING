@@ -11,8 +11,6 @@ from fire_detection.signal_handler import SignalHandler
 
 class YTCamGearFireDetector:
     options = {"STREAM_RESOLUTION": "480p", "CAP_PROP_FPS": 30}
-    lower = np.array([18, 50, 50], dtype="uint8")
-    upper = np.array([35, 255, 255], dtype="uint8")
 
     def __init__(
         self,
@@ -22,12 +20,31 @@ class YTCamGearFireDetector:
         logging: bool = False,
         video_output: bool = False,
         checks_per_second: int | None = None,
+        lower_hsv: np.ndarray | None = None,
+        upper_hsv: np.ndarray | None = None,
     ):
+        """
+        Initializes the color detector.
+
+        Args:
+            lower_hsv (np.array): The lower bound of the HSV color range.
+                                  The default values are optimized for detecting yellow.
+            upper_hsv (np.array): The upper bound of the HSV color range.
+                                  The default values are optimized for detecting yellow.
+        """
         self.on_fire_action = on_fire_action
         self.video_output = video_output
+        if lower_hsv is None:
+            self.lower_hsv: np.ndarray = np.array([18, 50, 50], dtype="uint8")
+        else:
+            self.lower_hsv = lower_hsv
+        if upper_hsv is None:
+            self.upper_hsv: np.ndarray = np.array([35, 255, 255], dtype="uint8")
+        else:
+            self.upper_hsv = upper_hsv
         self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **self.options)
         fire_threshold = self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold
-        self.fire_detector = create_fire_detector(fire_threshold, self.lower, self.upper)
+        self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
         self.signal_handler = SignalHandler()
 
         if checks_per_second and checks_per_second < self.stream.framerate:
