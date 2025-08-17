@@ -25,20 +25,31 @@ class CPUFireDetector:
 
 
 class CUDAFireDetector:
+    base_bound_set: bool = False
+    lower_channel: list[cv2.cuda.GpuMat] = []
+    upper_channel: list[cv2.cuda.GpuMat] = []
+
     def __init__(self, margin: int, lower: np.ndarray, upper: np.ndarray):
         self.margin = margin
         self.lower = lower
         self.upper = upper
         self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, (21, 21), 0)
 
+    def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> cv2.cuda_GpuMat:
+        size = channel.size()
+        dtype = channel.type()
+        for i in range(3):
+            lower_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+            lower_channel_gpu.setTo(int(self.lower[i]))
+            self.lower_channel.append(lower_channel_gpu)
+            upper_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+            upper_channel_gpu.setTo(int(self.upper[i]))
+            self.upper_channel.append(upper_channel_gpu)
+
     def _create_channel_mask(
-        self, channel: cv2.cuda_GpuMat, size, dtype, lower_bound: int, upper_bound: int
+        self, channel: cv2.cuda.GpuMat, lower_channel_gpu: cv2.cuda.GpuMat, upper_channel_gpu: cv2.cuda.GpuMat
     ) -> cv2.cuda_GpuMat:
         """Creates a mask for a single channel based on lower and upper bounds."""
-        lower_channel_gpu = cv2.cuda_GpuMat(size, dtype)
-        lower_channel_gpu.setTo(int(lower_bound))
-        upper_channel_gpu = cv2.cuda_GpuMat(size, dtype)
-        upper_channel_gpu.setTo(int(upper_bound))
 
         lower_channel_mask = cv2.cuda.compare(channel, lower_channel_gpu, cv2.CMP_GE)
         upper_channel_mask = cv2.cuda.compare(channel, upper_channel_gpu, cv2.CMP_LE)
@@ -50,17 +61,18 @@ class CUDAFireDetector:
 
         # Split the GPU HSV image into its H, S, V channels
         h, s, v = cv2.cuda.split(hsv)
+        if not self.base_bound_set:
+            self._create_lower_upper_masks(h)
+            self.base_bound_set = True
 
         # --- Process Hue Channel ---
-        size = h.size()
-        dtype = h.type()
-        in_range_h = self._create_channel_mask(h, size, dtype, int(self.lower[0]), int(self.upper[0]))
+        in_range_h = self._create_channel_mask(h, self.lower_channel[0], self.upper_channel[0])
 
         # --- Process Saturation Channel ---
-        in_range_s = self._create_channel_mask(s, size, dtype, int(self.lower[1]), int(self.upper[1]))
+        in_range_s = self._create_channel_mask(s, self.lower_channel[1], self.upper_channel[1])
 
         # --- Process Value Channel ---
-        in_range_v = self._create_channel_mask(v, size, dtype, int(self.lower[2]), int(self.upper[2]))
+        in_range_v = self._create_channel_mask(v, self.lower_channel[2], self.upper_channel[2])
 
         # Combine the individual channel masks
         final_mask_gpu = cv2.cuda.bitwise_and(in_range_h, in_range_s)

@@ -11,6 +11,8 @@ from fire_detection.signal_handler import SignalHandler
 
 class YTCamGearFireDetector:
     options = {"STREAM_RESOLUTION": "480p", "CAP_PROP_FPS": 30}
+    DEFAULT_LOWER_HSV = np.array([18, 50, 50], dtype="uint8")
+    DEFAULT_UPPER_HSV = np.array([35, 255, 255], dtype="uint8")
 
     def __init__(
         self,
@@ -27,6 +29,12 @@ class YTCamGearFireDetector:
         Initializes the color detector.
 
         Args:
+            src (str): The source of the video stream.
+            on_fire_action (Callable): The action to perform when fire is detected.
+            threshold (float): The threshold for fire detection.
+            logging (bool): Whether to log the video stream.
+            video_output (bool): Whether to output the video stream.
+            checks_per_second (int): The number of checks per second.
             lower_hsv (np.array): The lower bound of the HSV color range.
                                   The default values are optimized for detecting yellow.
             upper_hsv (np.array): The upper bound of the HSV color range.
@@ -34,14 +42,8 @@ class YTCamGearFireDetector:
         """
         self.on_fire_action = on_fire_action
         self.video_output = video_output
-        if lower_hsv is None:
-            self.lower_hsv: np.ndarray = np.array([18, 50, 50], dtype="uint8")
-        else:
-            self.lower_hsv = lower_hsv
-        if upper_hsv is None:
-            self.upper_hsv: np.ndarray = np.array([35, 255, 255], dtype="uint8")
-        else:
-            self.upper_hsv = upper_hsv
+        self.lower_hsv = lower_hsv if lower_hsv is not None else self.DEFAULT_LOWER_HSV
+        self.upper_hsv = upper_hsv if upper_hsv is not None else self.DEFAULT_UPPER_HSV
         self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **self.options)
         fire_threshold = self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold
         self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
@@ -56,9 +58,8 @@ class YTCamGearFireDetector:
 
     async def checkout_generator(self):
         """
-        Generator increasing the counter each execution and yield information if current frame is destin to check
-
-        :return: if current frame is destin to check
+        Asynchronous generator that yields True for frames that are destined for processing,
+        based on the `checks_per_second` parameter.
         """
         frame: int = 0
         while True:
