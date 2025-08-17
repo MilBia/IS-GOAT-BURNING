@@ -15,25 +15,6 @@ lower = np.array(_lower, dtype="uint8")
 upper = np.array(_upper, dtype="uint8")
 
 
-async def checkout_generator(framerate, duration):
-    """
-    Generator increasing the counter each execution and yield information if current frame is destin to check
-
-    :param framerate: detected stream framerate
-    :param duration: how many check will be performed per second
-    :return: if current frame is destin to check
-    """
-    step = framerate / duration
-    frame = 0.0
-    while True:
-        frame += 1
-        if frame >= step:
-            yield True
-            frame -= step
-        else:
-            yield False
-
-
 class YTCamGearFireDetector:
     def __init__(
         self,
@@ -52,10 +33,26 @@ class YTCamGearFireDetector:
         self.signal_handler = SignalHandler()
 
         if checks_per_second and checks_per_second < self.stream.framerate:
-            self.check_iterator = checkout_generator(self.stream.framerate, checks_per_second)
+            self.step = self.stream.framerate / checks_per_second
+            self.check_iterator = self.checkout_generator()
             self.frame_generator = self._frame_gen_with_iterator
         else:
             self.frame_generator = self._frame_gen
+
+    async def checkout_generator(self):
+        """
+        Generator increasing the counter each execution and yield information if current frame is destin to check
+
+        :return: if current frame is destin to check
+        """
+        frame: int = 0
+        while True:
+            frame += 1
+            if frame >= self.step:
+                yield True
+                frame -= self.step
+            else:
+                yield False
 
     async def _frame_gen(self):
         async for frame in self.stream.read():
