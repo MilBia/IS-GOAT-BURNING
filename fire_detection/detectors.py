@@ -31,6 +31,19 @@ class CUDAFireDetector:
         self.upper = upper
         self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, (21, 21), 0)
 
+    def _create_channel_mask(
+        self, channel: cv2.cuda_GpuMat, size, dtype, lower_bound: int, upper_bound: int
+    ) -> cv2.cuda_GpuMat:
+        """Creates a mask for a single channel based on lower and upper bounds."""
+        lower_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+        lower_channel_gpu.setTo(int(lower_bound))
+        upper_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+        upper_channel_gpu.setTo(int(upper_bound))
+
+        lower_channel_mask = cv2.cuda.compare(channel, lower_channel_gpu, cv2.CMP_GE)
+        upper_channel_mask = cv2.cuda.compare(channel, upper_channel_gpu, cv2.CMP_LE)
+        return cv2.cuda.bitwise_and(lower_channel_mask, upper_channel_mask)
+
     def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         blur = self.gaussian_filter.apply(frame)
         hsv = cv2.cuda.cvtColor(blur, cv2.COLOR_BGR2HSV)
@@ -41,34 +54,13 @@ class CUDAFireDetector:
         # --- Process Hue Channel ---
         size = h.size()
         dtype = h.type()
-        lower_h_gpu = cv2.cuda_GpuMat(size, dtype)
-        lower_h_gpu.setTo(int(self.lower[0]))
-        upper_h_gpu = cv2.cuda_GpuMat(size, dtype)
-        upper_h_gpu.setTo(int(self.upper[0]))
-
-        lower_h_mask = cv2.cuda.compare(h, lower_h_gpu, cv2.CMP_GE)
-        upper_h_mask = cv2.cuda.compare(h, upper_h_gpu, cv2.CMP_LE)
-        in_range_h = cv2.cuda.bitwise_and(lower_h_mask, upper_h_mask)
+        in_range_h = self._create_channel_mask(h, size, dtype, int(self.lower[0]), int(self.upper[0]))
 
         # --- Process Saturation Channel ---
-        lower_s_gpu = cv2.cuda_GpuMat(size, dtype)
-        lower_s_gpu.setTo(int(self.lower[1]))
-        upper_s_gpu = cv2.cuda_GpuMat(size, dtype)
-        upper_s_gpu.setTo(int(self.upper[1]))
-
-        lower_s_mask = cv2.cuda.compare(s, lower_s_gpu, cv2.CMP_GE)
-        upper_s_mask = cv2.cuda.compare(s, upper_s_gpu, cv2.CMP_LE)
-        in_range_s = cv2.cuda.bitwise_and(lower_s_mask, upper_s_mask)
+        in_range_s = self._create_channel_mask(s, size, dtype, int(self.lower[1]), int(self.upper[1]))
 
         # --- Process Value Channel ---
-        lower_v_gpu = cv2.cuda_GpuMat(size, dtype)
-        lower_v_gpu.setTo(int(self.lower[2]))
-        upper_v_gpu = cv2.cuda_GpuMat(size, dtype)
-        upper_v_gpu.setTo(int(self.upper[2]))
-
-        lower_v_mask = cv2.cuda.compare(v, lower_v_gpu, cv2.CMP_GE)
-        upper_v_mask = cv2.cuda.compare(v, upper_v_gpu, cv2.CMP_LE)
-        in_range_v = cv2.cuda.bitwise_and(lower_v_mask, upper_v_mask)
+        in_range_v = self._create_channel_mask(v, size, dtype, int(self.lower[2]), int(self.upper[2]))
 
         # Combine the individual channel masks
         final_mask_gpu = cv2.cuda.bitwise_and(in_range_h, in_range_s)
@@ -84,6 +76,12 @@ class CUDAFireDetector:
 
 
 class OpenCLFireDetector(CPUFireDetector):
+    """
+    Uses the CPU-based fire detection implementation.
+    OpenCV functions used within are transparently accelerated by OpenCL when available
+    and when input frames are of type cv2.UMat.
+    """
+
     pass
 
 

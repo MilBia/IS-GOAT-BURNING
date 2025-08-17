@@ -21,7 +21,7 @@ async def main(sender, sender_password, *recipients):
                     "recipients": recipients,
                     "subject": "GOAT ON FIRE!",
                     "message": "Dear friend... Its time... Its time to Fight Fire With Fire.",
-                    "host": "smtp.gmai.com",
+                    "host": "smtp.gmail.com",
                     "port": 587,
                 },
             ]
