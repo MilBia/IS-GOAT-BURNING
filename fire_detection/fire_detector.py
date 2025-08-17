@@ -69,12 +69,13 @@ class YTCamGearFireDetector:
 
     async def __call__(self, *args, **kwargs):
         async for frame in self.frame_generator():
-            if self.fire_detector.detect(frame):
+            fire, annotated_frame = self.fire_detector.detect(frame)
+            if fire:
                 self.signal_handler.fire_detected()
                 await self.on_fire_action()
 
             if self.video_output:
-                cv2.imshow("output", frame)
+                cv2.imshow("output", annotated_frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 
