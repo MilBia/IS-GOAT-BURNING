@@ -34,7 +34,7 @@ class CUDAFireDetector:
         self.upper_channel: list[cv2.cuda.GpuMat] = []
         self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, (21, 21), 0)
 
-    def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> cv2.cuda_GpuMat:
+    def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
         size = channel.size()
         dtype = channel.type()
         for i in range(3):
