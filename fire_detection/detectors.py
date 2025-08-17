@@ -25,14 +25,13 @@ class CPUFireDetector:
 
 
 class CUDAFireDetector:
-    base_bound_set: bool = False
-    lower_channel: list[cv2.cuda.GpuMat] = []
-    upper_channel: list[cv2.cuda.GpuMat] = []
-
     def __init__(self, margin: int, lower: np.ndarray, upper: np.ndarray):
         self.margin = margin
         self.lower = lower
         self.upper = upper
+        self.base_bound_set: bool = False
+        self.lower_channel: list[cv2.cuda.GpuMat] = []
+        self.upper_channel: list[cv2.cuda.GpuMat] = []
         self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, (21, 21), 0)
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> cv2.cuda_GpuMat:

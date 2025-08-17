@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
+import math
 
 import cv2
 import numpy as np
@@ -50,7 +51,7 @@ class YTCamGearFireDetector:
         self.signal_handler = SignalHandler()
 
         if checks_per_second and checks_per_second < self.stream.framerate:
-            self.frames_between_step = int(self.stream.framerate / checks_per_second)
+            self.frames_between_step = math.ceil(self.stream.framerate / checks_per_second)
             self.check_iterator = self.checkout_generator()
             self.frame_generator = self._frame_gen_with_iterator
         else:
@@ -61,12 +62,12 @@ class YTCamGearFireDetector:
         Asynchronous generator that yields True for frames that are destined for processing,
         based on the `checks_per_second` parameter.
         """
-        frame: int = 0
+        frame_counter: int = 0
         while True:
-            frame += 1
-            if frame >= self.frames_between_step:
+            frame_counter += 1
+            if frame_counter >= self.frames_between_step:
                 yield True
-                frame -= self.frames_between_step
+                frame_counter -= self.frames_between_step
             else:
                 yield False
 
