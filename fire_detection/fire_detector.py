@@ -21,7 +21,7 @@ class YTCamGearFireDetector:
         threshold: float = 0.05,
         logging: bool = False,
         video_output: bool = False,
-        checks_per_second: int | None = None,
+        checks_per_second: float | None = None,
         lower_hsv: np.ndarray | None = None,
         upper_hsv: np.ndarray | None = None,
         **yt_cam_gear_options,
@@ -59,7 +59,7 @@ class YTCamGearFireDetector:
         else:
             self.frame_generator = self._frame_gen
 
-    async def checkout_generator(self):
+    async def checkout_generator(self) -> AsyncGenerator[bool, None]:
         """
         Asynchronous generator that yields True for frames that are destined for processing,
         based on the `checks_per_second` parameter.
@@ -73,13 +73,13 @@ class YTCamGearFireDetector:
             else:
                 yield False
 
-    async def _frame_gen(self):
+    async def _frame_gen(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
         async for frame in self.stream.read():
             if frame is None:
                 break
             yield frame
 
-    async def _frame_gen_with_iterator(self) -> AsyncGenerator[np.ndarray, np.ndarray]:
+    async def _frame_gen_with_iterator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
         async for frame in self.stream.read():
             if frame is None:
                 break
