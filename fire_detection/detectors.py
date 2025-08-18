@@ -38,16 +38,16 @@ class CUDAFireDetector:
         size = channel.size()
         dtype = channel.type()
         for i in range(3):
-            lower_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+            lower_channel_gpu = cv2.cuda.GpuMat(size, dtype)
             lower_channel_gpu.setTo(int(self.lower[i]))
             self.lower_channel.append(lower_channel_gpu)
-            upper_channel_gpu = cv2.cuda_GpuMat(size, dtype)
+            upper_channel_gpu = cv2.cuda.GpuMat(size, dtype)
             upper_channel_gpu.setTo(int(self.upper[i]))
             self.upper_channel.append(upper_channel_gpu)
 
     def _create_channel_mask(
         self, channel: cv2.cuda.GpuMat, lower_channel_gpu: cv2.cuda.GpuMat, upper_channel_gpu: cv2.cuda.GpuMat
-    ) -> cv2.cuda_GpuMat:
+    ) -> cv2.cuda.GpuMat:
         """Creates a mask for a single channel based on lower and upper bounds."""
 
         lower_channel_mask = cv2.cuda.compare(channel, lower_channel_gpu, cv2.CMP_GE)
@@ -79,7 +79,7 @@ class CUDAFireDetector:
 
         no_red = cv2.cuda.countNonZero(final_mask_gpu)
 
-        result_gpu = cv2.cuda_GpuMat(frame.size(), frame.type())
+        result_gpu = cv2.cuda.GpuMat(frame.size(), frame.type())
         result_gpu.setTo((0, 0, 0))
         frame.copyTo(result_gpu, final_mask_gpu)
 

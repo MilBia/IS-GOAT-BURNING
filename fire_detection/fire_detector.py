@@ -49,7 +49,7 @@ class YTCamGearFireDetector:
         self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
         self.signal_handler = SignalHandler()
 
-        if checks_per_second and checks_per_second < self.stream.framerate:
+        if checks_per_second and checks_per_second < self.stream.framerate > 0:
             self.frames_between_step = self.stream.framerate / checks_per_second
             self.check_iterator = self.checkout_generator()
             self.frame_generator = self._frame_gen_with_iterator
