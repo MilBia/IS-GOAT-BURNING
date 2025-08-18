@@ -35,7 +35,7 @@ class YTCamGearFireDetector:
             threshold (float): The threshold for fire detection.
             logging (bool): Whether to log the video stream.
             video_output (bool): Whether to output the video stream.
-            checks_per_second (int): The number of checks per second.
+            checks_per_second (float): The number of checks per second.
             lower_hsv (np.array): The lower bound of the HSV color range.
                                   The default values are optimized for detecting yellow.
             upper_hsv (np.array): The upper bound of the HSV color range.
