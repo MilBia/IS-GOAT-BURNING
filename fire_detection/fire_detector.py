@@ -46,8 +46,8 @@ class YTCamGearFireDetector:
         self.video_output = video_output
         self.lower_hsv = lower_hsv if lower_hsv is not None else self.DEFAULT_LOWER_HSV
         self.upper_hsv = upper_hsv if upper_hsv is not None else self.DEFAULT_UPPER_HSV
-        self.options = {**self.DEFAULT_OPTIONS, **yt_cam_gear_options}
-        self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **self.options)
+        options = {**self.DEFAULT_OPTIONS, **yt_cam_gear_options}
+        self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **options)
         fire_threshold = self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold
         self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
         self.signal_handler = SignalHandler()
