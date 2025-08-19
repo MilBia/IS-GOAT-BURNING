@@ -28,14 +28,15 @@ async def main(sender, sender_password, *recipients):
         ]
     )
 
-    await YTCamGearFireDetector(
+    detector = YTCamGearFireDetector(
         src="https://youtu.be/6jge6uzRl-k",
         threshold=0.05,
         logging=True,
         video_output=False,
         on_fire_action=on_fire_action,
         checks_per_second=1,
-    )()
+    )
+    await detector()
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ class CUDAFireDetector:
         self.lower_channel: list[cv2.cuda.GpuMat] = []
         self.upper_channel: list[cv2.cuda.GpuMat] = []
         self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, (21, 21), 0)
+        self._last_frame_size = None
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
         size = channel.size()
@@ -60,9 +61,12 @@ class CUDAFireDetector:
 
         # Split the GPU HSV image into its H, S, V channels
         h, s, v = cv2.cuda.split(hsv)
-        if not self.base_bound_set:
+        if not self.base_bound_set or self._last_frame_size != h.size():
+            self.lower_channel.clear()
+            self.upper_channel.clear()
             self._create_lower_upper_masks(h)
             self.base_bound_set = True
+            self._last_frame_size = h.size()
 
         # --- Process Hue Channel ---
         in_range_h = self._create_channel_mask(h, self.lower_channel[0], self.upper_channel[0])
@@ -94,8 +98,12 @@ class OpenCLFireDetector(CPUFireDetector):
     """
 
     def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
-        fire, annotated_frame = super().detect(frame)
-        return fire, annotated_frame.get()
+        blur = cv2.GaussianBlur(frame, (21, 21), 0)
+        hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.lower, self.upper)
+        no_red = cv2.countNonZero(mask)
+        annotated_frame = cv2.bitwise_and(frame, frame, mask=mask)
+        return int(no_red) > self.margin, annotated_frame.get()
 
 
 def create_fire_detector(margin: int, lower: np.ndarray, upper: np.ndarray) -> FireDetector:

@@ -35,14 +35,15 @@ async def main():
             ]
         )
     on_fire_action = OnceAction(actions)
-    await YTCamGearFireDetector(
+    detector = YTCamGearFireDetector(
         src=settings.source,
         threshold=settings.fire_detection_threshold,
         logging=settings.logging,
         video_output=settings.video_output,
         on_fire_action=on_fire_action,
         checks_per_second=settings.checks_per_second,
-    )()
+    )
+    await detector()
 
 
 if __name__ == "__main__":
