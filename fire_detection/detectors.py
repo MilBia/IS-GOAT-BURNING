@@ -16,7 +16,7 @@ class CPUFireDetector:
         self.lower = lower
         self.upper = upper
 
-    def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> np.ndarray | cv2.UMat:
+    def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         blur = cv2.GaussianBlur(frame, (21, 21), 0)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
