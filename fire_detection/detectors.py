@@ -16,12 +16,15 @@ class CPUFireDetector:
         self.lower = lower
         self.upper = upper
 
-    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> np.ndarray | cv2.UMat:
         blur = cv2.GaussianBlur(frame, (21, 21), 0)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
         no_red = cv2.countNonZero(mask)
         return int(no_red) > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
+
+    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        return self._detect_logic(frame)
 
 
 class CUDAFireDetector:
@@ -98,12 +101,8 @@ class OpenCLFireDetector(CPUFireDetector):
     """
 
     def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
-        blur = cv2.GaussianBlur(frame, (21, 21), 0)
-        hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower, self.upper)
-        no_red = cv2.countNonZero(mask)
-        annotated_frame = cv2.bitwise_and(frame, frame, mask=mask)
-        return int(no_red) > self.margin, annotated_frame.get()
+        fire, annotated_frame = self._detect_logic(frame)
+        return fire, annotated_frame.get()
 
 
 def create_fire_detector(margin: int, lower: np.ndarray, upper: np.ndarray) -> FireDetector:
