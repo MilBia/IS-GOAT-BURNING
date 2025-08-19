@@ -1,7 +1,7 @@
 import asyncio
 
 from config import settings
-from fire_detection import detect_fire
+from fire_detection import YTCamGearFireDetector
 from on_fire_actions import OnceAction
 from on_fire_actions import SendEmail
 from on_fire_actions import SendToDiscord
@@ -35,7 +35,7 @@ async def main():
             ]
         )
     on_fire_action = OnceAction(actions)
-    await detect_fire(
+    detector = YTCamGearFireDetector(
         src=settings.source,
         threshold=settings.fire_detection_threshold,
         logging=settings.logging,
@@ -43,6 +43,7 @@ async def main():
         on_fire_action=on_fire_action,
         checks_per_second=settings.checks_per_second,
     )
+    await detector()
 
 
 if __name__ == "__main__":
