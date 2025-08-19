@@ -21,7 +21,7 @@ class CPUFireDetector:
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
         no_red = cv2.countNonZero(mask)
-        return int(no_red) > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
+        return no_red > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
 
     def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         return self._detect_logic(frame)
@@ -90,7 +90,7 @@ class CUDAFireDetector:
         result_gpu.setTo((0, 0, 0))
         frame.copyTo(result_gpu, final_mask_gpu)
 
-        return int(no_red) > self.margin, result_gpu.download()
+        return no_red > self.margin, result_gpu.download()
 
 
 class OpenCLFireDetector(CPUFireDetector):
