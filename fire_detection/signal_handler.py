@@ -33,6 +33,7 @@ class SignalHandler:
         # --- State ---
         self.KEEP_PROCESSING = True
         self.fire_detected_event = asyncio.Event()
+        self.main_task: asyncio.Task | None = None
 
         signal.signal(signal.SIGINT, self.exit_gracefully)
         signal.signal(signal.SIGTERM, self.exit_gracefully)
@@ -40,9 +41,15 @@ class SignalHandler:
         self._initialized = True
         logger.debug("SignalHandler singleton initialized.")
 
+    def set_main_task(self, task: asyncio.Task):
+        """Set the main task to be cancelled on exit."""
+        self.main_task = task
+
     def exit_gracefully(self, *args, **kwargs):
         """Called by SIGINT/SIGTERM to signal for a graceful shutdown."""
         logger.info("Termination signal received. Requesting graceful exit.")
+        if self.main_task:
+            self.main_task.cancel()
         self.KEEP_PROCESSING = False
 
     def fire_detected(self):

@@ -24,15 +24,10 @@ class YTCamGear(BaseYTCamGear):
         kwargs["THREADED_QUEUE_MODE"] = True
 
     async def read(self):
+        loop = asyncio.get_running_loop()
         while self.signal_handler.KEEP_PROCESSING:
-            # stream not read yet
-            self._CamGear__stream_read.clear()
-
-            # otherwise, read the next frame from the stream
-            (grabbed, frame) = self.stream.read()
-
-            # stream read completed
-            self._CamGear__stream_read.set()
+            # Read the next frame in executor
+            (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
 
             # check for valid frame if received
             if not grabbed:
@@ -64,6 +59,5 @@ class YTCamGear(BaseYTCamGear):
                     yield src
             else:
                 yield src
-            await asyncio.sleep(self.frame_wait_time)
         else:
             await self.video_saver.stop()

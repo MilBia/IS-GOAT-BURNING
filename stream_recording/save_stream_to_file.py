@@ -216,7 +216,7 @@ class AsyncVideoChunkSaver:
                 # Run the blocking write operation in a separate thread
                 await loop.run_in_executor(None, self._write_frame_blocking, frame)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue  # No frame, just loop and check signals again.
             except asyncio.CancelledError:
                 logger.info("Writer task was cancelled.")
@@ -322,7 +322,7 @@ class AsyncVideoChunkSaver:
                         logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
                     active_chunk_saved = True  # Signal to exit this loop
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_retries += 1
                 logger.warning(
                     f"Timeout waiting for frame while finalizing active chunk. "
@@ -366,7 +366,7 @@ class AsyncVideoChunkSaver:
                     except asyncio.QueueFull:
                         logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_retries += 1
                 logger.warning(
                     f"Timeout waiting for frame while finalizing active chunk. "

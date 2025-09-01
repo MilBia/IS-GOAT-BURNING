@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 
@@ -6,7 +7,6 @@ import numpy as np
 
 from fire_detection.cam_gear import YTCamGear
 from fire_detection.detectors import create_fire_detector
-from fire_detection.signal_handler import SignalHandler
 
 
 class YTCamGearFireDetector:
@@ -50,7 +50,6 @@ class YTCamGearFireDetector:
         self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **options)
         fire_threshold = int(self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold)
         self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
-        self.signal_handler = SignalHandler()
 
         if checks_per_second and checks_per_second < self.stream.framerate > 0:
             self.frames_between_step = self.stream.framerate / checks_per_second
@@ -87,17 +86,18 @@ class YTCamGearFireDetector:
                 yield frame
 
     async def __call__(self):
-        async for frame in self.frame_generator():
-            fire, annotated_frame = self.fire_detector.detect(frame)
-            if fire:
-                self.signal_handler.fire_detected()
-                await self.on_fire_action()
+        try:
+            async for frame in self.frame_generator():
+                fire, annotated_frame = self.fire_detector.detect(frame)
+                if fire:
+                    await self.on_fire_action()
 
+                if self.video_output:
+                    cv2.imshow("output", annotated_frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+        except asyncio.CancelledError:
             if self.video_output:
-                cv2.imshow("output", annotated_frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-
-        if self.video_output:
-            cv2.destroyAllWindows()
-        self.stream.stop()
+                cv2.destroyAllWindows()
+            self.stream.stop()
+            raise

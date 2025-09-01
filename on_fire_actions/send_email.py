@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from email.message import EmailMessage
 import logging as log
@@ -23,7 +24,8 @@ class SendEmail:
     host: str = None
     port: int = None
 
-    async def __call__(self) -> None:
+    def _send_email_blocking(self) -> None:
+        """The actual blocking smtplib implementation."""
         msg = EmailMessage()
         msg["Subject"] = self.subject
         msg["From"] = self.sender
@@ -35,7 +37,7 @@ class SendEmail:
         context = ssl.create_default_context()
         logger.info("Sending an email...")
         try:
-            with smtplib.SMTP(host=self.host, port=self.port, timeout=1) as s:
+            with smtplib.SMTP(host=self.host, port=self.port, timeout=5) as s:
                 s.starttls(context=context)
                 logger.info("Context loaded")
                 s.login(self.sender, self.sender_password)
@@ -48,3 +50,7 @@ class SendEmail:
             logger.error("Connection timed out")
         except Exception as e:
             logger.error(e)
+
+    async def __call__(self) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._send_email_blocking)
