@@ -21,7 +21,7 @@ class YTCamGear(BaseYTCamGear):
                 self._CamGear__stream_read.clear()
 
                 # otherwise, read the next frame from the stream
-                (grabbed, frame) = await loop.run_in_executor(None, self.stream.retrieve)
+                (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
 
                 # stream read completed
                 self._CamGear__stream_read.set()

@@ -44,8 +44,10 @@ class BaseYTCamGear(CamGear):
         loop = asyncio.get_running_loop()
         try:
             while True:
+                self._CamGear__stream_read.clear()
                 # Read the next frame in executor
                 (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
+                self._CamGear__stream_read.set()
 
                 # check for valid frame if received
                 if not grabbed:
