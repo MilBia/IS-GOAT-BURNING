@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import logging as log
+import signal
 
 from vidgear.gears.helper import logger_handler
 
@@ -69,6 +71,10 @@ async def main():
         on_fire_action=on_fire_action,
         checks_per_second=settings.checks_per_second,
     )
+    loop = asyncio.get_running_loop()
+    signal_handler = SignalHandler()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler.exit_gracefully)
     try:
         main_task = asyncio.create_task(run_detector(detector))
         signal_handler.set_main_task(main_task)
@@ -78,7 +84,8 @@ async def main():
     finally:
         if main_task and not main_task.done():
             main_task.cancel()
-            await main_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await main_task
         logger.info("Application has shut down.")
 
 

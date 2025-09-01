@@ -347,7 +347,7 @@ class AsyncVideoChunkSaver:
 
         while chunks_saved_count < self.chunks_to_keep_after_fire:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
 
                 timeout_retries = 0
 

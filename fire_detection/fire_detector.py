@@ -7,6 +7,7 @@ import numpy as np
 
 from fire_detection.cam_gear import YTCamGear
 from fire_detection.detectors import create_fire_detector
+from fire_detection.signal_handler import SignalHandler
 
 
 class YTCamGearFireDetector:
@@ -90,6 +91,7 @@ class YTCamGearFireDetector:
             async for frame in self.frame_generator():
                 fire, annotated_frame = self.fire_detector.detect(frame)
                 if fire:
+                    SignalHandler().fire_detected()
                     await self.on_fire_action()
 
                 if self.video_output:

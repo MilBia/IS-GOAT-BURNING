@@ -21,7 +21,7 @@ class YTCamGear(BaseYTCamGear):
         else:
             logger.error("No CUDA-capable GPUs found")
             raise RuntimeError("No CUDA-capable GPUs found")
-        kwargs["THREADED_QUEUE_MODE"] = True
+        kwargs["THREADED_QUEUE_MODE"] = False
 
     async def read(self):
         loop = asyncio.get_running_loop()
