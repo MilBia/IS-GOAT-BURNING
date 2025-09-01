@@ -1,5 +1,7 @@
 import asyncio
-import logging
+import logging as log
+
+from vidgear.gears.helper import logger_handler
 
 from config import settings
 from fire_detection import YTCamGearFireDetector
@@ -8,7 +10,9 @@ from on_fire_actions import OnceAction
 from on_fire_actions import SendEmail
 from on_fire_actions import SendToDiscord
 
-logger = logging.getLogger(__name__)
+logger = log.getLogger(__name__)
+logger.propagate = False
+logger.addHandler(logger_handler())
 
 
 async def run_detector(detector: YTCamGearFireDetector):
@@ -17,8 +21,6 @@ async def run_detector(detector: YTCamGearFireDetector):
         await detector()
     except Exception:
         logger.exception("Fire detector task failed unexpectedly.")
-        # Depending on the desired behavior, you might want to re-raise
-        # or handle the exception to allow for restarts.
     finally:
         logger.info("Fire detector task is shutting down.")
 
@@ -77,9 +79,6 @@ async def main():
         if main_task and not main_task.done():
             main_task.cancel()
             await main_task
-        # Ensure all resources are cleaned up
-        # if detector.stream.is_running:
-        #     detector.stream.stop()
         logger.info("Application has shut down.")
 
 

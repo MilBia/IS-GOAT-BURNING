@@ -100,4 +100,3 @@ class YTCamGearFireDetector:
             if self.video_output:
                 cv2.destroyAllWindows()
             self.stream.stop()
-            raise
