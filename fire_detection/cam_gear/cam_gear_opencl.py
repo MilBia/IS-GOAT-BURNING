@@ -14,13 +14,14 @@ logger.setLevel(log.DEBUG)
 
 class YTCamGear(BaseYTCamGear):
     async def read(self):
+        loop = asyncio.get_running_loop()
         try:
             while True:
                 # stream not read yet
                 self._CamGear__stream_read.clear()
 
                 # otherwise, read the next frame from the stream
-                (grabbed, frame) = self.stream.retrieve()
+                (grabbed, frame) = await loop.run_in_executor(None, self.stream.retrieve)
 
                 # stream read completed
                 self._CamGear__stream_read.set()
@@ -54,6 +55,5 @@ class YTCamGear(BaseYTCamGear):
                         yield frame
                 else:
                     yield frame
-                await asyncio.sleep(self.frame_wait_time)
         finally:
             await self.video_saver.stop()
