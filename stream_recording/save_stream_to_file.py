@@ -194,41 +194,41 @@ class AsyncVideoChunkSaver:
     async def _writer_task(self):
         """The main consumer task that runs in the background."""
         loop = asyncio.get_running_loop()
-        while self.signal_handler.KEEP_PROCESSING:
-            # Check for the fire event signal first.
-            if self.signal_handler.is_fire_detected():
-                # Disable normal chunk cleanup during event handling
-                original_cleanup_action = self.chunk_limit_action
-                self.chunk_limit_action = self._noop
+        try:
+            while True:
+                # Check for the fire event signal first.
+                if self.signal_handler.is_fire_detected():
+                    # Disable normal chunk cleanup during event handling
+                    original_cleanup_action = self.chunk_limit_action
+                    self.chunk_limit_action = self._noop
+                    try:
+                        await self._handle_fire_event_async()
+                    finally:
+                        # Re-enable normal chunk cleanup after event is handled
+                        self.reset_after_fire()
+                        self.chunk_limit_action = original_cleanup_action
+                        logger.info("Fire event handled. Restoring normal chunk rotation policy.")
+
                 try:
-                    await self._handle_fire_event_async()
-                finally:
-                    # Re-enable normal chunk cleanup after event is handled
-                    self.reset_after_fire()
-                    self.chunk_limit_action = original_cleanup_action
-                    logger.info("Fire event handled. Restoring normal chunk rotation policy.")
+                    # Wait for a frame with a timeout to remain responsive to signals.
+                    frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
+                    if frame is None:  # Graceful stop via queue
+                        break
+                    # Run the blocking write operation in a separate thread
+                    await loop.run_in_executor(None, self._write_frame_blocking, frame)
 
-            try:
-                # Wait for a frame with a timeout to remain responsive to signals.
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
-                if frame is None:  # Graceful stop via queue
-                    break
-                # Run the blocking write operation in a separate thread
-                await loop.run_in_executor(None, self._write_frame_blocking, frame)
-
-            except TimeoutError:
-                continue  # No frame, just loop and check signals again.
-            except asyncio.CancelledError:
-                logger.info("Writer task was cancelled.")
-                break  # Exit if task is cancelled
-            except Exception as e:
-                logger.error(f"Error writing frame: {e}", exc_info=True)
-                break  # Exit the writer task on error to prevent repeated failures
-
-        # Final cleanup when the loop is broken
-        if self.writer is not None:
-            self.writer.release()
-            logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
+                except TimeoutError:
+                    continue  # No frame, just loop and check signals again.
+        except asyncio.CancelledError:
+            logger.info("Writer task was cancelled.")
+            raise
+        except Exception as e:
+            logger.error(f"Error writing frame: {e}", exc_info=True)
+        finally:
+            # Final cleanup when the loop is broken
+            if self.writer is not None:
+                self.writer.release()
+                logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
 
     def __call__(self, frame):
         """
@@ -307,7 +307,7 @@ class AsyncVideoChunkSaver:
 
                 timeout_retries = 0
 
-                if frame is None or not self.signal_handler.KEEP_PROCESSING:
+                if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     break  # Exit this loop
 
@@ -351,7 +351,7 @@ class AsyncVideoChunkSaver:
 
                 timeout_retries = 0
 
-                if frame is None or not self.signal_handler.KEEP_PROCESSING:
+                if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording.")
                     break
 

@@ -23,41 +23,44 @@ class YTCamGear(BaseYTCamGear):
             raise RuntimeError("No CUDA-capable GPUs found")
         kwargs["THREADED_QUEUE_MODE"] = False
 
+    def _process_frame_cuda(self, frame):
+        src = cv2.cuda.GpuMat()
+        src.upload(frame)
+
+        # apply colorspace to frames if valid
+        if self.color_space is not None:
+            color_frame = None
+            try:
+                if isinstance(self.color_space, int):
+                    color_frame = cv2.cuda.cvtColor(src, self.color_space)
+                else:
+                    raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
+            except Exception as e:
+                # Catch if any error occurred
+                self.color_space = None
+                if self._CamGear__logging:
+                    logger.exception(str(e))
+                    logger.warning("Input colorspace is not a valid colorspace!")
+            if color_frame is not None:
+                return color_frame
+            return src
+        return src
+
     async def read(self):
         loop = asyncio.get_running_loop()
-        while self.signal_handler.KEEP_PROCESSING:
-            # Read the next frame in executor
-            (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
+        try:
+            while True:
+                # Read the next frame in executor
+                (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
 
-            # check for valid frame if received
-            if not grabbed:
-                break
+                # check for valid frame if received
+                if not grabbed:
+                    break
 
-            # Put the frame into the queue (this is non-blocking)
-            self.video_saver(frame)
+                # Put the frame into the queue (this is non-blocking)
+                self.video_saver(frame)
 
-            src = cv2.cuda.GpuMat()
-            src.upload(frame)
-
-            # apply colorspace to frames if valid
-            if self.color_space is not None:
-                color_frame = None
-                try:
-                    if isinstance(self.color_space, int):
-                        color_frame = cv2.cuda.cvtColor(src, self.color_space)
-                    else:
-                        raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
-                except Exception as e:
-                    # Catch if any error occurred
-                    self.color_space = None
-                    if self._CamGear__logging:
-                        logger.exception(str(e))
-                        logger.warning("Input colorspace is not a valid colorspace!")
-                if color_frame is not None:
-                    yield color_frame
-                else:
-                    yield src
-            else:
-                yield src
-        else:
+                processed_frame = await loop.run_in_executor(None, self._process_frame_cuda, frame)
+                yield processed_frame
+        finally:
             await self.video_saver.stop()

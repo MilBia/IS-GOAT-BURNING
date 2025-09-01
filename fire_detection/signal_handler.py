@@ -31,7 +31,6 @@ class SignalHandler:
             return
 
         # --- State ---
-        self.KEEP_PROCESSING = True
         self.fire_detected_event = asyncio.Event()
         self.main_task: asyncio.Task | None = None
 
@@ -50,7 +49,6 @@ class SignalHandler:
         logger.info("Termination signal received. Requesting graceful exit.")
         if self.main_task:
             self.main_task.cancel()
-        self.KEEP_PROCESSING = False
 
     def fire_detected(self):
         """Signals that a fire has been detected."""

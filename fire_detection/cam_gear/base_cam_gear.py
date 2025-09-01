@@ -42,36 +42,37 @@ class BaseYTCamGear(CamGear):
 
     async def read(self):
         loop = asyncio.get_running_loop()
-        while self.signal_handler.KEEP_PROCESSING:
-            # Read the next frame in executor
-            (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
+        try:
+            while True:
+                # Read the next frame in executor
+                (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
 
-            # check for valid frame if received
-            if not grabbed:
-                break
+                # check for valid frame if received
+                if not grabbed:
+                    break
 
-            # Put the frame into the queue (this is non-blocking)
-            self.video_saver(frame)
+                # Put the frame into the queue (this is non-blocking)
+                self.video_saver(frame)
 
-            # apply colorspace to frames if valid
-            if self.color_space is not None:
-                color_frame = None
-                try:
-                    if isinstance(self.color_space, int):
-                        color_frame = cv2.cvtColor(frame, self.color_space)
+                # apply colorspace to frames if valid
+                if self.color_space is not None:
+                    color_frame = None
+                    try:
+                        if isinstance(self.color_space, int):
+                            color_frame = cv2.cvtColor(frame, self.color_space)
+                        else:
+                            raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
+                    except Exception as e:
+                        # Catch if any error occurred
+                        self.color_space = None
+                        if self._CamGear__logging:
+                            logger.exception(str(e))
+                            logger.warning("Input colorspace is not a valid colorspace!")
+                    if color_frame is not None:
+                        yield color_frame
                     else:
-                        raise ValueError(f"Global color_space parameter value `{self.color_space}` is not a valid!")
-                except Exception as e:
-                    # Catch if any error occurred
-                    self.color_space = None
-                    if self._CamGear__logging:
-                        logger.exception(str(e))
-                        logger.warning("Input colorspace is not a valid colorspace!")
-                if color_frame is not None:
-                    yield color_frame
+                        yield frame
                 else:
                     yield frame
-            else:
-                yield frame
-        else:
+        finally:
             await self.video_saver.stop()
