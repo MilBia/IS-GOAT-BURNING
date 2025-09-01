@@ -210,7 +210,7 @@ class AsyncVideoChunkSaver:
 
             try:
                 # Wait for a frame with a timeout to remain responsive to signals.
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.1)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
                 if frame is None:  # Graceful stop via queue
                     break
                 # Run the blocking write operation in a separate thread
@@ -303,7 +303,7 @@ class AsyncVideoChunkSaver:
 
         while not active_chunk_saved:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
 
                 timeout_retries = 0
 
