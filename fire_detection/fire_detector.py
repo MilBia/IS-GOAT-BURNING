@@ -88,10 +88,11 @@ class YTCamGearFireDetector:
 
     async def __call__(self):
         try:
+            signal_handler = SignalHandler()
             async for frame in self.frame_generator():
                 fire, annotated_frame = self.fire_detector.detect(frame)
                 if fire:
-                    SignalHandler().fire_detected()
+                    signal_handler.fire_detected()
                     await self.on_fire_action()
 
                 if self.video_output:
