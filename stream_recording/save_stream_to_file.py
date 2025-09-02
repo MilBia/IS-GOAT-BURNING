@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
+from functools import partial
 import logging as log
 import os
 import shutil
@@ -48,6 +49,7 @@ class AsyncVideoChunkSaver:
     _archive_task: asyncio.Task = field(init=False, default=None, repr=False)
     __call__: Callable
     chunk_limit_action: Callable = field(init=False, default=None, repr=False)
+    makedirs_callable: Callable = field(init=False, default=None, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
     pre_fire_buffer: deque = field(init=False)
     is_new_chunk: bool = field(init=False, default=False)
@@ -56,6 +58,7 @@ class AsyncVideoChunkSaver:
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
         self.__call__ = self._noop
         self.chunk_limit_action = self._noop
+        self.makedirs_callable = partial(os.makedirs, exist_ok=True)
         if not self.enabled:
             return
 
@@ -271,7 +274,8 @@ class AsyncVideoChunkSaver:
         event_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         event_dir = os.path.join(self.output_dir, f"event_{event_timestamp}")
         try:
-            os.makedirs(event_dir, exist_ok=True)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.makedirs_callable, event_dir)
             logger.info(f"Created event archive directory: {event_dir}")
         except OSError as e:
             logger.error(f"Could not create event directory {event_dir}: {e}. Aborting archive.")
