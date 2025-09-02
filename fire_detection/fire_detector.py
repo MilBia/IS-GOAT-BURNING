@@ -88,9 +88,10 @@ class YTCamGearFireDetector:
 
     async def __call__(self):
         try:
+            loop = asyncio.get_running_loop()
             signal_handler = SignalHandler()
             async for frame in self.frame_generator():
-                fire, annotated_frame = self.fire_detector.detect(frame)
+                fire, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
                 if fire:
                     signal_handler.fire_detected()
                     await self.on_fire_action()
