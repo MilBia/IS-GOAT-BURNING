@@ -153,7 +153,13 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 *   **Location:** All tests should be placed in a `tests/` directory, mirroring the main project structure (e.g., `tests/on_fire_actions/test_send_email.py`).
 *   **Framework:** Use `pytest` for running tests and `unittest.mock` for mocking external services like SMTP servers or Discord webhooks.
 *   **Requirement:** Any new feature (e.g., a new notification service) or significant bug fix **SHOULD** be accompanied by corresponding tests that validate its behavior.
-*   **Execution:** Instruct the user on how to run tests using `pytest`.
+*   **Execution:** To run the tests, use the following command from the root of the project:
+
+    ```bash
+    PYTHONPATH=. .venv/bin/python -m pytest
+    ```
+    *   `PYTHONPATH=.` is required to make sure that the project modules are found.
+    *   `.venv/bin/python -m pytest` is used to run `pytest` from the virtual environment.
 
 ## 7. Core Principles
 

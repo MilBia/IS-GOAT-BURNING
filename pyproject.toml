@@ -29,6 +29,8 @@ dev = [
     "ruff==0.9.2",
     "pre-commit==4.1.0",
     "pip-tools==7.5.0",
+    "pytest==8.4.1",
+    "pytest-asyncio==1.1.0",
 ]
 [tool.ruff]
 exclude = [
