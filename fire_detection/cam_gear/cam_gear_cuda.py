@@ -1,4 +1,3 @@
-import asyncio
 import logging as log
 
 import cv2
@@ -23,7 +22,7 @@ class YTCamGear(BaseYTCamGear):
             raise RuntimeError("No CUDA-capable GPUs found")
         kwargs["THREADED_QUEUE_MODE"] = False
 
-    def _process_frame_cuda(self, frame):
+    def _process_frame(self, frame):
         src = cv2.cuda.GpuMat()
         src.upload(frame)
 
@@ -45,24 +44,3 @@ class YTCamGear(BaseYTCamGear):
                 return color_frame
             return src
         return src
-
-    async def read(self):
-        loop = asyncio.get_running_loop()
-        try:
-            while True:
-                self._CamGear__stream_read.clear()
-                # Read the next frame in executor
-                (grabbed, frame) = await loop.run_in_executor(None, self.stream.read)
-                self._CamGear__stream_read.set()
-
-                # check for valid frame if received
-                if not grabbed:
-                    break
-
-                # Put the frame into the queue (this is non-blocking)
-                self.video_saver(frame)
-
-                processed_frame = await loop.run_in_executor(None, self._process_frame_cuda, frame)
-                yield processed_frame
-        finally:
-            await self.video_saver.stop()
