@@ -100,8 +100,6 @@ class YTCamGearFireDetector:
                     cv2.imshow("output", annotated_frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
-        except asyncio.CancelledError:
-            pass
         finally:
             if self.video_output:
                 cv2.destroyAllWindows()
