@@ -112,7 +112,7 @@ class Application:
         logger.info("Initiating graceful shutdown.")
 
         tasks = []
-        if self.action_manager_task:
+        if self.action_manager_task and not self.action_manager_task.done():
             self.action_manager_task.cancel()
             tasks.append(self.action_manager_task)
 
