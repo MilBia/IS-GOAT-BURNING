@@ -49,10 +49,8 @@ COPY requirements-cpu.txt .
 RUN pip install -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
-COPY burning_goat_detection.py config.py ./
-COPY fire_detection/ ./fire_detection/
-COPY on_fire_actions/ ./on_fire_actions/
-COPY stream_recording/ ./stream_recording/
+COPY pyproject.toml burning_goat_detection.py ./
+COPY is_goat_burning/ ./is_goat_burning/
 
 # Default command to run the application.
 CMD ["python3.13", "burning_goat_detection.py"]
@@ -177,10 +175,8 @@ RUN mkdir -p /app/recordings && \
     chown -R nobody:nogroup /app/.cache
 # Copy the application code.
 # This includes all the python scripts and other resources needed to run the application.
-COPY burning_goat_detection.py config.py ./
-COPY fire_detection/ ./fire_detection/
-COPY on_fire_actions/ ./on_fire_actions/
-COPY stream_recording/ ./stream_recording/
+COPY pyproject.toml burning_goat_detection.py ./
+COPY is_goat_burning/ ./is_goat_burning/
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]

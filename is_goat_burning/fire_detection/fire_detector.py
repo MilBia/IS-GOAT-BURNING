@@ -101,7 +101,6 @@ class YTCamGearFireDetector:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
         except asyncio.CancelledError:
-            print("Fire detector task cancelled.")
             pass
         finally:
             if self.video_output:

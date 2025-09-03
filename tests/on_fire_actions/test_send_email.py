@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from on_fire_actions.send_email import SendEmail
+from is_goat_burning.on_fire_actions.send_email import SendEmail
 
 
 @pytest.mark.asyncio

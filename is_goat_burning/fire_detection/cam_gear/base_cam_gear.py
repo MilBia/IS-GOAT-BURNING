@@ -5,7 +5,6 @@ from vidgear.gears import CamGear
 from vidgear.gears.helper import logger_handler
 
 from is_goat_burning.config import settings
-from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 
 logger = log.getLogger("YTCamGear")
@@ -33,10 +32,8 @@ class BaseYTCamGear(CamGear):
 
     def __init__(self, *args, **kwargs):
         self._pre__init__(*args, **kwargs)
-        self.signal_handler = SignalHandler()
         super().__init__(*args, **kwargs)
         self.framerate = self.ytv_metadata.get("fps", 30)
-        self.frame_wait_time = 1 / self.framerate - 0.01
         self._post__init__(*args, **kwargs)
 
     def _process_frame(self, frame):
