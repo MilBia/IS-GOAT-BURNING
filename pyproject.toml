@@ -29,6 +29,8 @@ dev = [
     "ruff==0.9.2",
     "pre-commit==4.1.0",
     "pip-tools==7.5.0",
+    "pytest==8.4.1",
+    "pytest-asyncio==1.1.0",
 ]
 [tool.ruff]
 exclude = [
@@ -65,11 +67,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 
-[tool.setuptools]
-py_modules = ["burning_goat_detection", "config"]
-
 [tool.setuptools.packages.find]
-include = ["fire_detection*", "on_fire_actions*", "stream_recording*"]
+include = ["is_goat_burning*"]
 
 [build-system]
 requires = ["setuptools>=75.8.0", "wheel"]

@@ -1,50 +1,28 @@
 import asyncio
+import logging as log
 
-from config import settings
-from fire_detection import YTCamGearFireDetector
-from on_fire_actions import OnceAction
-from on_fire_actions import SendEmail
-from on_fire_actions import SendToDiscord
+from vidgear.gears.helper import logger_handler
+
+from is_goat_burning.app import Application
+
+logger = log.getLogger(__name__)
+logger.propagate = False
+logger.addHandler(logger_handler())
 
 
 async def main():
-    actions = []
-    if settings.email.use_emails:
-        actions.append(
-            [
-                SendEmail,
-                {
-                    "sender": settings.email.sender,
-                    "sender_password": settings.email.sender_password.get_secret_value(),
-                    "recipients": settings.email.recipients,
-                    "subject": settings.email.subject,
-                    "message": settings.email.message,
-                    "host": settings.email.email_host,
-                    "port": settings.email.email_port,
-                },
-            ]
-        )
-    if settings.discord.use_discord:
-        actions.append(
-            [
-                SendToDiscord,
-                {
-                    "message": settings.discord.message,
-                    "webhooks": settings.discord.hooks,
-                },
-            ]
-        )
-    on_fire_action = OnceAction(actions)
-    detector = YTCamGearFireDetector(
-        src=settings.source,
-        threshold=settings.fire_detection_threshold,
-        logging=settings.logging,
-        video_output=settings.video_output,
-        on_fire_action=on_fire_action,
-        checks_per_second=settings.checks_per_second,
-    )
-    await detector()
+    """Initializes and runs the application."""
+    app = Application()
+    try:
+        await app.run()
+    except asyncio.CancelledError:
+        logger.info("Main application task was cancelled by signal.")
+    finally:
+        await app.shutdown()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Application interrupted by user.")

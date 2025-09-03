@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
+from functools import partial
 import logging as log
 import os
 import shutil
@@ -13,7 +14,7 @@ from typing import ClassVar
 import cv2
 from vidgear.gears.helper import logger_handler
 
-from fire_detection.signal_handler import SignalHandler
+from is_goat_burning.fire_detection.signal_handler import SignalHandler
 
 logger = log.getLogger("AsyncVideoChunkSaver")
 logger.propagate = False
@@ -48,6 +49,7 @@ class AsyncVideoChunkSaver:
     _archive_task: asyncio.Task = field(init=False, default=None, repr=False)
     __call__: Callable
     chunk_limit_action: Callable = field(init=False, default=None, repr=False)
+    makedirs_callable: Callable = field(init=False, default=None, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
     pre_fire_buffer: deque = field(init=False)
     is_new_chunk: bool = field(init=False, default=False)
@@ -56,6 +58,7 @@ class AsyncVideoChunkSaver:
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
         self.__call__ = self._noop
         self.chunk_limit_action = self._noop
+        self.makedirs_callable = partial(os.makedirs, exist_ok=True)
         if not self.enabled:
             return
 
@@ -194,41 +197,41 @@ class AsyncVideoChunkSaver:
     async def _writer_task(self):
         """The main consumer task that runs in the background."""
         loop = asyncio.get_running_loop()
-        while self.signal_handler.KEEP_PROCESSING:
-            # Check for the fire event signal first.
-            if self.signal_handler.is_fire_detected():
-                # Disable normal chunk cleanup during event handling
-                original_cleanup_action = self.chunk_limit_action
-                self.chunk_limit_action = self._noop
+        try:
+            while True:
+                # Check for the fire event signal first.
+                if self.signal_handler.is_fire_detected():
+                    # Disable normal chunk cleanup during event handling
+                    original_cleanup_action = self.chunk_limit_action
+                    self.chunk_limit_action = self._noop
+                    try:
+                        await self._handle_fire_event_async()
+                    finally:
+                        # Re-enable normal chunk cleanup after event is handled
+                        self.reset_after_fire()
+                        self.chunk_limit_action = original_cleanup_action
+                        logger.info("Fire event handled. Restoring normal chunk rotation policy.")
+
                 try:
-                    await self._handle_fire_event_async()
-                finally:
-                    # Re-enable normal chunk cleanup after event is handled
-                    self.reset_after_fire()
-                    self.chunk_limit_action = original_cleanup_action
-                    logger.info("Fire event handled. Restoring normal chunk rotation policy.")
+                    # Wait for a frame with a timeout to remain responsive to signals.
+                    frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
+                    if frame is None:  # Graceful stop via queue
+                        break
+                    # Run the blocking write operation in a separate thread
+                    await loop.run_in_executor(None, self._write_frame_blocking, frame)
 
-            try:
-                # Wait for a frame with a timeout to remain responsive to signals.
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=0.1)
-                if frame is None:  # Graceful stop via queue
-                    break
-                # Run the blocking write operation in a separate thread
-                await loop.run_in_executor(None, self._write_frame_blocking, frame)
-
-            except asyncio.TimeoutError:
-                continue  # No frame, just loop and check signals again.
-            except asyncio.CancelledError:
-                logger.info("Writer task was cancelled.")
-                break  # Exit if task is cancelled
-            except Exception as e:
-                logger.error(f"Error writing frame: {e}", exc_info=True)
-                break  # Exit the writer task on error to prevent repeated failures
-
-        # Final cleanup when the loop is broken
-        if self.writer is not None:
-            self.writer.release()
-            logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
+                except TimeoutError:
+                    continue  # No frame available in time, loop to wait again.
+        except asyncio.CancelledError:
+            logger.info("Writer task was cancelled.")
+            raise
+        except Exception as e:
+            logger.error(f"Error writing frame: {e}", exc_info=True)
+        finally:
+            # Final cleanup when the loop is broken
+            if self.writer is not None:
+                self.writer.release()
+                logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
 
     def __call__(self, frame):
         """
@@ -271,7 +274,8 @@ class AsyncVideoChunkSaver:
         event_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         event_dir = os.path.join(self.output_dir, f"event_{event_timestamp}")
         try:
-            os.makedirs(event_dir, exist_ok=True)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self.makedirs_callable, event_dir)
             logger.info(f"Created event archive directory: {event_dir}")
         except OSError as e:
             logger.error(f"Could not create event directory {event_dir}: {e}. Aborting archive.")
@@ -303,11 +307,11 @@ class AsyncVideoChunkSaver:
 
         while not active_chunk_saved:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
 
                 timeout_retries = 0
 
-                if frame is None or not self.signal_handler.KEEP_PROCESSING:
+                if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     break  # Exit this loop
 
@@ -322,7 +326,7 @@ class AsyncVideoChunkSaver:
                         logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
                     active_chunk_saved = True  # Signal to exit this loop
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_retries += 1
                 logger.warning(
                     f"Timeout waiting for frame while finalizing active chunk. "
@@ -347,11 +351,11 @@ class AsyncVideoChunkSaver:
 
         while chunks_saved_count < self.chunks_to_keep_after_fire:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
 
                 timeout_retries = 0
 
-                if frame is None or not self.signal_handler.KEEP_PROCESSING:
+                if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording.")
                     break
 
@@ -366,7 +370,7 @@ class AsyncVideoChunkSaver:
                     except asyncio.QueueFull:
                         logger.error(f"Archive queue is full. Failed to queue chunk for archiving {closed_chunk}.")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_retries += 1
                 logger.warning(
                     f"Timeout waiting for frame while finalizing active chunk. "
