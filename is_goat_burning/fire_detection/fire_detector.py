@@ -45,6 +45,7 @@ class YTCamGearFireDetector:
         """
         self.on_fire_action = on_fire_action
         self.video_output = video_output
+        self.signal_handler = SignalHandler()
         self.lower_hsv = lower_hsv if lower_hsv is not None else self.DEFAULT_LOWER_HSV
         self.upper_hsv = upper_hsv if upper_hsv is not None else self.DEFAULT_UPPER_HSV
         options = {**self.DEFAULT_OPTIONS, **yt_cam_gear_options}
@@ -89,11 +90,10 @@ class YTCamGearFireDetector:
     async def __call__(self):
         try:
             loop = asyncio.get_running_loop()
-            signal_handler = SignalHandler()
             async for frame in self.frame_generator():
                 fire, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
                 if fire:
-                    signal_handler.fire_detected()
+                    self.signal_handler.fire_detected()
                     await self.on_fire_action()
 
                 if self.video_output:
