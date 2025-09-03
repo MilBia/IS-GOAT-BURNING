@@ -221,7 +221,7 @@ class AsyncVideoChunkSaver:
                     await loop.run_in_executor(None, self._write_frame_blocking, frame)
 
                 except TimeoutError:
-                    continue  # No frame, just loop and check signals again.
+                    continue  # No frame available in time, loop to wait again.
         except asyncio.CancelledError:
             logger.info("Writer task was cancelled.")
             raise

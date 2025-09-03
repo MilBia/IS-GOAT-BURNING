@@ -74,11 +74,17 @@ class Application:
     async def _action_manager(self):
         """Waits for events on the queue and triggers the appropriate actions."""
         while True:
-            event = await self.action_queue.get()
-            if event == "FIRE":
-                logger.info("Action manager received FIRE event. Triggering actions.")
-                await self.on_fire_action_handler()
-            self.action_queue.task_done()
+            try:
+                event = await self.action_queue.get()
+                if event == "FIRE":
+                    logger.info("Action manager received FIRE event. Triggering actions.")
+                    await self.on_fire_action_handler()
+                self.action_queue.task_done()
+            except asyncio.CancelledError:
+                logger.info("Action manager task is shutting down.")
+                break
+            except Exception:
+                logger.exception("Action manager encountered an error, but will continue running.")
 
     async def _queue_fire_event(self):
         """Callback for the detector to queue a fire event."""
