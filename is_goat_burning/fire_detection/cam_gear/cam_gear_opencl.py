@@ -3,7 +3,7 @@ import logging as log
 import cv2
 from vidgear.gears.helper import logger_handler
 
-from fire_detection.cam_gear.base_cam_gear import BaseYTCamGear
+from is_goat_burning.fire_detection.cam_gear.base_cam_gear import BaseYTCamGear
 
 logger = log.getLogger("YTCamGear")
 logger.propagate = False

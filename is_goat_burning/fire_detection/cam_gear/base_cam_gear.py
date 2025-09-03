@@ -4,9 +4,9 @@ import logging as log
 from vidgear.gears import CamGear
 from vidgear.gears.helper import logger_handler
 
-from config import settings
-from fire_detection.signal_handler import SignalHandler
-from stream_recording.save_stream_to_file import AsyncVideoChunkSaver
+from is_goat_burning.config import settings
+from is_goat_burning.fire_detection.signal_handler import SignalHandler
+from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 
 logger = log.getLogger("YTCamGear")
 logger.propagate = False

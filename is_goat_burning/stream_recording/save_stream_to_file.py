@@ -14,7 +14,7 @@ from typing import ClassVar
 import cv2
 from vidgear.gears.helper import logger_handler
 
-from fire_detection.signal_handler import SignalHandler
+from is_goat_burning.fire_detection.signal_handler import SignalHandler
 
 logger = log.getLogger("AsyncVideoChunkSaver")
 logger.propagate = False

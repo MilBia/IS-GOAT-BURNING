@@ -5,9 +5,9 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
-from fire_detection.cam_gear import YTCamGear
-from fire_detection.detectors import create_fire_detector
-from fire_detection.signal_handler import SignalHandler
+from is_goat_burning.fire_detection.cam_gear import YTCamGear
+from is_goat_burning.fire_detection.detectors import create_fire_detector
+from is_goat_burning.fire_detection.signal_handler import SignalHandler
 
 
 class YTCamGearFireDetector:
@@ -101,6 +101,7 @@ class YTCamGearFireDetector:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
         except asyncio.CancelledError:
+            print("Fire detector task cancelled.")
             pass
         finally:
             if self.video_output:

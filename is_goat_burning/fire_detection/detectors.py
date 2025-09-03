@@ -3,7 +3,7 @@ from typing import Protocol
 import cv2
 import numpy as np
 
-from config import settings
+from is_goat_burning.config import settings
 
 
 class FireDetector(Protocol):
