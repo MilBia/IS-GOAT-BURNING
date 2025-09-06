@@ -25,15 +25,15 @@ class SendToDiscord:
         }
 
     async def send_to_webhook(self, session, url):
-        async with session.post(
+        response = await session.post(
             url=url,
             json=self.data,
             headers={"User-Agent": "Python/3", "Content-Type": "application/json"},
             timeout=3,
-        ) as response:
-            # Raise an exception for non-2xx status codes to catch them later
-            response.raise_for_status()
-            return response
+        )
+        # Raise an exception for non-2xx status codes to catch them later
+        response.raise_for_status()
+        return response
 
     async def __call__(self):
         """
