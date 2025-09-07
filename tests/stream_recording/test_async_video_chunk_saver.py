@@ -70,10 +70,10 @@ async def test_cleanup_old_chunks(saver):
         patch("os.path.isfile", return_value=True),
         patch("os.listdir", return_value=["goat-cam_f1.mp4", "goat-cam_f2.mp4", "goat-cam_f3.mp4"]),
     ):
-        # saver.max_chunks = 2
         saver.current_video_path = "f3"
 
-        saver._enforce_chunk_limit_blocking()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        saver._write_frame_blocking(frame)
 
         assert mock_remove.call_count == 2
 
