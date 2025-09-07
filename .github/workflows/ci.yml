@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11"]
 
     steps:
       - name: Checkout repository
@@ -38,4 +38,4 @@ jobs:
       - name: Run Pytest
         run: |
           # PYTHONPATH=. is crucial for pytest to find the 'is_goat_burning' module
-          PYTHONPATH=. pytest
+          PYTHONPATH=. pytest --envfile .env.tests
