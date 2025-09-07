@@ -122,7 +122,8 @@ async def test_archive_chunks_on_fire_event():
                 await asyncio.sleep(0.5)
             else:
                 pytest.fail(
-                    f"{i}. The on_fire_action_handler was not called within the timeout. {mock_video_writer.call_count}"
+                    f"Frame queue was not emptied within the timeout on iteration {i}. "
+                    f"VideoWriter calls: {mock_video_writer.call_count}"
                 )
 
         await saver.stop()
