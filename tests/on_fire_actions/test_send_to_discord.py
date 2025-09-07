@@ -50,13 +50,13 @@ async def test_send_to_discord_one_webhook_fails():
     """
     Tests that the SendToDiscord class can handle a single webhook failing.
     """
+    successful_post_mock = MagicMock()
+    successful_post_mock.__aenter__.return_value.raise_for_status = MagicMock()
     with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
-        mock_post.side_effect = [Exception("Test Exception"), MagicMock()]
-        mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
+        mock_post.side_effect = [Exception("Test Exception"), successful_post_mock]
         discord_sender = SendToDiscord(
             webhooks=["https://discord.com/api/webhooks/123/abc", "https://discord.com/api/webhooks/456/def"],
             message="Test Message",
         )
         await discord_sender()
-
         assert mock_post.call_count == 2

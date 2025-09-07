@@ -39,14 +39,8 @@ async def test_app_fire_detection_flow(
     mock_settings: Settings,
 ):
     """Integration test for the main application fire detection loop."""
-    for key, value in mock_settings.model_dump().items():
-        if key == "email":
-            value = EmailSettings(**value)
-        elif key == "discord":
-            value = DiscordSettings(**value)
-        elif key == "video":
-            value = VideoSettings(**value)
-        setattr(mock_app_settings, key, value)
+    for key in Settings.model_fields:
+        setattr(mock_app_settings, key, getattr(mock_settings, key))
 
     on_fire_action_callback = None
 
