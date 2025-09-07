@@ -75,9 +75,9 @@ class Settings(BaseSettings):
     cuda: bool = Field(validation_alias="CUDA", default=False)
 
     # Nested settings
-    email: EmailSettings
-    discord: DiscordSettings
-    video: VideoSettings
+    email: EmailSettings | None
+    discord: DiscordSettings | None
+    video: VideoSettings | None
 
 
 # Single, validated instance to be used across the application
