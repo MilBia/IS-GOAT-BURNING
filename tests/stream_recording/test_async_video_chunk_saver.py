@@ -23,7 +23,12 @@ async def test_add_frame_and_start_new_chunk(saver):
 
         saver.start()
         saver(frame)
-        await asyncio.sleep(0.1)  # Allow worker to process the frame
+        for _ in range(10):  # Poll for up to 0.1 seconds
+            if mock_video_writer.called:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("The mock_video_writer was not called within the timeout.")
 
         assert saver.writer is not None
         mock_video_writer.assert_called_once()
@@ -46,14 +51,25 @@ async def test_chunk_rotation(saver):
 
         # First frame starts a new chunk
         saver(frame)
-        await asyncio.sleep(0.1)
+        for _ in range(10):  # Poll for up to 0.1 seconds
+            if mock_video_writer.called:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("The mock_video_writer was not called within the timeout.")
+
         assert mock_video_writer.call_count == 1
         first_writer_instance = saver.writer
 
         # Simulate time passing to trigger a new chunk
         saver.chunk_start_time = saver.chunk_start_time - 2
         saver(frame)
-        await asyncio.sleep(0.1)
+        for _ in range(10):  # Poll for up to 0.1 seconds
+            if mock_video_writer.call_count == 2:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("The mock_video_writer was not called within the timeout.")
 
         assert mock_video_writer.call_count == 2
         assert saver.writer != first_writer_instance
@@ -62,8 +78,7 @@ async def test_chunk_rotation(saver):
         await saver.stop()
 
 
-@pytest.mark.asyncio
-async def test_cleanup_old_chunks(saver):
+def test_cleanup_old_chunks(saver):
     with (
         patch("cv2.VideoWriter"),
         patch("os.remove") as mock_remove,
@@ -82,6 +97,7 @@ async def test_cleanup_old_chunks(saver):
 @pytest.mark.timeout(10)
 async def test_archive_chunks_on_fire_event():
     with (
+        patch("cv2.VideoWriter") as mock_video_writer,
         patch("shutil.move") as mock_move,
         patch("os.makedirs") as mock_mkdir,
         patch("os.path.exists", return_value=True),
@@ -98,9 +114,16 @@ async def test_archive_chunks_on_fire_event():
 
         # Add a frame to be processed
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        for _ in range(5):
+        for i in range(5):
             saver(frame)
-            await asyncio.sleep(1.1)
+            for _ in range(5):
+                if saver.frame_queue.empty():
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                pytest.fail(
+                    f"{i}. The on_fire_action_handler was not called within the timeout. {mock_video_writer.call_count}"
+                )
 
         await saver.stop()
         assert mock_mkdir.call_count == 2

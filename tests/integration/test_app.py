@@ -64,7 +64,12 @@ async def test_app_fire_detection_flow(
         await app.run()
 
     main_task = asyncio.create_task(run_and_shutdown())
-    await asyncio.sleep(0.2)
+    for _ in range(20):  # Poll for up to 0.2 seconds
+        if app.on_fire_action_handler.called:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("The on_fire_action_handler was not called within the timeout.")
 
     # Assert that the on_fire_action_handler was called
     app.on_fire_action_handler.assert_called_once()
