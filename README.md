@@ -211,6 +211,58 @@ Docker allows you to run the application in a consistent and isolated environmen
     docker start burning_goat_detection_container
     ```
 
+## Testing
+
+This project uses `pytest` for unit and integration testing. A comprehensive test suite is located in the `tests/` directory.
+
+### Running Tests Locally
+
+It is recommended to run tests within a virtual environment.
+
+1.  **Install Development Dependencies:**
+    ```bash
+    # Install main, dev, and cpu dependencies
+    pip install -r requirements-dev.txt
+    ```
+
+2.  **Run the Test Suite:**
+    The `PYTHONPATH=.` prefix is essential for ensuring that `pytest` can correctly locate the application modules.
+    ```bash
+    PYTHONPATH=. pytest
+    ```
+
+### Running Tests in Docker
+
+This is the recommended way to validate changes in a clean, production-like environment.
+
+#### CPU Tests
+
+1.  **Build the CPU Test Image:**
+    This command builds the `test` stage, which defaults to using the `cpu` image as its base.
+    ```bash
+    docker build --target cpu-test -t goat-detector:test-cpu .
+    ```
+
+2.  **Run the CPU Test Suite:**
+    The container will start, run `pytest`, and then remove itself.
+    ```bash
+    docker run --rm goat-detector:test-cpu
+    ```
+
+#### GPU Tests
+
+1.  **Build the GPU Test Image:**
+    This command builds the same `test` stage, but uses the `--build-arg` flag to override the base image, telling it to build on top of the `gpu` stage.
+    ```bash
+    docker build --target gpu-test -t goat-detector:test-gpu .
+    ```
+
+2.  **Run the GPU Test Suite:**
+    This command runs the GPU test image, enabling GPU access for the container. The CUDA-specific tests will now be executed.
+    ```bash
+    docker run --rm --gpus all goat-detector:test-gpu
+    ```
+
 ## Troubleshooting Docker/CUDA Issues
 
 *   **"CUDA driver version is insufficient for CUDA runtime version" Error:** This usually means that the CUDA drivers on your host machine are older than the CUDA version used in the Docker image. Update your NVIDIA drivers to the latest version.

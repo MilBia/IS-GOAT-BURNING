@@ -188,3 +188,40 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 # Default command to run the application.
 # This starts the main application script.
 CMD ["python3.13", "burning_goat_detection.py"]
+
+
+# --- Test Stage ---
+# This stage is for running the unit and integration test suite.
+FROM cpu AS cpu-test
+
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+RUN pip install -r requirements-dev.txt
+
+COPY tests/ ./tests/
+COPY .env.tests ./.env
+
+# Set the default command for this stage to run pytest.
+# The PYTHONPATH is inherited from the base stage.
+CMD ["pytest"]
+
+
+# This stage is for running the unit and integration test suite.
+FROM gpu AS gpu-test
+
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+RUN pip install -r requirements-dev.txt
+
+COPY tests/ ./tests/
+COPY .env.tests ./.env
+
+# Set the default command for this stage to run pytest.
+# The PYTHONPATH is inherited from the base stage.
+CMD ["pytest"]
