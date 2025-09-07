@@ -64,7 +64,9 @@ class VideoSettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(
+        env_file=(".env", ".env.tests"), env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__"
+    )
 
     source: str = Field(validation_alias="SOURCE")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)

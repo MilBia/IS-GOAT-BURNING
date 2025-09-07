@@ -36,4 +36,4 @@ jobs:
       - name: Run Pytest
         run: |
           # PYTHONPATH=. is crucial for pytest to find the 'is_goat_burning' module
-          PYTHONPATH=. pytest --envfile .env.tests
+          PYTHONPATH=. pytest

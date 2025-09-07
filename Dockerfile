@@ -202,7 +202,7 @@ COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt
 
 COPY tests/ ./tests/
-COPY .env.tests ./.env
+COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
 # The PYTHONPATH is inherited from the base stage.
@@ -220,7 +220,7 @@ COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt
 
 COPY tests/ ./tests/
-COPY .env.tests ./.env
+COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
 # The PYTHONPATH is inherited from the base stage.
