@@ -217,7 +217,7 @@ RUN mkdir -p /app/.pytest_cache && \
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
-RUN pip install -r requirements-dev.txt
+RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && pip install -r /tmp/reqs.txt
 
 COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
