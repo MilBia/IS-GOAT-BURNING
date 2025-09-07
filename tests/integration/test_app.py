@@ -42,17 +42,15 @@ async def test_app_fire_detection_flow(
     for key in Settings.model_fields:
         setattr(mock_app_settings, key, getattr(mock_settings, key))
 
-    on_fire_action_callback = None
-
-    def get_on_fire_action_callback(**kwargs):
-        nonlocal on_fire_action_callback
-        on_fire_action_callback = kwargs["on_fire_action"]
-        # Return a mock that we can await
-        return AsyncMock()
-
-    mock_yt_cam_gear_fire_detector.side_effect = get_on_fire_action_callback
-
+    # The detector class mock should return an instance mock.
+    # The instance is what will be awaited in app.run()
+    mock_detector_instance = AsyncMock()
+    mock_yt_cam_gear_fire_detector.return_value = mock_detector_instance
     app = Application()
+    # After app initialization, we can inspect the call to the detector's constructor
+    # to get the callback it was passed.
+    mock_yt_cam_gear_fire_detector.assert_called_once()
+    on_fire_action_callback = mock_yt_cam_gear_fire_detector.call_args.kwargs["on_fire_action"]
 
     # Mock the on_fire_action_handler to check if it's called
     app.on_fire_action_handler = AsyncMock()
