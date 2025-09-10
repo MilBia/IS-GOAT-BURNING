@@ -1,5 +1,3 @@
-
-
 # --- Base Stage ---
 # Use a specific Python version for consistency.
 FROM python:3.13-slim-bullseye AS base
@@ -201,6 +199,7 @@ RUN mkdir -p /app/.pytest_cache && \
 COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt
 
+# Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
 
@@ -209,7 +208,8 @@ COPY .env.tests ./.env.tests
 CMD ["pytest"]
 
 
-# This stage is for running the unit and integration test suite.
+# --- GPU Test Stage ---
+# This stage is for running the unit and integration test suite on a GPU.
 FROM gpu AS gpu-test
 
 RUN mkdir -p /app/.pytest_cache && \
@@ -217,8 +217,10 @@ RUN mkdir -p /app/.pytest_cache && \
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
+# Exclude opencv-python from dev requirements since the GPU version is manually built
 RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
 
+# Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
 
