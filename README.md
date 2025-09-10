@@ -238,7 +238,7 @@ This is the recommended way to validate changes in a clean, production-like envi
 #### CPU Tests
 
 1.  **Build the CPU Test Image:**
-    This command builds the `test` stage, which defaults to using the `cpu` image as its base.
+    This command builds the `cpu-test` stage, which is based on the `cpu` image.
     ```bash
     docker build --target cpu-test -t goat-detector:test-cpu .
     ```
@@ -252,7 +252,7 @@ This is the recommended way to validate changes in a clean, production-like envi
 #### GPU Tests
 
 1.  **Build the GPU Test Image:**
-    This command builds the same `test` stage, but uses the `--build-arg` flag to override the base image, telling it to build on top of the `gpu` stage.
+    This command builds the `gpu-test` stage, which is based on the `gpu` image and includes the necessary dependencies for running tests in a GPU-enabled environment.
     ```bash
     docker build --target gpu-test -t goat-detector:test-gpu .
     ```
