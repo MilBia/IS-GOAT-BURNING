@@ -91,7 +91,9 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver):
 
     write_blocking_mock = MagicMock(side_effect=["/path/active_chunk_2.mp4", "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"])
     patch_path = "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking"
-    with patch(patch_path, write_blocking_mock):
+
+    # Patch the method *before* calling the function under test, as suggested.
+    with patch(patch_path, write_blocking_mock), patch.object(saver_instance.signal_handler, "reset_fire_event") as mock_reset:
         # --- Execution ---
         await saver_instance._handle_fire_event_async()
 
@@ -116,11 +118,7 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver):
         assert item4 == ("/path/post_fire_2.mp4", event_dir)
 
         # 4. Verify state that IS handled by this function
-        # The _handle_fire_event_async method's responsibility does NOT include
-        # resetting the signal or the buffer; that is handled by the calling task (_writer_task).
-        # Therefore, we assert the buffer is UNCHANGED.
+        # The buffer's state should be unchanged by this specific method.
         assert len(saver_instance.pre_fire_buffer) == 2
-        # We also confirm the reset method was NOT called.
-        mock_reset = MagicMock()
-        saver_instance.signal_handler.reset_fire_event = mock_reset
+        # Correctly assert that the mock was not called during execution.
         mock_reset.assert_not_called()
