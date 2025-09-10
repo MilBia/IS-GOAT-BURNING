@@ -218,7 +218,7 @@ RUN mkdir -p /app/.pytest_cache && \
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
 # Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt | xargs -r pip install
+RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
