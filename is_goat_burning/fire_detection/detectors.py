@@ -105,9 +105,12 @@ class OpenCLFireDetector(CPUFireDetector):
         return fire, annotated_frame.get()
 
 
-def create_fire_detector(margin: int, lower: np.ndarray, upper: np.ndarray) -> FireDetector:
-    if settings.open_cl:
+def create_fire_detector(
+    margin: int, lower: np.ndarray, upper: np.ndarray, use_open_cl: bool = False, use_cuda: bool = False
+) -> FireDetector:
+    """Factory function to create the appropriate fire detector based on configuration."""
+    if use_open_cl or settings.open_cl:
         return OpenCLFireDetector(margin, lower, upper)
-    if settings.cuda:
+    if use_cuda or settings.cuda:
         return CUDAFireDetector(margin, lower, upper)
     return CPUFireDetector(margin, lower, upper)

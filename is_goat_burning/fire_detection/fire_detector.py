@@ -5,6 +5,7 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
+from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.cam_gear import YTCamGear
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
@@ -51,7 +52,13 @@ class YTCamGearFireDetector:
         options = {**self.DEFAULT_OPTIONS, **yt_cam_gear_options}
         self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **options)
         fire_threshold = int(self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold)
-        self.fire_detector = create_fire_detector(fire_threshold, self.lower_hsv, self.upper_hsv)
+        self.fire_detector = create_fire_detector(
+            margin=fire_threshold,
+            lower=self.lower_hsv,
+            upper=self.upper_hsv,
+            use_open_cl=settings.open_cl,
+            use_cuda=settings.cuda,
+        )
 
         if checks_per_second and checks_per_second < self.stream.framerate > 0:
             self.frames_between_step = self.stream.framerate / checks_per_second

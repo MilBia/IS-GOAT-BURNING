@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import pytest
 
-from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.detectors import CPUFireDetector
 from is_goat_burning.fire_detection.detectors import CUDAFireDetector
 from is_goat_burning.fire_detection.detectors import OpenCLFireDetector
@@ -80,24 +79,21 @@ def test_opencl_fire_detector():
     assert is_fire is False, "OpenCL detector incorrectly detected fire"
 
 
-def test_create_fire_detector_factory(monkeypatch):
-    """Tests the create_fire_detector factory function."""
-    # Test CPU case
-    monkeypatch.setattr(settings, "open_cl", False)
-    monkeypatch.setattr(settings, "cuda", False)
-    detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV)
+def test_create_fire_detector_factory_returns_cpu_by_default():
+    """Tests the factory returns a CPUFireDetector when no flags are set."""
+    detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=False)
     assert isinstance(detector, CPUFireDetector)
 
-    # Test CUDA case
-    monkeypatch.setattr(settings, "open_cl", False)
-    monkeypatch.setattr(settings, "cuda", True)
-    if cv2.cuda.getCudaEnabledDeviceCount() > 0:
-        detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV)
-        assert isinstance(detector, CUDAFireDetector)
 
-    # Test OpenCL case
-    monkeypatch.setattr(settings, "open_cl", True)
-    monkeypatch.setattr(settings, "cuda", False)
-    if cv2.ocl.haveOpenCL():
-        detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV)
-        assert isinstance(detector, OpenCLFireDetector)
+@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found")
+def test_create_fire_detector_factory_returns_cuda_when_requested():
+    """Tests the factory returns a CUDAFireDetector when the cuda flag is set."""
+    detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=True)
+    assert isinstance(detector, CUDAFireDetector)
+
+
+@pytest.mark.skipif(not cv2.ocl.haveOpenCL(), reason="OpenCL is not available/enabled in this OpenCV build")
+def test_create_fire_detector_factory_returns_opencl_when_requested():
+    """Tests the factory returns an OpenCLFireDetector when the open_cl flag is set."""
+    detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV, use_open_cl=True, use_cuda=False)
+    assert isinstance(detector, OpenCLFireDetector)
