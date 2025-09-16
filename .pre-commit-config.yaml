@@ -29,6 +29,14 @@ repos:
           - id: ruff-format
             types_or: [ python ]
 
+    # Add this to your repos list in .pre-commit-config.yaml
+    - repo: https://github.com/pycqa/pydocstyle
+      rev: 6.3.0
+      hooks:
+          - id: pydocstyle
+            args:
+              - --convention=google
+
 # sets up .pre-commit-ci.yaml to ensure pre-commit dependencies stay up to date
 ci:
     autoupdate_schedule: weekly

@@ -32,6 +32,10 @@ distlib==0.4.0
     # via virtualenv
 filelock==3.19.1
     # via virtualenv
+flake8==7.3.0
+    # via flake8-docstrings
+flake8-docstrings==1.7.0
+    # via IS-GOAT-BURNING (pyproject.toml)
 frozenlist==1.7.0
     # via
     #   aiohttp
@@ -44,6 +48,8 @@ idna==3.10
     #   yarl
 iniconfig==2.1.0
     # via pytest
+mccabe==0.7.0
+    # via flake8
 multidict==6.6.4
     # via
     #   aiohttp
@@ -73,12 +79,18 @@ propcache==0.3.2
     # via
     #   aiohttp
     #   yarl
+pycodestyle==2.14.0
+    # via flake8
 pydantic==2.11.7
     # via pydantic-settings
 pydantic-core==2.33.2
     # via pydantic
 pydantic-settings==2.10.1
     # via IS-GOAT-BURNING (pyproject.toml)
+pydocstyle==6.3.0
+    # via flake8-docstrings
+pyflakes==3.4.0
+    # via flake8
 pygments==2.19.2
     # via pytest
 pyproject-hooks==1.2.0
@@ -102,6 +114,8 @@ requests==2.32.4
     # via vidgear
 ruff==0.9.2
     # via IS-GOAT-BURNING (pyproject.toml)
+snowballstemmer==3.0.1
+    # via pydocstyle
 tqdm==4.67.1
     # via vidgear
 typing-extensions==4.14.1

@@ -110,8 +110,8 @@ class VideoSettings(BaseModel):
 class Settings(BaseSettings):
     """The main application settings model.
 
-        This class aggregates all other settings models and defines the global
-        configuration options. It is configured to load from `.env` files and
+    This class aggregates all other settings models and defines the global
+    configuration options. It is configured to load from `.env` files and
     aggressively from environment variables.
     """
 
