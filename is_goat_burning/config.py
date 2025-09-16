@@ -64,7 +64,9 @@ class VideoSettings(BaseModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(
+        env_file=(".env.tests", ".env"), env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__"
+    )
 
     source: str = Field(validation_alias="SOURCE")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
@@ -75,9 +77,9 @@ class Settings(BaseSettings):
     cuda: bool = Field(validation_alias="CUDA", default=False)
 
     # Nested settings
-    email: EmailSettings
-    discord: DiscordSettings
-    video: VideoSettings
+    email: EmailSettings = Field(default_factory=EmailSettings)
+    discord: DiscordSettings = Field(default_factory=DiscordSettings)
+    video: VideoSettings = Field(default_factory=VideoSettings)
 
 
 # Single, validated instance to be used across the application

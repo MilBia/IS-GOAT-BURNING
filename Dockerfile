@@ -1,5 +1,3 @@
-
-
 # --- Base Stage ---
 # Use a specific Python version for consistency.
 FROM python:3.13-slim-bullseye AS base
@@ -188,3 +186,44 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 # Default command to run the application.
 # This starts the main application script.
 CMD ["python3.13", "burning_goat_detection.py"]
+
+
+# --- Test Stage ---
+# This stage is for running the unit and integration test suite.
+FROM cpu AS cpu-test
+
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+RUN pip install -r requirements-dev.txt
+
+# Copy test suite and configuration AFTER installing dependencies for better caching
+COPY tests/ ./tests/
+COPY .env.tests ./.env.tests
+
+# Set the default command for this stage to run pytest.
+# The PYTHONPATH is inherited from the base stage.
+CMD ["pytest"]
+
+
+# --- GPU Test Stage ---
+# This stage is for running the unit and integration test suite on a GPU.
+FROM gpu AS gpu-test
+
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
+
+# Copy test suite and configuration AFTER installing dependencies for better caching
+COPY tests/ ./tests/
+COPY .env.tests ./.env.tests
+
+# Set the default command for this stage to run pytest.
+# The PYTHONPATH is inherited from the base stage.
+CMD ["pytest"]

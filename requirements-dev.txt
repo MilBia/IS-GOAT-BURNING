@@ -89,7 +89,10 @@ pytest==8.4.1
     # via
     #   IS-GOAT-BURNING (pyproject.toml)
     #   pytest-asyncio
+    #   pytest-timeout
 pytest-asyncio==1.1.0
+    # via IS-GOAT-BURNING (pyproject.toml)
+pytest-timeout==2.3.1
     # via IS-GOAT-BURNING (pyproject.toml)
 python-dotenv==1.1.1
     # via pydantic-settings
