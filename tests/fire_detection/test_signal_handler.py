@@ -1,65 +1,52 @@
+"""Unit tests for the SignalHandler singleton.
+
+These tests verify the singleton pattern, the state management of the fire
+detection event, and the cancellation of the main task on graceful exit.
+"""
+
 import asyncio
 import contextlib
+from unittest.mock import Mock
 
 import pytest
 
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 
 
-def test_signal_handler_is_singleton():
-    """
-    Tests that instantiating SignalHandler multiple times returns the exact same object.
-    """
+def test_signal_handler_is_singleton() -> None:
+    """Verifies that SignalHandler consistently returns the same instance."""
     instance1 = SignalHandler()
     instance2 = SignalHandler()
-
-    assert instance1 is instance2, "SignalHandler is not a singleton; instances are not the same object."
+    assert instance1 is instance2, "SignalHandler is not a singleton."
 
 
 @pytest.mark.asyncio
-async def test_fire_detection_event_logic():
-    """
-    Tests the state management of the fire detected event.
-    """
+async def test_fire_detection_event_logic() -> None:
+    """Tests the set, check, and reset logic of the fire detected event."""
     handler = SignalHandler()
-
-    # --- Initial State ---
-    # We create a new instance to ensure its state is clean for the test.
-    # Due to the singleton nature, this will be the same instance as any other.
-    handler.reset_fire_event()  # Explicitly reset state before test
+    handler.reset_fire_event()  # Ensure clean state
     assert handler.is_fire_detected() is False, "Event should be clear initially."
 
-    # --- Set Event ---
     handler.fire_detected()
-    assert handler.is_fire_detected() is True, "Event should be set after fire_detected() is called."
-    # Calling it again should have no effect
+    assert handler.is_fire_detected() is True, "Event should be set after fire_detected()."
     handler.fire_detected()
-    assert handler.is_fire_detected() is True, "Event should remain set after a second call."
+    assert handler.is_fire_detected() is True, "Event should remain set."
 
-    # --- Reset Event ---
     handler.reset_fire_event()
-    assert handler.is_fire_detected() is False, "Event should be clear after being reset."
+    assert handler.is_fire_detected() is False, "Event should be clear after reset."
 
 
 @pytest.mark.asyncio
-async def test_exit_gracefully_cancels_main_task():
-    """
-    Tests that the exit_gracefully method correctly cancels the main task.
-    """
+async def test_exit_gracefully_cancels_main_task() -> None:
+    """Verifies that exit_gracefully() cancels the registered main task."""
     handler = SignalHandler()
 
-    # Create a dummy task that runs forever until cancelled
-    async def dummy_task_func():
+    async def dummy_task_func() -> None:
         with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.sleep(30)  # A long sleep that will be interrupted
+            await asyncio.sleep(30)
 
     main_task = asyncio.create_task(dummy_task_func())
     handler.set_main_task(main_task)
-
-    # Trigger the exit signal
-    handler.exit_gracefully()
-
-    # Allow the event loop to process the cancellation
-    await asyncio.sleep(0)
-
-    assert main_task.cancelled(), "The main task was not cancelled by exit_gracefully."
+    handler.exit_gracefully(Mock(), Mock())
+    await asyncio.sleep(0)  # Allow cancellation to propagate
+    assert main_task.cancelled()

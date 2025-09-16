@@ -1,5 +1,9 @@
+"""The main application class that orchestrates the fire detection process."""
+
 import asyncio
+from collections.abc import Callable
 import logging as log
+from typing import Any
 
 from vidgear.gears.helper import logger_handler
 
@@ -16,11 +20,28 @@ logger.addHandler(logger_handler())
 
 
 class Application:
-    """Encapsulates the fire detection application's state and lifecycle."""
+    """Encapsulates the fire detection application's state and lifecycle.
 
-    def __init__(self):
+    This class initializes all major components of the application, including
+    the signal handler, the fire detector, and the action handlers. It manages
+    the main asyncio tasks and ensures a graceful shutdown process.
+
+    Attributes:
+        signal_handler (SignalHandler): The application-wide signal handler.
+        action_queue (asyncio.Queue): A queue for communicating events between
+            the detector and the action manager.
+        on_fire_action_handler (OnceAction): The handler that executes
+            notification actions only once per application run.
+        detector (YTCamGearFireDetector): The main fire detection instance.
+        detector_task (asyncio.Task | None): The task running the detector loop.
+        action_manager_task (asyncio.Task | None): The task managing the event
+            queue and triggering actions.
+    """
+
+    def __init__(self) -> None:
+        """Initializes the Application instance."""
         self.signal_handler = SignalHandler()
-        self.action_queue = asyncio.Queue()
+        self.action_queue: asyncio.Queue[str] = asyncio.Queue()
 
         # Setup actions
         on_fire_actions = self._create_actions()
@@ -41,9 +62,18 @@ class Application:
         self.action_manager_task: asyncio.Task | None = None
 
     @staticmethod
-    def _create_actions():
-        """Builds a list of notification actions based on settings."""
-        actions = []
+    def _create_actions() -> list[tuple[type | Callable[..., Any], dict[str, Any]]]:
+        """Builds a list of notification actions based on settings.
+
+        This static method reads from the global `settings` object to determine
+        which notification actions (e.g., email, Discord) should be initialized.
+
+        Returns:
+            A list of tuples, where each tuple contains an action class and a
+            dictionary of its initialization kwargs. This list is suitable for
+            passing to the `OnceAction` constructor.
+        """
+        actions: list[tuple[type | Callable[..., Any], dict[str, Any]]] = []
         if settings.email.use_emails:
             actions.append(
                 (
@@ -71,8 +101,13 @@ class Application:
             )
         return actions
 
-    async def _action_manager(self):
-        """Waits for events on the queue and triggers the appropriate actions."""
+    async def _action_manager(self) -> None:
+        """Manages the action queue, triggering handlers for received events.
+
+        This task runs in an infinite loop, waiting for events (like "FIRE")
+        to be placed on the `action_queue`. When an event is received, it
+        triggers the corresponding action handler.
+        """
         while True:
             try:
                 event = await self.action_queue.get()
@@ -86,11 +121,11 @@ class Application:
             except Exception:
                 logger.exception("Action manager encountered an error, but will continue running.")
 
-    async def _queue_fire_event(self):
-        """Callback for the detector to queue a fire event."""
+    async def _queue_fire_event(self) -> None:
+        """A callback for the detector to queue a fire event."""
         await self.action_queue.put("FIRE")
 
-    async def _run_detector(self):
+    async def _run_detector(self) -> None:
         """Runs the core detection loop as a supervised task."""
         try:
             await self.detector()
@@ -99,16 +134,25 @@ class Application:
         finally:
             logger.info("Fire detector task is shutting down.")
 
-    async def run(self):
-        """Starts and runs the main application tasks."""
+    async def run(self) -> None:
+        """Starts and manages the main application tasks.
+
+        This method creates and starts the action manager and detector tasks,
+        assigns the main task to the signal handler for graceful shutdown, and
+        awaits the completion of the detector task.
+        """
         self.action_manager_task = asyncio.create_task(self._action_manager())
         self.detector_task = asyncio.create_task(self._run_detector())
 
         self.signal_handler.set_main_task(self.detector_task)
         await self.detector_task
 
-    async def shutdown(self):
-        """Gracefully shuts down all application tasks."""
+    async def shutdown(self) -> None:
+        """Gracefully shuts down all running application tasks.
+
+        This method cancels the main application tasks and waits for them to
+        finish, ensuring a clean exit.
+        """
         logger.info("Initiating graceful shutdown.")
 
         tasks = []

@@ -1,9 +1,12 @@
+"""Provides a class to send Discord webhook notifications."""
+
 import asyncio
 from dataclasses import dataclass
 from dataclasses import field
 import logging as log
 from urllib.parse import urlparse
 
+from aiohttp import ClientResponse
 from aiohttp import ClientSession
 from vidgear.gears.helper import logger_handler
 
@@ -15,16 +18,41 @@ logger.setLevel(log.DEBUG)
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
 class SendToDiscord:
+    """An awaitable class that sends a message to one or more Discord webhooks.
+
+    This class uses `aiohttp` to send messages asynchronously and concurrently
+    to a list of webhook URLs. It handles exceptions for each request
+    individually.
+
+    Attributes:
+        webhooks (list[str]): A list of Discord webhook URLs to send messages to.
+        message (str): The content of the message to be sent.
+        data (dict[str, str]): The JSON payload sent to the webhook.
+    """
+
     webhooks: list[str]
     message: str
     data: dict[str, str] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Prepares the data payload after the instance is initialized."""
         self.data = {
-            "content": self.message[:2000],
+            "content": self.message[:2000],  # Discord has a 2000 character limit
         }
 
-    async def send_to_webhook(self, session, url):
+    async def send_to_webhook(self, session: ClientSession, url: str) -> ClientResponse:
+        """Sends the prepared message to a single Discord webhook URL.
+
+        Args:
+            session: The `aiohttp.ClientSession` to use for the request.
+            url: The specific webhook URL to send the message to.
+
+        Returns:
+            The `aiohttp.ClientResponse` object from the request.
+
+        Raises:
+            aiohttp.ClientError: If a non-2xx status code is received.
+        """
         async with session.post(
             url=url,
             json=self.data,
@@ -35,10 +63,12 @@ class SendToDiscord:
             response.raise_for_status()
             return response
 
-    async def __call__(self):
-        """
-        Sends messages concurrently and handles exceptions for each request
-        individually, ensuring that one failed request does not stop others.
+    async def __call__(self) -> None:
+        """Sends messages concurrently to all configured webhooks.
+
+        This method creates an `aiohttp.ClientSession` and gathers tasks for each
+        webhook. It logs successes and failures individually, ensuring that one
+        failed request does not prevent others from being sent.
         """
         async with ClientSession() as session:
             logger.info(f"Sending message to {len(self.webhooks)} webhook(s)...")

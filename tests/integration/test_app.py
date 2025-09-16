@@ -1,8 +1,16 @@
+"""Integration tests for the main Application class.
+
+These tests validate the end-to-end behavior of the Application's run
+lifecycle, from fire detection signals to the triggering of action handlers,
+using mocks for external dependencies like the fire detector itself.
+"""
+
 import asyncio
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 import pytest
+from pytest import MonkeyPatch
 
 # It is now safe to import at the top level because we will explicitly
 # monkeypatch the settings object in the correct namespace within each test.
@@ -14,14 +22,18 @@ from is_goat_burning.config import VideoSettings
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(5)  # The test should be very fast now
+@pytest.mark.timeout(5)
 @patch("is_goat_burning.app.OnceAction")
-async def test_app_detects_fire_and_triggers_action(mock_once_action_class, monkeypatch):
-    """
-    This integration test verifies that when the detector signals 'fire',
-    the Application class correctly queues the event and triggers the action handler.
+async def test_app_detects_fire_and_triggers_action(mock_once_action_class: AsyncMock, monkeypatch: MonkeyPatch) -> None:
+    """Verifies that the app triggers the action handler when the detector signals fire.
 
-    It is fully isolated from .env files and mocks the external detector dependency.
+    This test uses a mock detector that immediately calls its `on_fire_action`
+    callback, simulating a fire event. It then asserts that the application's
+    main action handler was called exactly once.
+
+    Args:
+        mock_once_action_class: A mock of the `OnceAction` class.
+        monkeypatch: The pytest fixture for runtime patching.
     """
 
     # --- Setup ---
@@ -32,14 +44,13 @@ async def test_app_detects_fire_and_triggers_action(mock_once_action_class, monk
             self.on_fire_action = kwargs.get("on_fire_action")
 
         async def __call__(self):
-            # When run, this mock immediately calls the captured callback,
-            # simulating a fire detection event.
+            # When run, this mock immediately calls the captured callback.
             if self.on_fire_action:
                 await self.on_fire_action()
 
-    # 2. Create our pure, in-memory settings for the test.
+    # 2. Create pure, in-memory settings for the test.
     test_settings = Settings(
-        source="mock://source",  # Source is irrelevant as the detector is mocked
+        source="mock://source",
         fire_detection_threshold=0.01,
         logging=False,
         video_output=False,
@@ -67,10 +78,16 @@ async def test_app_detects_fire_and_triggers_action(mock_once_action_class, monk
 @pytest.mark.asyncio
 @pytest.mark.timeout(5)
 @patch("is_goat_burning.app.OnceAction")
-async def test_app_does_not_detect_fire_and_remains_silent(mock_once_action_class, monkeypatch):
-    """
-    This integration test verifies that if the detector runs and finishes
-    without signaling 'fire', the action handler is never called.
+async def test_app_does_not_detect_fire_and_remains_silent(mock_once_action_class: AsyncMock, monkeypatch: MonkeyPatch) -> None:
+    """Verifies that the action handler is not called if the detector never signals fire.
+
+    This test uses a mock detector that completes its run without ever calling
+    the `on_fire_action` callback. It asserts that the application's main
+    action handler was never called.
+
+    Args:
+        mock_once_action_class: A mock of the `OnceAction` class.
+        monkeypatch: The pytest fixture for runtime patching.
     """
 
     # --- Setup ---

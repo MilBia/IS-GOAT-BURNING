@@ -1,3 +1,5 @@
+"""Unit tests for the SendEmail action class."""
+
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -7,8 +9,13 @@ from is_goat_burning.on_fire_actions.send_email import SendEmail
 
 
 @pytest.mark.asyncio
-async def test_send_email():
-    # Create an instance of the SendEmail class
+async def test_send_email() -> None:
+    """Verifies that the SendEmail class correctly interacts with smtplib.
+
+    This test mocks the `smtplib.SMTP` class to ensure that the `SendEmail`
+    action correctly calls the `starttls`, `login`, and `send_message` methods
+    with the expected parameters.
+    """
     email_sender = SendEmail(
         sender="test@example.com",
         sender_password="password",
@@ -19,16 +26,13 @@ async def test_send_email():
         port=587,
     )
 
-    # Mock the smtplib.SMTP class
     with patch("smtplib.SMTP") as mock_smtp:
-        # Create a mock instance of the SMTP class
         mock_smtp_instance = MagicMock()
         mock_smtp.return_value.__enter__.return_value = mock_smtp_instance
 
-        # Call the __call__ method
         await email_sender()
 
-        # Assert that the login and send_message methods were called
+        # Assert that the correct SMTP sequence was called
         mock_smtp_instance.starttls.assert_called_once()
         mock_smtp_instance.login.assert_called_once_with("test@example.com", "password")
         mock_smtp_instance.send_message.assert_called_once()
