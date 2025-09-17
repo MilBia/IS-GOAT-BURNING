@@ -1,3 +1,10 @@
+"""Unit tests for the Pydantic settings models in `is_goat_burning.config`.
+
+These tests verify the loading of settings from mock `.env` files and the
+behavior of the custom validators for each settings subgroup (Email, Discord,
+Video).
+"""
+
 from unittest.mock import mock_open
 from unittest.mock import patch
 
@@ -10,58 +17,35 @@ from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
 
 
-def test_settings_loads_source_from_env_file():
-    """
-    Tests that the main Settings object correctly loads values from a `.env` file.
-    """
+def test_settings_loads_source_from_env_file() -> None:
+    """Verifies that the main Settings object loads values from a `.env` file."""
     test_env_content = "SOURCE=test_source_from_file\n"
     with patch("builtins.open", mock_open(read_data=test_env_content)):
         settings = Settings()
     assert settings.source == "test_source_from_file"
 
 
-def test_email_validator_raises_error_when_enabled_and_misconfigured():
-    """
-    Unit test: Directly tests the EmailSettings validator raises an error when
-    `use_emails` is True but required fields are missing.
-    """
-    with pytest.raises(ValidationError) as excinfo:
-        # Instantiate directly, which uses defaults for all unset fields (None, [])
+def test_email_validator_raises_error_when_enabled_and_misconfigured() -> None:
+    """Verifies EmailSettings validator fails if `use_emails` is True with missing fields."""
+    with pytest.raises(ValidationError, match="must be set when EMAIL__USE_EMAILS is true"):
         EmailSettings(use_emails=True)
 
-    # The validator should fail on the first missing required field.
-    assert "EMAIL__SENDER must be set when EMAIL__USE_EMAILS is true" in str(excinfo.value)
+
+def test_discord_validator_raises_error_when_enabled_and_misconfigured() -> None:
+    """Verifies DiscordSettings validator fails if `use_discord` is True with empty hooks."""
+    with pytest.raises(ValidationError, match="must be set when DISCORD__USE_DISCORD is true"):
+        DiscordSettings(use_discord=True)
 
 
-def test_discord_validator_raises_error_when_enabled_and_misconfigured():
-    """
-    Unit test: Directly tests the DiscordSettings validator raises an error when
-    `use_discord` is True but `hooks` is empty.
-    """
-    with pytest.raises(ValidationError) as excinfo:
-        DiscordSettings(use_discord=True)  # `hooks` will default to []
-
-    assert "DISCORD__HOOKS must be set when DISCORD__USE_DISCORD is true" in str(excinfo.value)
+def test_video_validator_raises_error_when_enabled_and_misconfigured() -> None:
+    """Verifies VideoSettings validator fails if saving is enabled with no directory."""
+    with pytest.raises(ValidationError, match="must be set when VIDEO__SAVE_VIDEO_CHUNKS is true"):
+        VideoSettings(save_video_chunks=True)
 
 
-def test_video_validator_raises_error_when_enabled_and_misconfigured():
-    """
-    Unit test: Directly tests the VideoSettings validator raises an error when
-    `save_video_chunks` is True but `video_output_directory` is not set.
-    """
-    with pytest.raises(ValidationError) as excinfo:
-        VideoSettings(save_video_chunks=True)  # `video_output_directory` will be None
-
-    assert "VIDEO__VIDEO_OUTPUT_DIRECTORY must be set when VIDEO__SAVE_VIDEO_CHUNKS is true" in str(excinfo.value)
-
-
-def test_validators_do_not_raise_error_when_disabled():
-    """
-    Unit test: Verifies that no validation error occurs when services are disabled,
-    even with missing configuration.
-    """
+def test_validators_do_not_raise_error_when_disabled() -> None:
+    """Verifies validators do not raise errors when services are disabled."""
     try:
-        # Directly instantiate with services disabled. This should always pass.
         EmailSettings(use_emails=False)
         DiscordSettings(use_discord=False)
         VideoSettings(save_video_chunks=False)

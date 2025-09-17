@@ -1,3 +1,5 @@
+"""An example of running the fire detector on a pre-recorded video with output."""
+
 import asyncio
 import sys
 
@@ -7,13 +9,18 @@ from is_goat_burning.on_fire_actions import OnceAction  # noqa: E402
 from is_goat_burning.on_fire_actions import SendEmail  # noqa: E402
 
 
-async def main(sender, sender_password, *recipients):
-    """
-    python online_video_with_output.py sender@gmail.com sender_password recipient1@gmail.com recipient2@gmail.com
+async def main(sender: str, sender_password: str, *recipients: str) -> None:
+    """Runs the detector and sends an email upon fire detection.
+
+    This example shows how to run the detector on a pre-recorded video with
+    a visible output window.
+
+    Usage:
+        python examples/online_video_with_output.py sender@example.com "pass" recipient@example.com
     """
     on_fire_action = OnceAction(
         [
-            [
+            (
                 SendEmail,
                 {
                     "sender": sender,
@@ -24,7 +31,7 @@ async def main(sender, sender_password, *recipients):
                     "host": "smtp.gmail.com",
                     "port": 587,
                 },
-            ]
+            )
         ]
     )
 

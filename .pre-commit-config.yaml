@@ -17,7 +17,6 @@ repos:
           - id: check-docstring-first
           - id: detect-private-key
 
-    # Run the Ruff linter.
     - repo: https://github.com/astral-sh/ruff-pre-commit
       rev: v0.9.2
       hooks:
@@ -28,6 +27,13 @@ repos:
           # Formatter
           - id: ruff-format
             types_or: [ python ]
+
+    - repo: https://github.com/pycqa/pydocstyle
+      rev: 6.3.0
+      hooks:
+          - id: pydocstyle
+            args:
+              - --convention=google
 
 # sets up .pre-commit-ci.yaml to ensure pre-commit dependencies stay up to date
 ci:

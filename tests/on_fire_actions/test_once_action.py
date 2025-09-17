@@ -1,3 +1,9 @@
+"""Unit tests for the OnceAction container.
+
+These tests verify the core idempotency logic of the `OnceAction` class,
+ensuring that wrapped actions are only executed once.
+"""
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -6,37 +12,26 @@ from is_goat_burning.on_fire_actions.action_containers import OnceAction
 
 
 @pytest.mark.asyncio
-async def test_once_action_calls_action_only_once():
-    """
-    Tests that the OnceAction class only calls the provided action once.
-    """
-    # Create a mock action
+async def test_once_action_calls_action_only_once() -> None:
+    """Verifies that a single wrapped action is only called on the first invocation."""
     mock_action = AsyncMock()
+    once_action = OnceAction(actions=[(mock_action, {})])
 
-    # Create an instance of the OnceAction class
-    once_action = OnceAction(actions=[[mock_action, {}]])
-
-    # Call the __call__ method twice
+    # Call the container twice
     await once_action()
     await once_action()
 
-    # Assert that the action was only called once
+    # Assert that the underlying action was only called once
     mock_action.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_once_action_with_multiple_actions():
-    """
-    Tests that the OnceAction class can handle multiple actions.
-    """
-    # Create mock actions
+async def test_once_action_with_multiple_actions() -> None:
+    """Verifies that all wrapped actions are called on the first invocation."""
     mock_action_1 = AsyncMock()
     mock_action_2 = AsyncMock()
+    once_action = OnceAction(actions=[(mock_action_1, {}), (mock_action_2, {})])
 
-    # Create an instance of the OnceAction class
-    once_action = OnceAction(actions=[[mock_action_1, {}], [mock_action_2, {}]])
-
-    # Call the __call__ method
     await once_action()
 
     # Assert that both actions were called
