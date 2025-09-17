@@ -66,8 +66,8 @@ We use `ruff` for linting and formatting, enforced via `pre-commit`.
             the arguments, what the method returns, and any exceptions it might raise.
 
             Args:
-                param1: The first parameter, an integer.
-                param2: The second parameter, a string.
+                param1: the first parameter
+                param2: the second parameter
 
             Returns:
                 True if the operation was successful, False otherwise.

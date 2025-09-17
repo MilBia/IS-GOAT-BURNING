@@ -20,6 +20,7 @@ from is_goat_burning.config import settings
 
 # --- Constants ---
 GAUSSIAN_BLUR_KERNEL_SIZE = (21, 21)
+GAUSSIAN_BLUR_SIGMA_X = 0
 
 
 class FireDetector(Protocol):
@@ -65,7 +66,7 @@ class CPUFireDetector:
         Returns:
             A tuple containing the fire detection result and the masked frame.
         """
-        blur = cv2.GaussianBlur(frame, GAUSSIAN_BLUR_KERNEL_SIZE, 0)
+        blur = cv2.GaussianBlur(frame, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
         no_red = cv2.countNonZero(mask)
@@ -94,7 +95,9 @@ class CUDAFireDetector:
         self.base_bound_set: bool = False
         self.lower_channel: list[cv2.cuda.GpuMat] = []
         self.upper_channel: list[cv2.cuda.GpuMat] = []
-        self.gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC3, cv2.CV_8UC3, GAUSSIAN_BLUR_KERNEL_SIZE, 0)
+        self.gaussian_filter = cv2.cuda.createGaussianFilter(
+            cv2.CV_8UC3, cv2.CV_8UC3, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X
+        )
         self._last_frame_size: tuple[int, int] | None = None
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
