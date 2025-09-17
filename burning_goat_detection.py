@@ -1,3 +1,5 @@
+"""The main entry point for the Is the Gävle Goat Burning application."""
+
 import asyncio
 import logging as log
 

@@ -1,7 +1,6 @@
 """An example of running the fire detector on a live stream without video output."""
 
 import asyncio
-from collections.abc import Sequence
 import sys
 
 sys.path.append("..")
@@ -10,7 +9,7 @@ from is_goat_burning.on_fire_actions import OnceAction  # noqa: E402
 from is_goat_burning.on_fire_actions import SendEmail  # noqa: E402
 
 
-async def main(sender: str, sender_password: str, *recipients: Sequence[str]) -> None:
+async def main(sender: str, sender_password: str, *recipients: str) -> None:
     """Runs the detector and sends an email upon fire detection.
 
     This example shows how to run the detector on a live YouTube stream in a
