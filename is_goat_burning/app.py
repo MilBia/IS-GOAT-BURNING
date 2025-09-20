@@ -49,7 +49,8 @@ class Application:
         )
         return instance
 
-    def _create_actions(self) -> list[tuple[type | Callable[..., Any], dict[str, Any]]]:
+    @staticmethod
+    def _create_actions() -> list[tuple[type | Callable[..., Any], dict[str, Any]]]:
         """Builds a list of notification actions based on settings."""
         actions: list[tuple[type | Callable[..., Any], dict[str, Any]]] = []
         if settings.email.use_emails:
