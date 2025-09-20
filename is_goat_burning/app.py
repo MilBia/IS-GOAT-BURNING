@@ -2,21 +2,17 @@
 
 import asyncio
 from collections.abc import Callable
-import logging as log
 from typing import Any
 
-from vidgear.gears.helper import logger_handler
-
 from is_goat_burning.config import settings
-from is_goat_burning.fire_detection import YTCamGearFireDetector
+from is_goat_burning.fire_detection import StreamFireDetector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
+from is_goat_burning.logger import get_logger
 from is_goat_burning.on_fire_actions import OnceAction
 from is_goat_burning.on_fire_actions import SendEmail
 from is_goat_burning.on_fire_actions import SendToDiscord
 
-logger = log.getLogger(__name__)
-logger.propagate = False
-logger.addHandler(logger_handler())
+logger = get_logger("Application")
 
 
 class Application:
@@ -32,7 +28,7 @@ class Application:
             the detector and the action manager.
         on_fire_action_handler (OnceAction): The handler that executes
             notification actions only once per application run.
-        detector (YTCamGearFireDetector): The main fire detection instance.
+        detector (StreamFireDetector): The main fire detection instance.
         detector_task (asyncio.Task | None): The task running the detector loop.
         action_manager_task (asyncio.Task | None): The task managing the event
             queue and triggering actions.
@@ -48,10 +44,9 @@ class Application:
         self.on_fire_action_handler = OnceAction(on_fire_actions)
 
         # Setup detector
-        self.detector = YTCamGearFireDetector(
+        self.detector = StreamFireDetector(
             src=settings.source,
             threshold=settings.fire_detection_threshold,
-            logging=settings.logging,
             video_output=settings.video_output,
             on_fire_action=self._queue_fire_event,
             checks_per_second=settings.checks_per_second,

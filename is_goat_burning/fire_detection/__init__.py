@@ -1,5 +1,5 @@
 """Initializes the fire_detection module, exporting the main detector class."""
 
-from .fire_detector import YTCamGearFireDetector
+from .detector_core import StreamFireDetector
 
-__all__ = ["YTCamGearFireDetector"]
+__all__ = ["StreamFireDetector"]

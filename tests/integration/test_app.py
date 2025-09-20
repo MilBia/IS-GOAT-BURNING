@@ -62,7 +62,7 @@ async def test_app_detects_fire_and_triggers_action(mock_once_action_class: Asyn
 
     # 3. Apply all patches *before* instantiating the Application.
     monkeypatch.setattr("is_goat_burning.app.settings", test_settings)
-    monkeypatch.setattr("is_goat_burning.app.YTCamGearFireDetector", MockFireDetector)
+    monkeypatch.setattr("is_goat_burning.app.StreamFireDetector", MockFireDetector)
     mock_action_handler_instance = AsyncMock()
     mock_once_action_class.return_value = mock_action_handler_instance
 
@@ -115,7 +115,7 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_once_action_clas
 
     # 3. Apply patches.
     monkeypatch.setattr("is_goat_burning.app.settings", test_settings)
-    monkeypatch.setattr("is_goat_burning.app.YTCamGearFireDetector", MockNoFireDetector)
+    monkeypatch.setattr("is_goat_burning.app.StreamFireDetector", MockNoFireDetector)
     mock_action_handler_instance = AsyncMock()
     mock_once_action_class.return_value = mock_action_handler_instance
 

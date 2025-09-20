@@ -3,16 +3,12 @@
 import asyncio
 from dataclasses import dataclass
 from email.message import EmailMessage
-import logging as log
 import smtplib
 import ssl
 
-from vidgear.gears.helper import logger_handler
+from is_goat_burning.logger import get_logger
 
-logger = log.getLogger("EmailSender")
-logger.propagate = False
-logger.addHandler(logger_handler())
-logger.setLevel(log.DEBUG)
+logger = get_logger("EmailSender")
 
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)

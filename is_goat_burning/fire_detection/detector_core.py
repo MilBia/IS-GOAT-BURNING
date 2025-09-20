@@ -1,8 +1,8 @@
 """The main fire detector class orchestrating video streaming and analysis.
 
-This module contains the `YTCamGearFireDetector` class, which is the primary
-entry point for the fire detection logic. It uses `vidgear` to stream video
-from a YouTube source, processes frames at a configurable rate, and uses a
+This module contains the `StreamFireDetector` class, which is the primary
+entry point for the fire detection logic. It uses the `VideoStreamer` to handle
+video streaming, processes frames at a configurable rate, and uses a
 selected detector implementation (CPU, CUDA, or OpenCL) to check for fire.
 """
 
@@ -14,9 +14,10 @@ from typing import Any
 import cv2
 import numpy as np
 
-from is_goat_burning.fire_detection.cam_gear import YTCamGear
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
+from is_goat_burning.stream import VideoStreamer
+from is_goat_burning.stream import get_stream_url
 
 # --- Constants ---
 # Default HSV color range for fire detection, optimized for yellow/orange hues.
@@ -25,11 +26,12 @@ DEFAULT_LOWER_HSV_FIRE = np.array([18, 50, 50], dtype="uint8")
 DEFAULT_UPPER_HSV_FIRE = np.array([35, 255, 255], dtype="uint8")
 
 
-class YTCamGearFireDetector:
+class StreamFireDetector:
     """Orchestrates video streaming and fire detection.
 
-    This class wraps `vidgear.YTCamGear` to handle video stream setup from a
+    This class uses the `VideoStreamer` to handle video stream setup from a
     source URL. It provides an asynchronous frame generator that can be
+
     throttled using the `checks_per_second` parameter. For each relevant frame,
     it invokes a `FireDetector` instance to perform the actual analysis.
 
@@ -42,100 +44,79 @@ class YTCamGearFireDetector:
             events like fire detection signals.
         lower_hsv (np.ndarray): The lower bound of the HSV color range for fire.
         upper_hsv (np.ndarray): The upper bound of the HSV color range for fire.
-        stream (YTCamGear): The underlying VidGear video stream instance.
+        stream (VideoStreamer | None): The underlying video stream instance.
         fire_detector (FireDetector): The detector instance (CPU, CUDA, or
             OpenCL) used for frame analysis.
-        frame_generator (AsyncGenerator): The asynchronous generator that
-            yields frames to be processed.
     """
-
-    DEFAULT_OPTIONS: dict[str, Any] = {"STREAM_RESOLUTION": "480p", "CAP_PROP_FPS": 30}
 
     def __init__(
         self,
         src: str,
         on_fire_action: Callable[[], Any],
         threshold: float = 0.05,
-        logging: bool = False,
         video_output: bool = False,
         checks_per_second: float | None = None,
         lower_hsv: np.ndarray | None = None,
         upper_hsv: np.ndarray | None = None,
-        **yt_cam_gear_options: Any,
     ) -> None:
-        """Initializes the YTCamGearFireDetector.
+        """Initializes the StreamFireDetector.
 
         Args:
             src: The source URL of the video stream (e.g., a YouTube URL).
             on_fire_action: An awaitable callback to execute on fire detection.
             threshold: The percentage of the frame's pixels that must match
                 the fire color to trigger a detection.
-            logging: Enables or disables VidGear's internal logging.
             video_output: If True, displays a window with the video feed and
                 detection mask.
             checks_per_second: The number of frames per second to analyze. If
                 None, every frame is analyzed.
             lower_hsv: An optional override for the lower HSV fire color bound.
             upper_hsv: An optional override for the upper HSV fire color bound.
-            **yt_cam_gear_options: Additional keyword arguments passed directly
-                to the `vidgear.YTCamGear` constructor.
         """
+        self.src = src
         self.on_fire_action = on_fire_action
+        self.threshold = threshold
         self.video_output = video_output
         self.signal_handler = SignalHandler()
         self.lower_hsv = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
         self.upper_hsv = upper_hsv if upper_hsv is not None else DEFAULT_UPPER_HSV_FIRE
-        options = {**self.DEFAULT_OPTIONS, **yt_cam_gear_options}
-        self.stream = YTCamGear(source=src, stream_mode=True, logging=logging, **options)
-        fire_threshold = int(self.stream.frame.shape[0] * self.stream.frame.shape[1] * threshold)
+        self.checks_per_second = checks_per_second
+
+        # Components to be initialized asynchronously
+        self.stream: VideoStreamer | None = None
+        self.fire_detector: create_fire_detector | None = None
+
+    async def _initialize(self) -> None:
+        """Asynchronously initializes the streamer and detector."""
+        stream_url = await get_stream_url(self.src)
+        self.stream = VideoStreamer(url=stream_url)
+        fire_threshold = int(self.stream.frame_shape[0] * self.stream.frame_shape[1] * self.threshold)
         self.fire_detector = create_fire_detector(
             margin=fire_threshold,
             lower=self.lower_hsv,
             upper=self.upper_hsv,
         )
-        self.frames_between_step: float = 0.0
-        self.check_iterator: AsyncGenerator[bool, None] | None = None
 
-        if checks_per_second and checks_per_second < self.stream.framerate > 0:
-            self.frames_between_step = self.stream.framerate / checks_per_second
-            self.check_iterator = self.checkout_generator()
-            self.frame_generator = self._frame_gen_with_iterator
-        else:
-            self.frame_generator = self._frame_gen
-
-    async def checkout_generator(self) -> AsyncGenerator[bool, None]:
-        """Yields True for frames that should be processed.
-
-        This asynchronous generator implements the logic for throttling frame
-        analysis based on the `checks_per_second` setting.
-
-        Yields:
-            True if the current frame should be analyzed, False otherwise.
-        """
+    async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
+        """An async generator that yields frames, potentially throttled."""
+        assert self.stream is not None
         frame_counter: float = 0.0
-        while True:
-            frame_counter += 1.0
-            if frame_counter >= self.frames_between_step:
-                yield True
-                frame_counter -= self.frames_between_step
-            else:
-                yield False
+        frames_between_step: float = 0.0
+        if self.checks_per_second and self.checks_per_second < self.stream.framerate > 0:
+            frames_between_step = self.stream.framerate / self.checks_per_second
 
-    async def _frame_gen(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
-        """An async generator that yields all frames from the stream."""
-        async for frame in self.stream.read():
+        async for frame in self.stream.frames():
             if frame is None:
                 break
-            yield frame
 
-    async def _frame_gen_with_iterator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
-        """An async generator that yields frames filtered by the iterator."""
-        assert self.check_iterator is not None
-        async for frame in self.stream.read():
-            if frame is None:
-                break
-            if await anext(self.check_iterator):
+            if frames_between_step == 0:  # No throttling
                 yield frame
+                continue
+
+            frame_counter += 1.0
+            if frame_counter >= frames_between_step:
+                yield frame
+                frame_counter -= frames_between_step
 
     async def __call__(self) -> None:
         """Starts the fire detection loop.
@@ -145,9 +126,12 @@ class YTCamGearFireDetector:
         and signal if fire is detected. It also handles displaying the video
         output if enabled.
         """
+        await self._initialize()
+        assert self.stream is not None and self.fire_detector is not None
+
         try:
             loop = asyncio.get_running_loop()
-            async for frame in self.frame_generator():
+            async for frame in self._frame_generator():
                 fire, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
                 if fire:
                     self.signal_handler.fire_detected()
@@ -160,4 +144,5 @@ class YTCamGearFireDetector:
         finally:
             if self.video_output:
                 cv2.destroyAllWindows()
-            self.stream.stop()
+            if self.stream:
+                await self.stream.stop()

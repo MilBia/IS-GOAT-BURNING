@@ -1,15 +1,11 @@
 """Handles application-wide signals for graceful shutdown and custom events."""
 
 import asyncio
-import logging as log
 import signal
 
-from vidgear.gears.helper import logger_handler
+from is_goat_burning.logger import get_logger
 
-logger = log.getLogger("SignalHandler")
-logger.propagate = False
-logger.addHandler(logger_handler())
-logger.setLevel(log.DEBUG)
+logger = get_logger("SignalHandler")
 
 
 class SignalHandler:
