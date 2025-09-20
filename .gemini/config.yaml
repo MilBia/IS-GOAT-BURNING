@@ -1,0 +1,25 @@
+have_fun: true
+
+# A list of glob patterns for files and directories that Gemini Code Assist should ignore.
+# This helps focus the AI's context on the most relevant parts of the codebase.
+ignore_patterns:
+  - "tests/"
+  - "examples/"
+  - ".venv/"
+  - "venv/"
+  - ".pytest_cache/"
+  - "requirements*.txt" # Excludes all generated requirements files
+  - "*.md" # Excludes markdown files from core context, except for the styleguide itself
+
+# Configuration for pull request events.
+# We will keep the defaults for now as specified in the documentation,
+# which is to provide a summary and code review.
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1
+  pull_request_opened:
+    help: true
+    summary: true
+    code_review: true
+    include_drafts: true
