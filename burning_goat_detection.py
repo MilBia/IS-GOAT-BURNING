@@ -10,7 +10,7 @@ logger = get_logger("Entrypoint")
 
 async def main():
     """Initializes and runs the application."""
-    app = Application()
+    app = await Application.create()
     try:
         await app.run()
     except asyncio.CancelledError:

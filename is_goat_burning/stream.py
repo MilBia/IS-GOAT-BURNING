@@ -8,6 +8,8 @@ frame grabbing and processing.
 import asyncio
 from collections.abc import AsyncGenerator
 from functools import partial
+from typing import Any
+from typing import ClassVar
 from typing import Literal
 
 import cv2
@@ -21,42 +23,52 @@ from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunk
 logger = get_logger("Stream")
 
 # --- Constants ---
-YTDLP_OPTIONS = {
-    "format": "bestvideo/best",  # TODO: Add option to chose an format in .env file
-    "quiet": True,
-}
+DEFAULT_FRAMERATE = 30.0
 Backend = Literal["cpu", "cuda", "opencl"]
 
 
-async def get_stream_url(url: str) -> str:
-    """Resolves a YouTube URL to a direct, playable video stream URL.
+class YouTubeStream:
+    """Resolves a YouTube URL to a direct, playable video stream URL."""
 
-    This function uses `yt-dlp` to extract the manifest URL for the best
-    available MP4 stream. It runs the blocking I/O operation in a thread
-    pool to avoid stalling the asyncio event loop.
+    YTDLP_OPTIONS: ClassVar[dict[str, Any]] = {
+        "format": "bestvideo/best",  # TODO: Add option to chose an format in .env file
+        "quiet": True,
+    }
 
-    Args:
-        url: The public URL of the YouTube video or live stream.
+    def __init__(self, url: str) -> None:
+        """Initializes the YouTubeStream resolver.
 
-    Returns:
-        The direct URL to the video stream.
+        Args:
+            url: The public URL of the YouTube video or live stream.
+        """
+        self.url = url
 
-    Raises:
-        ValueError: If the stream URL cannot be resolved.
-    """
-    loop = asyncio.get_running_loop()
-    try:
-        # Use functools.partial to pass arguments to the executor function
-        extractor = partial(yt_dlp.YoutubeDL, YTDLP_OPTIONS)
-        with await loop.run_in_executor(None, extractor) as ydl:
-            info = await loop.run_in_executor(None, ydl.extract_info, url, False)
-            if not info or "url" not in info:
-                raise ValueError("Could not extract stream URL.")
-            logger.info(f"Successfully resolved stream URL for {url}")
-            return info["url"]
-    except Exception as e:
-        logger.error(f"Failed to resolve stream URL for {url}: {e}")
-        raise ValueError("Failed to resolve stream URL.") from e
+    async def resolve_url(self) -> str:
+        """Resolves the YouTube URL to a direct, playable video stream URL.
+
+        This method uses `yt-dlp` to extract the manifest URL for the best
+        available video stream. It runs the blocking I/O operation in a thread
+        pool to avoid stalling the asyncio event loop.
+
+        Returns:
+            The direct URL to the video stream.
+
+        Raises:
+            ValueError: If the stream URL cannot be resolved.
+        """
+        loop = asyncio.get_running_loop()
+        try:
+            # Use functools.partial to pass arguments to the executor function
+            extractor = partial(yt_dlp.YoutubeDL, self.YTDLP_OPTIONS)
+            with await loop.run_in_executor(None, extractor) as ydl:
+                info = await loop.run_in_executor(None, ydl.extract_info, self.url, False)
+                if not info or "url" not in info:
+                    raise ValueError("Could not extract stream URL.")
+                logger.info(f"Successfully resolved stream URL for {self.url}")
+                return info["url"]
+        except Exception as e:
+            logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
+            raise ValueError("Failed to resolve stream URL.") from e
 
 
 class VideoStreamer:
@@ -89,7 +101,7 @@ class VideoStreamer:
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open video stream at {url}")
 
-        self.framerate = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self.framerate = self.cap.get(cv2.CAP_PROP_FPS) or DEFAULT_FRAMERATE
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame_shape = (width, height)

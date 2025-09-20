@@ -22,7 +22,8 @@ def get_logger(name: str) -> logging.Logger:
         A configured logging.Logger instance.
     """
     logger = logging.getLogger(name)
-    logger.setLevel(LOG_LEVEL)
-    logger.addHandler(_handler)
-    logger.propagate = False
+    if not logger.handlers:
+        logger.setLevel(LOG_LEVEL)
+        logger.addHandler(_handler)
+        logger.propagate = False
     return logger

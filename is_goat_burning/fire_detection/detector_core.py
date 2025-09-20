@@ -6,6 +6,8 @@ video streaming, processes frames at a configurable rate, and uses a
 selected detector implementation (CPU, CUDA, or OpenCL) to check for fire.
 """
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
@@ -14,10 +16,11 @@ from typing import Any
 import cv2
 import numpy as np
 
+from is_goat_burning.fire_detection.detectors import FireDetector
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.stream import VideoStreamer
-from is_goat_burning.stream import get_stream_url
+from is_goat_burning.stream import YouTubeStream
 
 # --- Constants ---
 # Default HSV color range for fire detection, optimized for yellow/orange hues.
@@ -29,28 +32,26 @@ DEFAULT_UPPER_HSV_FIRE = np.array([35, 255, 255], dtype="uint8")
 class StreamFireDetector:
     """Orchestrates video streaming and fire detection.
 
-    This class uses the `VideoStreamer` to handle video stream setup from a
-    source URL. It provides an asynchronous frame generator that can be
-
-    throttled using the `checks_per_second` parameter. For each relevant frame,
-    it invokes a `FireDetector` instance to perform the actual analysis.
-
-    Attributes:
-        on_fire_action (Callable): A callback function to be executed when fire
-            is detected.
-        video_output (bool): If True, displays the annotated video stream in an
-            OpenCV window.
-        signal_handler (SignalHandler): A singleton instance to handle global
-            events like fire detection signals.
-        lower_hsv (np.ndarray): The lower bound of the HSV color range for fire.
-        upper_hsv (np.ndarray): The upper bound of the HSV color range for fire.
-        stream (VideoStreamer | None): The underlying video stream instance.
-        fire_detector (FireDetector): The detector instance (CPU, CUDA, or
-            OpenCL) used for frame analysis.
+    This class should be instantiated via the `create` async factory method.
     """
 
     def __init__(
         self,
+        on_fire_action: Callable[[], Any],
+        video_output: bool,
+        checks_per_second: float | None,
+    ) -> None:
+        """Initializes the StreamFireDetector. Private, use `create`."""
+        self.on_fire_action = on_fire_action
+        self.video_output = video_output
+        self.checks_per_second = checks_per_second
+        self.signal_handler = SignalHandler()
+        self.stream: VideoStreamer | None = None
+        self.fire_detector: FireDetector | None = None
+
+    @classmethod
+    async def create(
+        cls,
         src: str,
         on_fire_action: Callable[[], Any],
         threshold: float = 0.05,
@@ -58,8 +59,8 @@ class StreamFireDetector:
         checks_per_second: float | None = None,
         lower_hsv: np.ndarray | None = None,
         upper_hsv: np.ndarray | None = None,
-    ) -> None:
-        """Initializes the StreamFireDetector.
+    ) -> StreamFireDetector:
+        """Creates and asynchronously initializes a StreamFireDetector instance.
 
         Args:
             src: The source URL of the video stream (e.g., a YouTube URL).
@@ -72,30 +73,27 @@ class StreamFireDetector:
                 None, every frame is analyzed.
             lower_hsv: An optional override for the lower HSV fire color bound.
             upper_hsv: An optional override for the upper HSV fire color bound.
+
+        Returns:
+            A fully initialized StreamFireDetector instance.
         """
-        self.src = src
-        self.on_fire_action = on_fire_action
-        self.threshold = threshold
-        self.video_output = video_output
-        self.signal_handler = SignalHandler()
-        self.lower_hsv = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
-        self.upper_hsv = upper_hsv if upper_hsv is not None else DEFAULT_UPPER_HSV_FIRE
-        self.checks_per_second = checks_per_second
+        instance = cls(on_fire_action, video_output, checks_per_second)
 
-        # Components to be initialized asynchronously
-        self.stream: VideoStreamer | None = None
-        self.fire_detector: create_fire_detector | None = None
+        # Resolve the stream URL
+        resolver = YouTubeStream(url=src)
+        stream_url = await resolver.resolve_url()
+        instance.stream = VideoStreamer(url=stream_url)
 
-    async def _initialize(self) -> None:
-        """Asynchronously initializes the streamer and detector."""
-        stream_url = await get_stream_url(self.src)
-        self.stream = VideoStreamer(url=stream_url)
-        fire_threshold = int(self.stream.frame_shape[0] * self.stream.frame_shape[1] * self.threshold)
-        self.fire_detector = create_fire_detector(
-            margin=fire_threshold,
-            lower=self.lower_hsv,
-            upper=self.upper_hsv,
+        # Create the appropriate detector
+        lower = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
+        upper = upper_hsv if upper_hsv is not None else DEFAULT_UPPER_HSV_FIRE
+        fire_pixel_margin = int(instance.stream.frame_shape[0] * instance.stream.frame_shape[1] * threshold)
+        instance.fire_detector = create_fire_detector(
+            margin=fire_pixel_margin,
+            lower=lower,
+            upper=upper,
         )
+        return instance
 
     async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
         """An async generator that yields frames, potentially throttled."""
@@ -126,7 +124,6 @@ class StreamFireDetector:
         and signal if fire is detected. It also handles displaying the video
         output if enabled.
         """
-        await self._initialize()
         assert self.stream is not None and self.fire_detector is not None
 
         try:
