@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from functools import partial
-import logging as log
 import os
 import shutil
 import time
@@ -22,14 +21,11 @@ from typing import ClassVar
 
 import cv2
 import numpy as np
-from vidgear.gears.helper import logger_handler
 
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
+from is_goat_burning.logger import get_logger
 
-logger = log.getLogger("AsyncVideoChunkSaver")
-logger.propagate = False
-logger.addHandler(logger_handler())
-logger.setLevel(log.DEBUG)
+logger = get_logger("AsyncVideoChunkSaver")
 
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)

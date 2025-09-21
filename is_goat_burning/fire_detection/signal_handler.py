@@ -1,15 +1,11 @@
 """Handles application-wide signals for graceful shutdown and custom events."""
 
 import asyncio
-import logging as log
 import signal
 
-from vidgear.gears.helper import logger_handler
+from is_goat_burning.logger import get_logger
 
-logger = log.getLogger("SignalHandler")
-logger.propagate = False
-logger.addHandler(logger_handler())
-logger.setLevel(log.DEBUG)
+logger = get_logger("SignalHandler")
 
 
 class SignalHandler:
@@ -48,6 +44,7 @@ class SignalHandler:
 
         self.fire_detected_event = asyncio.Event()
         self.main_task: asyncio.Task | None = None
+        self._running = True
 
         signal.signal(signal.SIGINT, self.exit_gracefully)
         signal.signal(signal.SIGTERM, self.exit_gracefully)
@@ -64,13 +61,18 @@ class SignalHandler:
         self.main_task = task
 
     def exit_gracefully(self, *args, **kwargs) -> None:
-        """Cancels the main task upon receiving a termination signal.
+        """Cancels the main task and stops the main loop on termination signal.
 
         This method is registered as the handler for SIGINT and SIGTERM.
         """
         logger.info("Termination signal received. Requesting graceful exit.")
-        if self.main_task:
+        self._running = False
+        if self.main_task and not self.main_task.done():
             self.main_task.cancel()
+
+    def is_running(self) -> bool:
+        """Checks if the main application loop should continue running."""
+        return self._running
 
     def fire_detected(self) -> None:
         """Sets the event to signal that a fire has been detected.

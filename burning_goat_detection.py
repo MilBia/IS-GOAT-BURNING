@@ -1,15 +1,11 @@
 """The main entry point for the Is the Gävle Goat Burning application."""
 
 import asyncio
-import logging as log
-
-from vidgear.gears.helper import logger_handler
 
 from is_goat_burning.app import Application
+from is_goat_burning.logger import get_logger
 
-logger = log.getLogger(__name__)
-logger.propagate = False
-logger.addHandler(logger_handler())
+logger = get_logger("Entrypoint")
 
 
 async def main():

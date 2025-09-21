@@ -7,8 +7,7 @@ authors = [
 ]
 dependencies = [
     "numpy==2.3.2",
-    "vidgear==0.3.3",
-    "yt-dlp==2025.8.11",
+    "yt-dlp==2025.9.5",
     "aiohttp==3.12.15",
     "pydantic-settings==2.10.1",
 ]

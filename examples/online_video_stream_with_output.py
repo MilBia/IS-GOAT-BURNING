@@ -4,7 +4,7 @@ import asyncio
 import sys
 
 sys.path.append("..")
-from is_goat_burning.fire_detection import YTCamGearFireDetector  # noqa: E402
+from is_goat_burning.fire_detection import StreamFireDetector  # noqa: E402
 from is_goat_burning.on_fire_actions import OnceAction  # noqa: E402
 from is_goat_burning.on_fire_actions import SendEmail  # noqa: E402
 
@@ -35,10 +35,9 @@ async def main(sender: str, sender_password: str, *recipients: str) -> None:
         ]
     )
 
-    detector = YTCamGearFireDetector(
+    detector = await StreamFireDetector.create(
         src="https://youtu.be/TqvguE5cKT0",
         threshold=0.1,
-        logging=True,
         video_output=True,
         on_fire_action=on_fire_action,
         checks_per_second=1,

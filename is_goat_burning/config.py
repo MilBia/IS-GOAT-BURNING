@@ -7,7 +7,9 @@ validators to ensure that the configuration is consistent and complete.
 
 from __future__ import annotations
 
+import os
 from typing import ClassVar
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -121,11 +123,15 @@ class Settings(BaseSettings):
 
     source: str = Field(validation_alias="SOURCE")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
-    logging: bool = Field(validation_alias="LOGGING", default=True)
+    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)
+    default_framerate: float = Field(default=30.0, validation_alias="DEFAULT_FRAMERATE")
+    ytdlp_format: str = Field(default="bestvideo/best", validation_alias="YTDLP_FORMAT")
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
+    reconnect_delay_seconds: int = Field(default=5, validation_alias="RECONNECT_DELAY_SECONDS")
+    stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
 
     # Nested settings
     email: EmailSettings = Field(default_factory=EmailSettings)
@@ -135,3 +141,4 @@ class Settings(BaseSettings):
 
 # A single, validated instance to be used across the application.
 settings = Settings()
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{settings.stream_inactivity_timeout * 1_000_000}"
