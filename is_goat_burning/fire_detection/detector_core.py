@@ -25,6 +25,7 @@ from is_goat_burning.stream import YouTubeStream
 # --- Constants ---
 # Default HSV color range for fire detection, optimized for yellow/orange hues.
 # These values can be overridden during the detector's initialization.
+DEFAULT_DETECTION_THRESHOLD = 0.05
 DEFAULT_LOWER_HSV_FIRE = np.array([18, 50, 50], dtype="uint8")
 DEFAULT_UPPER_HSV_FIRE = np.array([35, 255, 255], dtype="uint8")
 
@@ -54,7 +55,7 @@ class StreamFireDetector:
         cls,
         src: str,
         on_fire_action: Callable[[], Any],
-        threshold: float = 0.05,
+        threshold: float = DEFAULT_DETECTION_THRESHOLD,
         video_output: bool = False,
         checks_per_second: float | None = None,
         lower_hsv: np.ndarray | None = None,
