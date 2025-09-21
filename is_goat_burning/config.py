@@ -7,6 +7,7 @@ validators to ensure that the configuration is consistent and complete.
 
 from __future__ import annotations
 
+import os
 from typing import ClassVar
 
 from pydantic import BaseModel
@@ -128,11 +129,20 @@ class Settings(BaseSettings):
     ytdlp_format: str = Field(default="bestvideo/best", validation_alias="YTDLP_FORMAT")
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
+    reconnect_delay_seconds: int = Field(default=15, validation_alias="RECONNECT_DELAY_SECONDS")
+    stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
 
     # Nested settings
     email: EmailSettings = Field(default_factory=EmailSettings)
     discord: DiscordSettings = Field(default_factory=DiscordSettings)
     video: VideoSettings = Field(default_factory=VideoSettings)
+
+    @model_validator(mode="after")
+    def set_opencv_timeout(self) -> Settings:
+        """Sets the OpenCV environment variable for stream timeout."""
+        # OpenCV uses this env var to determine the timeout for stalled streams
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{self.stream_inactivity_timeout * 1000}"
+        return self
 
 
 # A single, validated instance to be used across the application.

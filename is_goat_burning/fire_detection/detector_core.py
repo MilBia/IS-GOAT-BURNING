@@ -52,6 +52,7 @@ class StreamFireDetector:
         self.signal_handler = SignalHandler()
         self.stream: VideoStreamer | None = None
         self.fire_detector: FireDetector | None = None
+        self.fire_is_currently_detected = False
 
     @classmethod
     async def create(
@@ -141,14 +142,26 @@ class StreamFireDetector:
         try:
             loop = asyncio.get_running_loop()
             async for frame in self._frame_generator():
-                fire, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
-                if fire:
+                fire_in_frame, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
+
+                # --- Stateful Fire Detection Logic ---
+                if fire_in_frame and not self.fire_is_currently_detected:
+                    # State transition: NO FIRE -> FIRE
+                    self.fire_is_currently_detected = True
                     self.signal_handler.fire_detected()
                     await self.on_fire_action()
+                elif not fire_in_frame and self.fire_is_currently_detected:
+                    # State transition: FIRE -> NO FIRE
+                    self.fire_is_currently_detected = False
+                    logger.info("Fire is no longer detected. Resuming normal monitoring.")
+                    # NOTE: We do not reset the global fire_detected_event here,
+                    # as that is the responsibility of the video archiver.
 
                 if self.video_output:
                     cv2.imshow("output", annotated_frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
+                        logger.info("User pressed 'q' in debug window. Initiating shutdown.")
+                        self.signal_handler.exit_gracefully()
                         break
         finally:
             if self.video_output:

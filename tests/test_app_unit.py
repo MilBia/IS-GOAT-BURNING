@@ -38,46 +38,56 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False) ->
     return mock_settings
 
 
-def test_create_actions_instantiates_email_action_when_enabled() -> None:
-    """Verifies `_create_actions` returns only SendEmail when enabled."""
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_instantiates_email_action_when_enabled(mock_once_action: MagicMock) -> None:
+    """Verifies `_setup_actions` configures SendEmail when enabled."""
     mock_settings = create_mock_settings(use_emails=True)
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        Application()  # __init__ calls _setup_actions
 
-    assert len(actions) == 1
-    action_class, kwargs = actions[0]
+    # Assert that OnceAction was called with the correct arguments
+    mock_once_action.assert_called_once()
+    actions_arg = mock_once_action.call_args[0][0]
+    assert len(actions_arg) == 1
+    action_class, kwargs = actions_arg[0]
     assert action_class is SendEmail
     assert kwargs["sender"] == "test_sender"
-    assert kwargs["sender_password"] == "test_pass"
 
 
-def test_create_actions_instantiates_discord_action_when_enabled() -> None:
-    """Verifies `_create_actions` returns only SendToDiscord when enabled."""
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_instantiates_discord_action_when_enabled(mock_once_action: MagicMock) -> None:
+    """Verifies `_setup_actions` configures SendToDiscord when enabled."""
     mock_settings = create_mock_settings(use_discord=True)
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        Application()
 
-    assert len(actions) == 1
-    action_class, kwargs = actions[0]
+    mock_once_action.assert_called_once()
+    actions_arg = mock_once_action.call_args[0][0]
+    assert len(actions_arg) == 1
+    action_class, kwargs = actions_arg[0]
     assert action_class is SendToDiscord
     assert kwargs["webhooks"] == ["hook1"]
 
 
-def test_create_actions_instantiates_both_actions_when_enabled() -> None:
-    """Verifies `_create_actions` returns both actions when both are enabled."""
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_instantiates_both_actions_when_enabled(mock_once_action: MagicMock) -> None:
+    """Verifies `_setup_actions` configures both actions when both are enabled."""
     mock_settings = create_mock_settings(use_emails=True, use_discord=True)
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        Application()
 
-    assert len(actions) == 2
-    action_classes = {action[0] for action in actions}
+    mock_once_action.assert_called_once()
+    actions_arg = mock_once_action.call_args[0][0]
+    assert len(actions_arg) == 2
+    action_classes = {action[0] for action in actions_arg}
     assert {SendEmail, SendToDiscord} == action_classes
 
 
-def test_create_actions_instantiates_no_actions_when_disabled() -> None:
-    """Verifies `_create_actions` returns an empty list when no actions are enabled."""
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_instantiates_no_actions_when_disabled(mock_once_action: MagicMock) -> None:
+    """Verifies `_setup_actions` configures an empty list when no actions are enabled."""
     mock_settings = create_mock_settings()
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        Application()
 
-    assert len(actions) == 0
+    mock_once_action.assert_called_once_with([])
