@@ -18,7 +18,22 @@ logger = get_logger("Application")
 
 
 class Application:
-    """Encapsulates the fire detection application's state and lifecycle."""
+    """Encapsulates the fire detection application's state and lifecycle.
+
+    This class initializes all major components of the application, including
+    the signal handler and action handlers. It manages the main asyncio tasks,
+    including the detector and action manager, and ensures a graceful shutdown
+    and stream reconnection.
+
+    Attributes:
+        signal_handler (SignalHandler): The application-wide signal handler.
+        action_queue (asyncio.Queue[str]): A queue for communicating events.
+        on_fire_action_handler (OnceAction | None): The handler that executes
+            notification actions.
+        detector_task (asyncio.Task | None): The task running the detector loop.
+        action_manager_task (asyncio.Task | None): The task managing the event
+            queue and triggering actions.
+    """
 
     def __init__(self) -> None:
         """Initializes the Application instance."""
