@@ -130,7 +130,7 @@ class Settings(BaseSettings):
     ytdlp_format: str = Field(default="bestvideo/best", validation_alias="YTDLP_FORMAT")
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
-    reconnect_delay_seconds: int = Field(default=15, validation_alias="RECONNECT_DELAY_SECONDS")
+    reconnect_delay_seconds: int = Field(default=5, validation_alias="RECONNECT_DELAY_SECONDS")
     stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
 
     # Nested settings
@@ -138,13 +138,7 @@ class Settings(BaseSettings):
     discord: DiscordSettings = Field(default_factory=DiscordSettings)
     video: VideoSettings = Field(default_factory=VideoSettings)
 
-    @model_validator(mode="after")
-    def set_opencv_timeout(self) -> Settings:
-        """Sets the OpenCV environment variable for stream timeout."""
-        # OpenCV uses this env var to determine the timeout for stalled streams
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{self.stream_inactivity_timeout * 1000}"
-        return self
-
 
 # A single, validated instance to be used across the application.
 settings = Settings()
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{settings.stream_inactivity_timeout * 1_000_000}"

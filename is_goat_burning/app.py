@@ -104,8 +104,8 @@ class Application:
                 # This is caught when exit_gracefully is called.
                 logger.info("Detector task cancelled by signal handler.")
                 break  # Exit the while loop
-            except Exception as e:
-                logger.error(f"Detector failed with an unhandled exception: {e}")
+            except Exception:
+                logger.exception("Detector failed with an unhandled exception")
             finally:
                 if detector and detector.stream:
                     await detector.stream.stop()  # Ensure cleanup
