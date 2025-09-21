@@ -15,6 +15,7 @@ from typing import Literal
 import cv2
 import numpy as np
 import yt_dlp
+from yt_dlp.utils import DownloadError
 
 from is_goat_burning.config import settings
 from is_goat_burning.logger import get_logger
@@ -44,29 +45,51 @@ class YouTubeStream:
     async def resolve_url(self) -> str:
         """Resolves the YouTube URL to a direct, playable video stream URL.
 
-        This method uses `yt-dlp` to extract the manifest URL for the best
-        available video stream. It runs the blocking I/O operation in a thread
-        pool to avoid stalling the asyncio event loop.
+        This method uses a two-tier approach. It first tries the user-defined
+        format. If that fails, it falls back to the "best" format to maximize
+        the chance of success.
 
         Returns:
             The direct URL to the video stream.
 
         Raises:
-            ValueError: If the stream URL cannot be resolved.
+            ValueError: If the stream URL cannot be resolved even with fallbacks.
         """
-        loop = asyncio.get_running_loop()
         try:
-            # Use functools.partial to pass arguments to the executor function
-            extractor = partial(yt_dlp.YoutubeDL, self.ytdlp_options)
-            with await loop.run_in_executor(None, extractor) as ydl:
-                info = await loop.run_in_executor(None, ydl.extract_info, self.url, False)
-                if not info or "url" not in info:
-                    raise ValueError("Could not extract stream URL.")
-                logger.info(f"Successfully resolved stream URL for {self.url}")
-                return info["url"]
-        except Exception as e:
-            logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
-            raise ValueError("Failed to resolve stream URL.") from e
+            # First attempt with the configured format
+            info = await self._get_stream_info(self.ytdlp_options)
+            logger.info(f"Successfully resolved stream URL for {self.url} with preferred format.")
+            return info["url"]
+        except DownloadError as e:
+            # Check if the error is a format availability issue
+            if "Requested format is not available" in str(e):
+                logger.warning(
+                    f"Preferred format '{settings.ytdlp_format}' not available. Attempting to fall back to 'best' format."
+                )
+                try:
+                    # Second attempt with the fallback format
+                    fallback_options = self.ytdlp_options.copy()
+                    fallback_options["format"] = "best"
+                    info = await self._get_stream_info(fallback_options)
+                    logger.info(f"Successfully resolved stream URL for {self.url} with fallback format.")
+                    return info["url"]
+                except DownloadError as fallback_e:
+                    logger.error(f"Fallback format also failed for {self.url}: {fallback_e}")
+                    raise ValueError("Failed to resolve stream URL.") from fallback_e
+            else:
+                # The error was not about format, so re-raise
+                logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
+                raise ValueError("Failed to resolve stream URL.") from e
+
+    async def _get_stream_info(self, opts: dict) -> dict:
+        """A helper to extract stream info using specified yt-dlp options."""
+        loop = asyncio.get_running_loop()
+        extractor = partial(yt_dlp.YoutubeDL, opts)
+        with await loop.run_in_executor(None, extractor) as ydl:
+            info = await loop.run_in_executor(None, ydl.extract_info, self.url, False)
+            if not info or "url" not in info:
+                raise ValueError("Could not extract stream URL from metadata.")
+            return info
 
 
 class VideoStreamer:
