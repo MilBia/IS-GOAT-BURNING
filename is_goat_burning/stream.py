@@ -5,6 +5,8 @@ direct pipeline using `yt-dlp` to resolve stream URLs and `OpenCV` for
 frame grabbing and processing.
 """
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator
 from functools import partial
@@ -70,9 +72,7 @@ class YouTubeStream:
 class VideoStreamer:
     """Opens a video stream and yields frames asynchronously.
 
-    This class wraps `cv2.VideoCapture` to provide a non-blocking, asynchronous
-    interface for reading video frames. It handles backend-specific frame
-    preparation for CPU, CUDA, and OpenCL processing.
+    This class should be instantiated via the `create` async factory method.
 
     Attributes:
         url (str): The direct video stream URL.
@@ -83,20 +83,15 @@ class VideoStreamer:
         frame_shape (tuple[int, int]): The (width, height) of the video frames.
     """
 
-    def __init__(self, url: str) -> None:
-        """Initializes the VideoStreamer.
+    def __init__(self, url: str, cap: cv2.VideoCapture) -> None:
+        """Initializes the VideoStreamer. Private, use `create`.
 
         Args:
             url: The direct, playable video stream URL.
-
-        Raises:
-            RuntimeError: If the video stream cannot be opened.
+            cap: An opened `cv2.VideoCapture` instance.
         """
         self.url = url
-        self.cap = cv2.VideoCapture(url)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Could not open video stream at {url}")
-
+        self.cap = cap
         self.framerate = self.cap.get(cv2.CAP_PROP_FPS) or settings.default_framerate
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -121,6 +116,31 @@ class VideoStreamer:
         )
         self.video_saver.start()
         logger.info(f"VideoStreamer initialized for backend '{self.backend}' at {self.framerate} FPS.")
+
+    @classmethod
+    async def create(cls, url: str) -> VideoStreamer:
+        """Creates and asynchronously initializes a VideoStreamer instance.
+
+        This factory method runs the blocking `cv2.VideoCapture` operation in
+        a separate thread to avoid stalling the event loop.
+
+        Args:
+            url: The direct, playable video stream URL.
+
+        Returns:
+            A fully initialized VideoStreamer instance.
+
+        Raises:
+            RuntimeError: If the video stream cannot be opened.
+        """
+        loop = asyncio.get_running_loop()
+        # Run the blocking VideoCapture call in an executor
+        cap = await loop.run_in_executor(None, cv2.VideoCapture, url)
+
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video stream at {url}")
+
+        return cls(url=url, cap=cap)
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray | cv2.UMat | cv2.cuda.GpuMat:
         """Prepares a raw frame for the selected processing backend.

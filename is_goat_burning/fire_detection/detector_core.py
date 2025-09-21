@@ -19,6 +19,7 @@ import numpy as np
 from is_goat_burning.fire_detection.detectors import FireDetector
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
+from is_goat_burning.logger import get_logger
 from is_goat_burning.stream import VideoStreamer
 from is_goat_burning.stream import YouTubeStream
 
@@ -28,6 +29,8 @@ from is_goat_burning.stream import YouTubeStream
 DEFAULT_DETECTION_THRESHOLD = 0.05
 DEFAULT_LOWER_HSV_FIRE = np.array([18, 50, 50], dtype="uint8")
 DEFAULT_UPPER_HSV_FIRE = np.array([35, 255, 255], dtype="uint8")
+
+logger = get_logger("FireDetector")
 
 
 class StreamFireDetector:
@@ -83,7 +86,7 @@ class StreamFireDetector:
         # Resolve the stream URL
         resolver = YouTubeStream(url=src)
         stream_url = await resolver.resolve_url()
-        instance.stream = VideoStreamer(url=stream_url)
+        instance.stream = await VideoStreamer.create(url=stream_url)
 
         # Create the appropriate detector
         lower = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
@@ -126,6 +129,14 @@ class StreamFireDetector:
         output if enabled.
         """
         assert self.stream is not None and self.fire_detector is not None
+
+        if self.video_output:
+            logger.warning(
+                "VIDEO_OUTPUT is enabled. This is a debug-only feature that runs blocking GUI "
+                "code in the main asyncio event loop. It will severely degrade performance and "
+                "may cause other concurrent tasks (e.g., notifications) to fail. "
+                "Use only for local debugging."
+            )
 
         try:
             loop = asyncio.get_running_loop()
