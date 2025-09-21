@@ -41,8 +41,9 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False) ->
 def test_create_actions_instantiates_email_action_when_enabled() -> None:
     """Verifies `_create_actions` returns only SendEmail when enabled."""
     mock_settings = create_mock_settings(use_emails=True)
+    app_instance = Application()  # Create an instance to call the method on
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        actions = app_instance._create_actions()
 
     assert len(actions) == 1
     action_class, kwargs = actions[0]
@@ -54,8 +55,9 @@ def test_create_actions_instantiates_email_action_when_enabled() -> None:
 def test_create_actions_instantiates_discord_action_when_enabled() -> None:
     """Verifies `_create_actions` returns only SendToDiscord when enabled."""
     mock_settings = create_mock_settings(use_discord=True)
+    app_instance = Application()
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        actions = app_instance._create_actions()
 
     assert len(actions) == 1
     action_class, kwargs = actions[0]
@@ -66,8 +68,9 @@ def test_create_actions_instantiates_discord_action_when_enabled() -> None:
 def test_create_actions_instantiates_both_actions_when_enabled() -> None:
     """Verifies `_create_actions` returns both actions when both are enabled."""
     mock_settings = create_mock_settings(use_emails=True, use_discord=True)
+    app_instance = Application()
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        actions = app_instance._create_actions()
 
     assert len(actions) == 2
     action_classes = {action[0] for action in actions}
@@ -77,7 +80,8 @@ def test_create_actions_instantiates_both_actions_when_enabled() -> None:
 def test_create_actions_instantiates_no_actions_when_disabled() -> None:
     """Verifies `_create_actions` returns an empty list when no actions are enabled."""
     mock_settings = create_mock_settings()
+    app_instance = Application()
     with patch("is_goat_burning.app.settings", mock_settings):
-        actions = Application._create_actions()
+        actions = app_instance._create_actions()
 
     assert len(actions) == 0

@@ -1,5 +1,7 @@
 """The main application class that orchestrates the fire detection process."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
 from typing import Any
@@ -31,15 +33,11 @@ class Application:
         self.action_manager_task: asyncio.Task | None = None
 
     @classmethod
-    async def create(cls) -> "Application":
+    async def create(cls) -> Application:
         """Creates and asynchronously initializes an Application instance."""
         instance = cls()
 
-        # Setup actions
-        on_fire_actions = instance._create_actions()
-        instance.on_fire_action_handler = OnceAction(on_fire_actions)
-
-        # Setup detector
+        # Asynchronously create the main detector dependency
         instance.detector = await StreamFireDetector.create(
             src=settings.source,
             threshold=settings.fire_detection_threshold,
@@ -47,10 +45,14 @@ class Application:
             on_fire_action=instance._queue_fire_event,
             checks_per_second=settings.checks_per_second,
         )
+
+        # Setup synchronous components
+        on_fire_actions = instance._create_actions()
+        instance.on_fire_action_handler = OnceAction(on_fire_actions)
+
         return instance
 
-    @staticmethod
-    def _create_actions() -> list[tuple[type | Callable[..., Any], dict[str, Any]]]:
+    def _create_actions(self) -> list[tuple[type | Callable[..., Any], dict[str, Any]]]:
         """Builds a list of notification actions based on settings."""
         actions: list[tuple[type | Callable[..., Any], dict[str, Any]]] = []
         if settings.email.use_emails:

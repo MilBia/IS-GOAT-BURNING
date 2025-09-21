@@ -35,10 +35,9 @@ async def main(sender: str, sender_password: str, *recipients: str) -> None:
         ]
     )
 
-    detector = StreamFireDetector(
+    detector = await StreamFireDetector.create(
         src="https://youtu.be/TqvguE5cKT0",
         threshold=0.1,
-        logging=False,
         video_output=False,
         on_fire_action=on_fire_action,
         checks_per_second=1,

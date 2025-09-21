@@ -45,6 +45,8 @@ async def test_app_detects_fire_and_triggers_action(
     # 3. Create pure, in-memory settings for the test.
     test_settings = Settings(
         source="mock://source",
+        log_level="CRITICAL",
+        default_framerate=30.0,
         email=EmailSettings(use_emails=False),
         discord=DiscordSettings(use_discord=False),
         video=VideoSettings(save_video_chunks=False),
@@ -84,6 +86,8 @@ async def test_app_does_not_detect_fire_and_remains_silent(
     # 2. Create pure settings.
     test_settings = Settings(
         source="mock://source",
+        log_level="CRITICAL",
+        default_framerate=30.0,
         email=EmailSettings(use_emails=False),
         discord=DiscordSettings(use_discord=False),
         video=VideoSettings(save_video_chunks=False),

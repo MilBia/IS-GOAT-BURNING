@@ -5,15 +5,13 @@ import sys
 
 from is_goat_burning.config import settings
 
-LOG_LEVEL = "INFO" if settings.logging else "WARNING"
-
 # The standard handler will be configured by the Application.
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Creates and configures a standard logger instance.
+    """Creates and or configures a standard logger instance.
 
     Args:
         name: The name for the logger, typically `__name__`.
@@ -23,7 +21,7 @@ def get_logger(name: str) -> logging.Logger:
     """
     logger = logging.getLogger(name)
     if not logger.handlers:
-        logger.setLevel(LOG_LEVEL)
+        logger.setLevel(settings.log_level.upper())
         logger.addHandler(_handler)
         logger.propagate = False
     return logger

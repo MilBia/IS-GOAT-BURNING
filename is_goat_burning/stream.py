@@ -7,7 +7,6 @@ frame grabbing and processing.
 
 import asyncio
 from collections.abc import AsyncGenerator
-from functools import partial
 from typing import Any
 from typing import ClassVar
 from typing import Literal
@@ -23,7 +22,6 @@ from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunk
 logger = get_logger("Stream")
 
 # --- Constants ---
-DEFAULT_FRAMERATE = 30.0
 Backend = Literal["cpu", "cuda", "opencl"]
 
 
@@ -57,15 +55,19 @@ class YouTubeStream:
             ValueError: If the stream URL cannot be resolved.
         """
         loop = asyncio.get_running_loop()
-        try:
-            # Use functools.partial to pass arguments to the executor function
-            extractor = partial(yt_dlp.YoutubeDL, self.YTDLP_OPTIONS)
-            with await loop.run_in_executor(None, extractor) as ydl:
-                info = await loop.run_in_executor(None, ydl.extract_info, self.url, False)
+
+        def _blocking_extract(url: str, options: dict[str, Any]) -> str:
+            """Create, use, and destroy the ydl object in one thread."""
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(url, download=False)
                 if not info or "url" not in info:
                     raise ValueError("Could not extract stream URL.")
-                logger.info(f"Successfully resolved stream URL for {self.url}")
                 return info["url"]
+
+        try:
+            stream_url = await loop.run_in_executor(None, _blocking_extract, self.url, self.YTDLP_OPTIONS)
+            logger.info(f"Successfully resolved stream URL for {self.url}")
+            return stream_url
         except Exception as e:
             logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
             raise ValueError("Failed to resolve stream URL.") from e
@@ -101,7 +103,7 @@ class VideoStreamer:
         if not self.cap.isOpened():
             raise RuntimeError(f"Could not open video stream at {url}")
 
-        self.framerate = self.cap.get(cv2.CAP_PROP_FPS) or DEFAULT_FRAMERATE
+        self.framerate = self.cap.get(cv2.CAP_PROP_FPS) or settings.default_framerate
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame_shape = (width, height)

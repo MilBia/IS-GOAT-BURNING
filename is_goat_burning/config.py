@@ -121,9 +121,10 @@ class Settings(BaseSettings):
 
     source: str = Field(validation_alias="SOURCE")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
-    logging: bool = Field(validation_alias="LOGGING", default=True)
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)
+    default_framerate: float = Field(default=30.0, validation_alias="DEFAULT_FRAMERATE")
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
 
