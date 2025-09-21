@@ -7,8 +7,7 @@ frame grabbing and processing.
 
 import asyncio
 from collections.abc import AsyncGenerator
-from typing import Any
-from typing import ClassVar
+from functools import partial
 from typing import Literal
 
 import cv2
@@ -28,11 +27,6 @@ Backend = Literal["cpu", "cuda", "opencl"]
 class YouTubeStream:
     """Resolves a YouTube URL to a direct, playable video stream URL."""
 
-    YTDLP_OPTIONS: ClassVar[dict[str, Any]] = {
-        "format": "bestvideo/best",  # TODO: Add option to chose an format in .env file
-        "quiet": True,
-    }
-
     def __init__(self, url: str) -> None:
         """Initializes the YouTubeStream resolver.
 
@@ -40,6 +34,10 @@ class YouTubeStream:
             url: The public URL of the YouTube video or live stream.
         """
         self.url = url
+        self.ytdlp_options = {
+            "format": settings.ytdlp_format,
+            "quiet": True,
+        }
 
     async def resolve_url(self) -> str:
         """Resolves the YouTube URL to a direct, playable video stream URL.
@@ -55,19 +53,15 @@ class YouTubeStream:
             ValueError: If the stream URL cannot be resolved.
         """
         loop = asyncio.get_running_loop()
-
-        def _blocking_extract(url: str, options: dict[str, Any]) -> str:
-            """Create, use, and destroy the ydl object in one thread."""
-            with yt_dlp.YoutubeDL(options) as ydl:
-                info = ydl.extract_info(url, download=False)
+        try:
+            # Use functools.partial to pass arguments to the executor function
+            extractor = partial(yt_dlp.YoutubeDL, self.ytdlp_options)
+            with await loop.run_in_executor(None, extractor) as ydl:
+                info = await loop.run_in_executor(None, ydl.extract_info, self.url, False)
                 if not info or "url" not in info:
                     raise ValueError("Could not extract stream URL.")
+                logger.info(f"Successfully resolved stream URL for {self.url}")
                 return info["url"]
-
-        try:
-            stream_url = await loop.run_in_executor(None, _blocking_extract, self.url, self.YTDLP_OPTIONS)
-            logger.info(f"Successfully resolved stream URL for {self.url}")
-            return stream_url
         except Exception as e:
             logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
             raise ValueError("Failed to resolve stream URL.") from e
