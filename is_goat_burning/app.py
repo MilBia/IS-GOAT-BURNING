@@ -64,11 +64,13 @@ class Application:
         while True:
             try:
                 event = await self.action_queue.get()
-                if event == "FIRE":
-                    logger.info("Action manager received FIRE event. Triggering actions.")
-                    if self.on_fire_action_handler:
-                        await self.on_fire_action_handler()
-                self.action_queue.task_done()
+                try:
+                    if event == "FIRE":
+                        logger.info("Action manager received FIRE event. Triggering actions.")
+                        if self.on_fire_action_handler:
+                            await self.on_fire_action_handler()
+                finally:
+                    self.action_queue.task_done()
             except asyncio.CancelledError:
                 logger.info("Action manager task is shutting down.")
                 break

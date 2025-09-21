@@ -89,6 +89,10 @@ class StreamFireDetector:
         stream_url = await resolver.resolve_url()
         instance.stream = await VideoStreamer.create(url=stream_url)
 
+        # This assertion helps static analysis tools understand that `instance.stream`
+        # is guaranteed to be initialized before it is used below.
+        assert instance.stream is not None
+
         # Create the appropriate detector
         lower = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
         upper = upper_hsv if upper_hsv is not None else DEFAULT_UPPER_HSV_FIRE

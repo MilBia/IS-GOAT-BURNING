@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import ClassVar
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field
@@ -122,7 +123,7 @@ class Settings(BaseSettings):
 
     source: str = Field(validation_alias="SOURCE")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
-    log_level: str = Field(default="INFO", validation_alias="LOGGING")
+    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)
     default_framerate: float = Field(default=30.0, validation_alias="DEFAULT_FRAMERATE")
