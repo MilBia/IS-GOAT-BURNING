@@ -26,7 +26,13 @@ def saver() -> Generator[tuple[AsyncVideoChunkSaver, MagicMock], None, None]:
         A tuple containing the configured `AsyncVideoChunkSaver` instance and
         the mock for `os.makedirs`.
     """
-    with patch("os.makedirs") as mock_mkdir:
+    with (
+        patch("os.makedirs") as mock_mkdir,
+        patch("is_goat_burning.stream_recording.save_stream_to_file.settings") as mock_settings,
+    ):
+        # Default to 'disk' mode for existing tests
+        mock_settings.video.buffer_mode = "disk"
+
         saver_instance = AsyncVideoChunkSaver(
             enabled=True,
             output_dir="test_output",
@@ -38,6 +44,30 @@ def saver() -> Generator[tuple[AsyncVideoChunkSaver, MagicMock], None, None]:
         yield saver_instance, mock_mkdir
 
 
+@pytest.fixture
+def memory_mode_saver(mocker: MockerFixture) -> tuple[AsyncVideoChunkSaver, MagicMock, MagicMock, MagicMock]:
+    """Provides a fully configured and mocked saver for memory mode testing."""
+    mock_settings = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings")
+    mock_settings.video.buffer_mode = "memory"
+    mock_settings.video.chunks_to_keep_after_fire = 2
+
+    flush_mock = mocker.patch(
+        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
+    )
+    write_mock = mocker.patch(
+        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking",
+        side_effect=[None, "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"],
+    )
+    mocker.patch("os.makedirs")
+
+    saver = AsyncVideoChunkSaver(
+        enabled=True, output_dir="test_output", chunk_length_seconds=1, max_chunks=3, chunks_to_keep_after_fire=2, fps=30
+    )
+    mock_archive_put = mocker.patch.object(saver.archive_queue, "put_nowait")
+
+    return saver, flush_mock, write_mock, mock_archive_put
+
+
 def test_write_frame_blocking_creates_and_rotates_chunks() -> None:
     """Tests the synchronous logic for creating, rotating, and cleaning up chunks.
 
@@ -47,7 +77,8 @@ def test_write_frame_blocking_creates_and_rotates_chunks() -> None:
     """
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-    with patch("os.makedirs"):
+    with patch("os.makedirs"), patch("is_goat_burning.stream_recording.save_stream_to_file.settings") as mock_settings:
+        mock_settings.video.buffer_mode = "disk"
         saver = AsyncVideoChunkSaver(
             enabled=True,
             output_dir="test_output",
@@ -136,42 +167,25 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver: tuple[Asyn
 
 
 @pytest.mark.asyncio
-async def test_memory_mode_fire_handler_flushes_and_switches_mode(mocker: MockerFixture) -> None:
+async def test_memory_mode_fire_handler_flushes_and_switches_mode(
+    mocker: MockerFixture, memory_mode_saver: tuple[AsyncVideoChunkSaver, MagicMock, MagicMock, MagicMock]
+) -> None:
     """Tests that the memory mode fire handler flushes, switches mode, and saves post-fire chunks."""
+    saver, flush_mock, write_mock, mock_archive_put = memory_mode_saver
+
     # --- Setup ---
-    mock_settings = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings")
-    mock_settings.video.buffer_mode = "memory"
-    mock_settings.video.chunks_to_keep_after_fire = 2
-
-    flush_mock = mocker.patch(
-        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
-    )
-    write_mock = mocker.patch(
-        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking",
-        side_effect=[None, "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"],
-    )
-    mocker.patch("os.makedirs")
-
-    saver = AsyncVideoChunkSaver(
-        enabled=True, output_dir="test_output", chunk_length_seconds=1, max_chunks=3, chunks_to_keep_after_fire=2, fps=30
-    )
-
     # Populate the memory buffer and assert the initial state
     pre_fire_frames = [np.zeros((1, 1, 3), dtype=np.uint8) for _ in range(5)]
     for frame in pre_fire_frames:
         saver(frame)
     assert saver.memory_buffer is not None and len(saver.memory_buffer) == 5
-    # CORRECTED ASSERTION: Check the name of the underlying function.
     assert saver.__call__.__func__.__name__ == "_add_frame_to_memory_buffer"
 
     # Pre-populate the frame queue for the post-fire recording part
     for _ in range(3):
         await saver.frame_queue.put(np.ones((1, 1, 3), dtype=np.uint8))
 
-    mock_archive_put = mocker.patch.object(saver.archive_queue, "put_nowait")
-
     # --- Execution ---
-    # Directly call the handler, not the entire run loop
     await saver._handle_fire_event_async()
 
     # --- Assertions ---

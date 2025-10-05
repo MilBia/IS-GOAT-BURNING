@@ -96,10 +96,11 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
 | `VIDEO__VIDEO_OUTPUT_DIRECTORY` | Directory to save video files. | `"./recordings"` |
-| `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds (e.g., 300 = 5 min). | `300` |
-| `VIDEO__MAX_VIDEO_CHUNKS` | Max number of chunks to keep (old ones are deleted). | `20` |
-| `VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE` | Number of extra chunks to save *after* a fire is detected. | `10` |
 | `VIDEO__BUFFER_MODE` | Buffering strategy: `disk` (constant saving) or `memory`. | `"disk"` |
+| `VIDEO__MEMORY_BUFFER_SECONDS`| Duration (seconds) of pre-fire footage to keep in RAM in `memory` mode. | `60` |
+| `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds for `disk` mode. | `300` |
+| `VIDEO__MAX_VIDEO_CHUNKS` | Max number of `disk` chunks to keep (old ones are deleted). | `20` |
+| `VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE` | Number of extra chunks to save *after* a fire is detected. | `10` |
 
 
 **Important Notes**:
@@ -109,7 +110,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 -   **CUDA:** `CUDA=true` requires a compatible NVIDIA GPU and properly installed drivers. See the Docker section for setup instructions.
 -   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
     -   `disk` (default): Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
-    -   `memory`: Holds the most recent video chunk in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file, and then subsequent "post-fire" chunks are saved directly to disk. **This mode significantly reduces disk I/O but increases RAM usage.** The amount of RAM needed is proportional to the `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` and the video resolution/framerate.
+    -   `memory`: Holds a buffer of recent video frames in RAM, controlled by `VIDEO__MEMORY_BUFFER_SECONDS`. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and the video's resolution/framerate.
 
 ## HOW TO RUN
 

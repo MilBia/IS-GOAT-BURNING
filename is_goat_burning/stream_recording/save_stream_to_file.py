@@ -102,7 +102,7 @@ class AsyncVideoChunkSaver:
         buffer_mode = settings.video.buffer_mode
         if buffer_mode == "memory":
             logger.info("Video saver initializing in MEMORY buffer mode.")
-            buffer_size = int(self.chunk_length_seconds * self.fps)
+            buffer_size = int(settings.video.memory_buffer_seconds * self.fps)
             self.memory_buffer = deque(maxlen=buffer_size)
             self.__call__ = self._add_frame_to_memory_buffer
         elif buffer_mode == "disk":
@@ -135,19 +135,19 @@ class AsyncVideoChunkSaver:
         if not self.enabled:
             return
 
-        tasks_to_await = []
+        tasks = []
         if self._main_task and not self._main_task.done():
-            # In disk mode, the main task waits on the queue. In memory mode, it
-            # sleeps. Cancelling is a reliable way to stop both.
             self._main_task.cancel()
-            tasks_to_await.append(asyncio.shield(self._main_task))
+            tasks.append(self._main_task)
 
         if self._archive_task and not self._archive_task.done():
+            # The archive task waits on a queue, so putting None is a clean
+            # way to make it exit its loop before we gather it.
             await self.archive_queue.put(None)
-            tasks_to_await.append(asyncio.shield(self._archive_task))
+            tasks.append(self._archive_task)
 
-        if tasks_to_await:
-            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _noop(self, *args: Any, **kwargs: Any) -> None:
         """A "no-operation" method used when the saver is disabled."""
@@ -362,20 +362,30 @@ class AsyncVideoChunkSaver:
             chunk_path, event_dir = item
             await loop.run_in_executor(None, self._move_file_blocking, chunk_path, event_dir)
 
-    async def _handle_fire_event_async(self) -> None:
-        """Orchestrates the archiving of pre-fire and post-fire chunks."""
-        logger.warning("FIRE EVENT TRIGGERED! Archiving will occur in the background.")
+    async def _create_event_directory(self) -> str | None:
+        """Creates a timestamped directory for a fire event.
+
+        Returns:
+            The path to the created directory, or None if creation failed.
+        """
         event_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         event_dir = os.path.join(self.output_dir, f"event_{event_timestamp}")
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self.makedirs_callable, event_dir)
             logger.info(f"Created event archive directory: {event_dir}")
+            return event_dir
         except OSError as e:
             logger.error(f"Could not create event directory {event_dir}: {e}. Aborting archive.")
+            return None
+
+    async def _handle_fire_event_async(self) -> None:
+        """Orchestrates the archiving of pre-fire and post-fire chunks."""
+        logger.warning("FIRE EVENT TRIGGERED! Archiving will occur in the background.")
+        event_dir = await self._create_event_directory()
+        if not event_dir:
             return
 
-        # Disable disk cleanup during event handling
         original_cleanup_action = self.chunk_limit_action
         self.chunk_limit_action = self._noop
 
@@ -385,12 +395,12 @@ class AsyncVideoChunkSaver:
             else:  # 'disk' mode
                 await self._handle_disk_mode_fire_event(event_dir)
         finally:
-            # Restore normal chunk rotation policy
             self.chunk_limit_action = original_cleanup_action
             logger.info("Fire event handled. Restoring normal chunk rotation policy.")
 
     async def _handle_disk_mode_fire_event(self, event_dir: str) -> None:
         """Handles the fire event for 'disk' buffering mode."""
+        # Archive all chunks currently in the buffer except the active one.
         cold_chunks = list(self.pre_fire_buffer)[:-1]
         logger.info(f"Queueing {len(cold_chunks)} pre-fire chunks for archiving.")
         for path in cold_chunks:
@@ -404,28 +414,31 @@ class AsyncVideoChunkSaver:
 
     async def _handle_memory_mode_fire_event(self, event_dir: str) -> None:
         """Handles the fire event for 'memory' buffering mode."""
-        loop = asyncio.get_running_loop()
-        if self.memory_buffer is None:
-            logger.error("Memory buffer not initialized, cannot handle fire event.")
-            return
-
-        # Immediately get a copy and clear the buffer to start collecting
-        # post-fire frames while the pre-fire buffer is being written.
-        frames_to_flush = self.memory_buffer.copy()
-        self.memory_buffer.clear()
-        logger.info(f"Captured {len(frames_to_flush)} pre-fire frames from memory.")
-
-        # Define path and flush the buffer to disk in the background.
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        pre_fire_path = os.path.join(event_dir, f"pre-fire-buffer_{timestamp}{self.FILENAME_SUFFIX}")
-        await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
+        await self._flush_and_archive_memory_buffer(event_dir)
 
         # Switch to disk mode to capture post-fire chunks.
         logger.info("Switching to disk mode for post-fire recording.")
         self.__call__ = self._queue_frame
 
-        # Now, save the post-fire chunks.
         await self._save_post_fire_chunks_async(event_dir)
+
+    async def _flush_and_archive_memory_buffer(self, event_dir: str) -> None:
+        """Flushes the in-memory frame buffer to a file in the event directory."""
+        if self.memory_buffer is None:
+            logger.error("Memory buffer not initialized, cannot handle fire event.")
+            return
+
+        frames_to_flush = self.memory_buffer.copy()
+        self.memory_buffer.clear()
+        logger.info(f"Captured {len(frames_to_flush)} pre-fire frames from memory.")
+
+        if not frames_to_flush:
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        pre_fire_path = os.path.join(event_dir, f"pre-fire-buffer_{timestamp}{self.FILENAME_SUFFIX}")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
 
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
         """Continues recording until the currently active chunk is finished."""
