@@ -272,14 +272,16 @@ class AsyncVideoChunkSaver:
     async def _memory_mode_event_loop(self) -> None:
         """The main event loop when operating in 'memory' buffer mode.
 
-        This loop does not perform any I/O. It periodically checks for the
-        global fire signal and triggers the event handling logic when it's set.
+        This loop waits efficiently for the fire signal and triggers the
+        event handling logic when it is set.
         """
         while True:
-            if self.signal_handler.is_fire_detected():
-                await self._handle_fire_event_async()
-                self.reset_after_fire()
-            await asyncio.sleep(0.1)
+            # This will suspend the task indefinitely until the event is set.
+            await self.signal_handler.fire_detected_event.wait()
+
+            # Once the event is set, we proceed to handle it.
+            await self._handle_fire_event_async()
+            self.reset_after_fire()
 
     async def _writer_task(self) -> None:
         """The main consumer task that writes frames from the queue to disk."""
