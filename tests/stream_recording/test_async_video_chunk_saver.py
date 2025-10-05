@@ -50,6 +50,7 @@ def memory_mode_saver(mocker: MockerFixture) -> tuple[AsyncVideoChunkSaver, Magi
     mock_settings = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings")
     mock_settings.video.buffer_mode = "memory"
     mock_settings.video.chunks_to_keep_after_fire = 2
+    mock_settings.video.memory_buffer_seconds = 5
 
     flush_mock = mocker.patch(
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
@@ -61,7 +62,7 @@ def memory_mode_saver(mocker: MockerFixture) -> tuple[AsyncVideoChunkSaver, Magi
     mocker.patch("os.makedirs")
 
     saver = AsyncVideoChunkSaver(
-        enabled=True, output_dir="test_output", chunk_length_seconds=1, max_chunks=3, chunks_to_keep_after_fire=2, fps=30
+        enabled=True, output_dir="test_output", chunk_length_seconds=1, max_chunks=3, chunks_to_keep_after_fire=2, fps=1
     )
     mock_archive_put = mocker.patch.object(saver.archive_queue, "put_nowait")
 
@@ -174,15 +175,19 @@ async def test_memory_mode_fire_handler_flushes_and_switches_mode(
     saver, flush_mock, write_mock, mock_archive_put = memory_mode_saver
 
     # --- Setup ---
+    # The buffer size is now controlled by the fixture (5 seconds * 1 fps = 5 frames)
+    NUM_PRE_FIRE_FRAMES = 5
+    NUM_POST_FIRE_FRAMES_TO_QUEUE = 3
+
     # Populate the memory buffer and assert the initial state
-    pre_fire_frames = [np.zeros((1, 1, 3), dtype=np.uint8) for _ in range(5)]
+    pre_fire_frames = [np.zeros((1, 1, 3), dtype=np.uint8) for _ in range(NUM_PRE_FIRE_FRAMES)]
     for frame in pre_fire_frames:
         saver(frame)
-    assert saver.memory_buffer is not None and len(saver.memory_buffer) == 5
+    assert saver.memory_buffer is not None and len(saver.memory_buffer) == NUM_PRE_FIRE_FRAMES
     assert saver.__call__.__func__.__name__ == "_add_frame_to_memory_buffer"
 
     # Pre-populate the frame queue for the post-fire recording part
-    for _ in range(3):
+    for _ in range(NUM_POST_FIRE_FRAMES_TO_QUEUE):
         await saver.frame_queue.put(np.ones((1, 1, 3), dtype=np.uint8))
 
     # --- Execution ---
@@ -192,14 +197,14 @@ async def test_memory_mode_fire_handler_flushes_and_switches_mode(
     # 1. Assert pre-fire buffer was flushed with the correct frames
     flush_mock.assert_called_once()
     flushed_frames = flush_mock.call_args[0][0]
-    assert len(flushed_frames) == 5
+    assert len(flushed_frames) == NUM_PRE_FIRE_FRAMES
     assert saver.memory_buffer is not None and len(saver.memory_buffer) == 0
 
     # 2. Assert the saver's mode was switched to queue frames for disk writing
     assert saver.__call__.__func__.__name__ == "_queue_frame"
 
     # 3. Assert post-fire chunks were written (by checking the mock)
-    assert write_mock.call_count == 3
+    assert write_mock.call_count == NUM_POST_FIRE_FRAMES_TO_QUEUE
 
     # 4. Assert the completed post-fire chunks were queued for archiving
     assert mock_archive_put.call_count == 2
