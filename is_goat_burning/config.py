@@ -106,7 +106,7 @@ class VideoSettings(BaseModel):
     video_chunk_length_seconds: int = Field(default=300)
     max_video_chunks: int = Field(default=20)
     chunks_to_keep_after_fire: int = Field(default=10)
-    buffer_mode: Literal["disk", "memory"] = Field(default="disk")
+    buffer_mode: Literal["disk", "memory"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
 
     @model_validator(mode="after")

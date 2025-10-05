@@ -280,16 +280,20 @@ class AsyncVideoChunkSaver:
             await self.signal_handler.fire_detected_event.wait()
 
             # Once the event is set, we proceed to handle it.
-            await self._handle_fire_event_async()
-            self.reset_after_fire()
+            try:
+                await self._handle_fire_event_async()
+            finally:
+                self.reset_after_fire()
 
     async def _writer_task(self) -> None:
         """The main consumer task that writes frames from the queue to disk."""
         loop = asyncio.get_running_loop()
         while True:
             if self.signal_handler.is_fire_detected():
-                await self._handle_fire_event_async()
-                self.reset_after_fire()
+                try:
+                    await self._handle_fire_event_async()
+                finally:
+                    self.reset_after_fire()
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
                 if frame is None:
@@ -443,7 +447,14 @@ class AsyncVideoChunkSaver:
         await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
 
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
-        """Continues recording until the currently active chunk is finished."""
+        """Continues recording until the currently active chunk is finished.
+
+        Once the active chunk (the one being written to when the fire was
+        detected) is closed, it is queued for archiving.
+
+        Args:
+            event_dir: The destination directory for the archive.
+        """
         logger.info("Finalizing the video chunk active during fire detection...")
         loop = asyncio.get_running_loop()
         timeout_retries = 0
@@ -469,7 +480,11 @@ class AsyncVideoChunkSaver:
                     return
 
     async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves a configured number of additional chunks after a fire event."""
+        """Saves a configured number of additional chunks after a fire event.
+
+        Args:
+            event_dir: The destination directory for the archive.
+        """
         if self.chunks_to_keep_after_fire <= 0:
             return
 
