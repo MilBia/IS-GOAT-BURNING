@@ -67,39 +67,49 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
     cp .env.example .env
     ```
 
-2.  Edit the `.env` file and fill in your configuration details.  Here's a breakdown of each setting:
+2.  Edit the `.env` file and fill in your configuration details. Here's a breakdown of each setting:
 
-    ```
-    SOURCE="https://youtu.be/vDFPpkp9krY"                            # URL of the webcam feed
-    USE_EMAILS=true                                                  # Set to true if you want email notifications
-    SENDER="your_email@example.com"                                  # Your email address
-    SENDER_PASSWORD="your_email_password"                            # Your email password or an app password for Gmail
-    RECIPIENTS="recipient1@example.com,recipient2@example.com"       # Comma-separated list of email addresses to notify
-    EMAIL_HOST="smtp.gmail.com"                                      # Your email host (e.g., smtp.gmail.com)
-    EMAIL_PORT=587                                                   # Your email port (e.g., 587 for Gmail)
-    USE_DISCORD=true                                                 # Set to true if you want Discord notifications
-    DISCORD_HOOKS="/webhooks/webhooks/{webhook.id}/{webhook.token}"  # Your discord webhook URL.  See Discord documentation for how to create one.
-    LOGGING=true                                                     # Enable or disable logging
-    VIDEO_OUTPUT=true                                                # Display detected video frames (true) or not (false)
-    CHECKS_PER_SECOND=1.0                                            # How many times to check per second (adjust for performance)
-    OPEN_CL=false                                                    # Enable or disable use of OpenCL for faster processing (experimental)
-    CUDA=false                                                       # Enable or disable use of CUDA for faster processing
-    SAVE_VIDEO_CHUNKS=false                                          # Set to true to save video chunks to disk
-    VIDEO_OUTPUT_DIRECTORY="./recordings"                            # Directory to save the video files
-    VIDEO_CHUNK_LENGTH_SECONDS=300                                   # Length of each video chunk in seconds (e.g., 300 = 5 minutes)
-    MAX_VIDEO_CHUNKS=20                                              # Maximum number of video chunks to keep on disk. Set to 0 or less to disable.
-    CHUNKS_TO_KEEP_AFTER_FIRE=10                                     # Number of additional chunks to save AFTER a fire is first detected.
-    ```
+| Variable | Description | Default |
+| --- | --- | --- |
+| `SOURCE` | URL of the webcam feed. | `"https://youtu.be/vDFPpkp9krY"` |
+| `FIRE_DETECTION_THRESHOLD` | Percentage of frame pixels to trigger fire detection. | `0.1` |
+| `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
+| `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
+| `CHECKS_PER_SECOND` | How many times per second to analyze the video. | `1.0` |
+| `OPEN_CL` | Enable OpenCL for acceleration (experimental). | `false` |
+| `CUDA` | Enable CUDA for NVIDIA GPU acceleration. | `false` |
+| `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
+| `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
+| | | |
+| **Email Settings** | | |
+| `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |
+| `EMAIL__SENDER` | Your sender email address. | `""` |
+| `EMAIL__SENDER_PASSWORD` | Your email password or app password. | `""` |
+| `EMAIL__RECIPIENTS` | Comma-separated list of recipient emails. | `""` |
+| `EMAIL__EMAIL_HOST` | SMTP server host (e.g., `smtp.gmail.com`). | `""` |
+| `EMAIL__EMAIL_PORT` | SMTP server port (e.g., `587`). | `""` |
+| | | |
+| **Discord Settings** | | |
+| `DISCORD__USE_DISCORD` | Set to `true` to enable Discord notifications. | `false` |
+| `DISCORD__HOOKS` | Comma-separated list of Discord webhook URLs. | `""` |
+| | | |
+| **Video Archiving** | | |
+| `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
+| `VIDEO__VIDEO_OUTPUT_DIRECTORY` | Directory to save video files. | `"./recordings"` |
+| `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds (e.g., 300 = 5 min). | `300` |
+| `VIDEO__MAX_VIDEO_CHUNKS` | Max number of chunks to keep (old ones are deleted). | `20` |
+| `VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE` | Number of extra chunks to save *after* a fire is detected. | `10` |
+| `VIDEO__BUFFER_MODE` | Buffering strategy: `disk` (constant saving) or `memory`. | `"disk"` |
 
-**Important**:
 
--   **Email Configuration Notes:**
-    -   For Gmail, you *must* generate an "App Password" in your Google account settings (Security -> App Passwords) and use that instead of your regular password.  Enable "Less secure app access" is usually *not* sufficient anymore and is a security risk.
-    -   For other email providers, consult their documentation for the correct `EMAIL_HOST` and `EMAIL_PORT` settings.
--   OpenCL (`OPEN_CL=true`) for faster processing is experimental and requires `VIDEO_OUTPUT=false`.
--   When using Docker, setting `VIDEO_OUTPUT` to `false` is necessary if you are running in a headless environment (without a display).  Otherwise, you will need to configure X11 forwarding, which is beyond the scope of this README.
--   **CUDA (`CUDA=true`) provides significant performance improvements when using an NVIDIA GPU. It requires NVIDIA GPU with CUDA drivers installed and a CUDA-enabled build of OpenCV.**  See the Docker section below for detailed instructions on setting up CUDA in Docker.  If you set `CUDA=true` without proper CUDA setup, the application will likely crash or fail to detect fire.
--   Ensure your `CUDA_ARCH_BIN` is set to your appropriate compute capability.
+**Important Notes**:
+
+-   **Email Configuration:** For Gmail, you *must* generate an "App Password" in your Google account settings. Using your regular password is a security risk and may not work.
+-   **Video Output:** `VIDEO_OUTPUT=true` is for local debugging only. Do not use it in a headless or Docker environment without X11 forwarding.
+-   **CUDA:** `CUDA=true` requires a compatible NVIDIA GPU and properly installed drivers. See the Docker section for setup instructions.
+-   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
+    -   `disk` (default): Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
+    -   `memory`: Holds the most recent video chunk in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file, and then subsequent "post-fire" chunks are saved directly to disk. **This mode significantly reduces disk I/O but increases RAM usage.** The amount of RAM needed is proportional to the `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` and the video resolution/framerate.
 
 ## HOW TO RUN
 

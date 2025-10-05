@@ -93,6 +93,9 @@ class VideoSettings(BaseModel):
         max_video_chunks: The maximum number of chunks to keep on disk.
         chunks_to_keep_after_fire: The number of extra chunks to save after a
             fire is detected.
+        buffer_mode: The buffering strategy. "disk" saves chunks to disk
+            continuously. "memory" holds frames in RAM and only saves to
+            disk when a fire is detected.
     """
 
     save_video_chunks: bool = Field(default=False)
@@ -100,6 +103,7 @@ class VideoSettings(BaseModel):
     video_chunk_length_seconds: int = Field(default=300)
     max_video_chunks: int = Field(default=20)
     chunks_to_keep_after_fire: int = Field(default=10)
+    buffer_mode: Literal["disk", "memory"] = Field(default="disk")
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
