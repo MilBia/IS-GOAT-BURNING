@@ -1,5 +1,7 @@
 # Is the Gävle Goat Burning?
 
+![Code Coverage](https://raw.githubusercontent.com/MilBia/IS-GOAT-BURNING/main/coverage.svg)
+
 This project monitors the [Gävle Goat webcam](https://youtu.be/vDFPpkp9krY) feed to detect if the goat is on fire. It uses computer vision techniques to analyze the video feed and sends email and/or Discord notifications if fire is detected.
 
 ## Project Overview
@@ -96,7 +98,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
 | `VIDEO__VIDEO_OUTPUT_DIRECTORY` | Directory to save video files. | `"./recordings"` |
-| `VIDEO__BUFFER_MODE` | Buffering strategy: `disk` (constant saving) or `memory`. | `"disk"` |
+| `VIDEO__BUFFER_MODE` | Buffering strategy: `disk` (constant saving) or `memory`. | `"memory"` |
 | `VIDEO__MEMORY_BUFFER_SECONDS`| Duration (seconds) of pre-fire footage to keep in RAM in `memory` mode. | `60` |
 | `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds for `disk` mode. | `300` |
 | `VIDEO__MAX_VIDEO_CHUNKS` | Max number of `disk` chunks to keep (old ones are deleted). | `20` |
