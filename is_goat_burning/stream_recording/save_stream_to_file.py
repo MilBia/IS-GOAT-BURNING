@@ -458,7 +458,7 @@ class AsyncVideoChunkSaver:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        pre_fire_path = os.path.join(event_dir, f"pre-fire-buffer_{timestamp}{self.FILENAME_SUFFIX}")
+        pre_fire_path = os.path.join(event_dir, f"{self.FILENAME_PREFIX}pre-fire-buffer_{timestamp}{self.FILENAME_SUFFIX}")
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
 

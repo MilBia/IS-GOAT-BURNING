@@ -170,15 +170,14 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver: tuple[Asyn
         item2 = await saver_instance.archive_queue.get()
         assert item2 == ("/path/active_chunk_2.mp4", event_dir)
 
-        # 3. Verify post-fire chunks were written directly to the event directory
+        # 3. Verify all chunks (active and post-fire) were written directly to the event directory
         assert write_blocking_mock.call_count == 3
-        # The first call is for the active chunk, without a target_dir
-        # The next calls are for post-fire chunks, which MUST have the target_dir
         expected_calls = [
-            call(frame, event_dir),
-            call(frame, event_dir),
+            call(frame, event_dir),  # From _finalize_active_chunk_async
+            call(frame, event_dir),  # From _save_post_fire_chunks_async
+            call(frame, event_dir),  # From _save_post_fire_chunks_async
         ]
-        write_blocking_mock.assert_has_calls(expected_calls, any_order=False)
+        assert write_blocking_mock.call_args_list == expected_calls
 
 
 @pytest.mark.asyncio
