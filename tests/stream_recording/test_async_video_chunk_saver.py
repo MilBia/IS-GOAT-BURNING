@@ -6,6 +6,7 @@ asynchronous orchestration of the fire event handling mechanism.
 
 from collections.abc import Generator
 from unittest.mock import MagicMock
+from unittest.mock import call
 from unittest.mock import patch
 
 import numpy as np
@@ -56,6 +57,9 @@ def memory_mode_saver(mocker: MockerFixture) -> tuple[AsyncVideoChunkSaver, Magi
     mock_settings.video.chunks_to_keep_after_fire = 2
     mock_settings.video.memory_buffer_seconds = TEST_NUM_PRE_FIRE_FRAMES
 
+    # Patch os.makedirs BEFORE the saver is instantiated
+    mock_makedirs = mocker.patch("os.makedirs")
+
     flush_mock = mocker.patch(
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
     )
@@ -63,14 +67,13 @@ def memory_mode_saver(mocker: MockerFixture) -> tuple[AsyncVideoChunkSaver, Magi
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking",
         side_effect=[None, "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"],
     )
-    mocker.patch("os.makedirs")
 
     saver = AsyncVideoChunkSaver(
         enabled=True, output_dir="test_output", chunk_length_seconds=1, max_chunks=3, chunks_to_keep_after_fire=2, fps=1
     )
-    mock_archive_put = mocker.patch.object(saver.archive_queue, "put_nowait")
+    mocker.patch.object(saver.archive_queue, "put_nowait")
 
-    return saver, flush_mock, write_mock, mock_archive_put
+    return saver, flush_mock, write_mock, mock_makedirs
 
 
 def test_write_frame_blocking_creates_and_rotates_chunks() -> None:
@@ -145,7 +148,7 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver: tuple[Asyn
     for _ in range(3):
         await saver_instance.frame_queue.put(frame)
 
-    write_blocking_mock = MagicMock(side_effect=["/path/active_chunk_2.mp4", "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"])
+    write_blocking_mock = MagicMock(side_effect=["/path/active_chunk_2.mp4", None, None])
     patch_path = "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking"
 
     with patch(patch_path, write_blocking_mock), patch.object(saver_instance.signal_handler, "reset_fire_event"):
@@ -159,24 +162,30 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver: tuple[Asyn
         event_dir = last_call_args[0]
         assert "test_output/event_" in event_dir
 
-        # 2. Verify all expected chunks were queued for archiving
-        assert saver_instance.archive_queue.qsize() == 4
+        # 2. Verify only pre-fire and active chunks were queued for archiving
+        assert saver_instance.archive_queue.qsize() == 2
         item1 = await saver_instance.archive_queue.get()
         assert item1 == ("/path/pre_fire_chunk_1.mp4", event_dir)
         item2 = await saver_instance.archive_queue.get()
         assert item2 == ("/path/active_chunk_2.mp4", event_dir)
-        item3 = await saver_instance.archive_queue.get()
-        assert item3 == ("/path/post_fire_1.mp4", event_dir)
-        item4 = await saver_instance.archive_queue.get()
-        assert item4 == ("/path/post_fire_2.mp4", event_dir)
+
+        # 3. Verify post-fire chunks were written directly to the event directory
+        assert write_blocking_mock.call_count == 3
+        # The first call is for the active chunk, without a target_dir
+        # The next calls are for post-fire chunks, which MUST have the target_dir
+        expected_calls = [
+            call(frame, event_dir),
+            call(frame, event_dir),
+        ]
+        write_blocking_mock.assert_has_calls(expected_calls, any_order=False)
 
 
 @pytest.mark.asyncio
 async def test_memory_mode_fire_handler_flushes_and_switches_mode(
-    mocker: MockerFixture, memory_mode_saver: tuple[AsyncVideoChunkSaver, MagicMock, MagicMock, MagicMock]
+    memory_mode_saver: tuple[AsyncVideoChunkSaver, MagicMock, MagicMock, MagicMock],
 ) -> None:
     """Tests that the memory mode fire handler flushes, switches mode, and saves post-fire chunks."""
-    saver, flush_mock, write_mock, mock_archive_put = memory_mode_saver
+    saver, flush_mock, write_mock, mock_makedirs = memory_mode_saver
 
     # --- Setup ---
     # Populate the memory buffer and assert the initial state
@@ -187,8 +196,9 @@ async def test_memory_mode_fire_handler_flushes_and_switches_mode(
     assert saver.__call__.__func__.__name__ == "_add_frame_to_memory_buffer"
 
     # Pre-populate the frame queue for the post-fire recording part
-    for _ in range(TEST_NUM_POST_FIRE_FRAMES_TO_QUEUE):
-        await saver.frame_queue.put(np.ones((1, 1, 3), dtype=np.uint8))
+    post_fire_frames = [np.ones((1, 1, 3), dtype=np.uint8) for _ in range(TEST_NUM_POST_FIRE_FRAMES_TO_QUEUE)]
+    for frame in post_fire_frames:
+        await saver.frame_queue.put(frame)
 
     # --- Execution ---
     await saver._handle_fire_event_async()
@@ -206,7 +216,8 @@ async def test_memory_mode_fire_handler_flushes_and_switches_mode(
     # 3. Assert post-fire chunks were written (by checking the mock)
     assert write_mock.call_count == TEST_NUM_POST_FIRE_FRAMES_TO_QUEUE
 
-    # 4. Assert the completed post-fire chunks were queued for archiving
-    assert mock_archive_put.call_count == 2
-    mock_archive_put.assert_any_call(("/path/post_fire_1.mp4", mocker.ANY))
-    mock_archive_put.assert_any_call(("/path/post_fire_2.mp4", mocker.ANY))
+    # 4. Assert post-fire chunks were written directly to the event directory
+    mock_makedirs.assert_called()
+    event_dir = mock_makedirs.call_args[0][0]
+    expected_calls = [call(frame, event_dir) for frame in post_fire_frames]
+    write_mock.assert_has_calls(expected_calls)
