@@ -89,6 +89,7 @@ class AsyncVideoChunkSaver:
     pre_fire_buffer: deque[str] = field(init=False)
     memory_buffer: deque[np.ndarray] | None = field(init=False, default=None)
     is_new_chunk: bool = field(init=False, default=False)
+    _fire_handling_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
 
     def __post_init__(self) -> None:
         """Initializes state and methods based on the `enabled` flag and buffer mode."""
@@ -281,20 +282,21 @@ class AsyncVideoChunkSaver:
             await self.signal_handler.fire_detected_event.wait()
 
             # Once the event is set, we proceed to handle it.
-            try:
-                await self._handle_fire_event_async()
-            finally:
-                self.reset_after_fire()
+            await self._handle_fire_event_async()
+            self.reset_after_fire()
 
     async def _writer_task(self) -> None:
         """The main consumer task that writes frames from the queue to disk."""
         loop = asyncio.get_running_loop()
         while True:
-            if self.signal_handler.is_fire_detected():
-                try:
-                    await self._handle_fire_event_async()
-                finally:
-                    self.reset_after_fire()
+            if self.signal_handler.is_fire_detected() and not self._fire_handling_lock.locked():
+                async with self._fire_handling_lock:
+                    if self.signal_handler.is_fire_detected():
+                        try:
+                            await self._handle_fire_event_async()
+                        finally:
+                            self.reset_after_fire()
+
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
                 if frame is None:
