@@ -145,10 +145,11 @@ async def test_fire_event_archives_chunks_and_records_new_ones(saver: tuple[Asyn
     saver_instance.current_video_path = "/path/active_chunk_2.mp4"
     saver_instance.writer = MagicMock()
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    for _ in range(3):
+    # Put enough frames for finalize_active + save_post_fire
+    for _ in range(saver_instance.chunks_to_keep_after_fire + 1):
         await saver_instance.frame_queue.put(frame)
 
-    write_blocking_mock = MagicMock(side_effect=["/path/active_chunk_2.mp4", None, None])
+    write_blocking_mock = MagicMock(side_effect=["/path/active_chunk_2.mp4", "/path/post_fire_1.mp4", "/path/post_fire_2.mp4"])
     patch_path = "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking"
 
     with patch(patch_path, write_blocking_mock), patch.object(saver_instance.signal_handler, "reset_fire_event"):

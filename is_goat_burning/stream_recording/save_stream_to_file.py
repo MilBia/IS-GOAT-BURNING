@@ -293,9 +293,10 @@ class AsyncVideoChunkSaver:
             # This will suspend the task indefinitely until the event is set.
             await self.signal_handler.fire_detected_event.wait()
 
-            # Once the event is set, we proceed to handle it.
-            await self._handle_fire_event_async()
-            self.reset_after_fire()
+            try:
+                await self._handle_fire_event_async()
+            finally:
+                self.reset_after_fire()
 
     async def _writer_task(self) -> None:
         """The main consumer task that writes frames from the queue to disk."""
