@@ -28,7 +28,6 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        # Corrected the package name for Ubuntu 24.04 (noble)
         sudo apt-get install -y libgl1 libglib2.0-0
 
     - name: Install Python dependencies

@@ -177,19 +177,22 @@ class AsyncVideoChunkSaver:
         except OSError as e:
             logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
 
-    def _start_new_chunk_blocking(self, frame_size: tuple[int, int]) -> str | None:
+    def _start_new_chunk_blocking(self, frame_size: tuple[int, int], target_dir: str | None = None) -> str | None:
         """Closes the current video chunk and starts a new one.
 
         This is a synchronous method intended to be run in an executor.
 
         Args:
             frame_size: A tuple of (width, height) for the new video chunk.
+            target_dir: If provided, the new chunk will be created in this
+                directory instead of the default one.
 
         Returns:
             The file path of the chunk that was just closed, or None if there
             was no previous chunk.
         """
-        self.chunk_limit_action()
+        if target_dir is None:
+            self.chunk_limit_action()
 
         previous_chunk_path = self.current_video_path
         if self.writer is not None:
@@ -197,8 +200,9 @@ class AsyncVideoChunkSaver:
             if previous_chunk_path:
                 logger.info(f"Saved video chunk: {os.path.basename(previous_chunk_path)}")
 
+        output_directory = target_dir or self.output_dir
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.current_video_path = os.path.join(self.output_dir, f"{self.FILENAME_PREFIX}{timestamp}{self.FILENAME_SUFFIX}")
+        self.current_video_path = os.path.join(output_directory, f"{self.FILENAME_PREFIX}{timestamp}{self.FILENAME_SUFFIX}")
         fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
         self.writer = cv2.VideoWriter(self.current_video_path, fourcc, self.fps, frame_size)
         self.chunk_start_time = time.time()
@@ -206,7 +210,7 @@ class AsyncVideoChunkSaver:
         logger.info(f"Started new video chunk: {os.path.basename(self.current_video_path)}")
         return previous_chunk_path
 
-    def _write_frame_blocking(self, frame: np.ndarray) -> str | None:
+    def _write_frame_blocking(self, frame: np.ndarray, target_dir: str | None = None) -> str | None:
         """Writes a single frame to the current video chunk.
 
         This method handles the logic for starting a new chunk when the time
@@ -215,6 +219,8 @@ class AsyncVideoChunkSaver:
 
         Args:
             frame: The video frame (as a NumPy array) to be written.
+            target_dir: If provided, any new chunk created will be placed in
+                this directory.
 
         Returns:
             The path of a video chunk if it was just closed, otherwise None.
@@ -224,11 +230,12 @@ class AsyncVideoChunkSaver:
 
         if is_new_chunk_needed:
             height, width, _ = frame.shape
-            closed_chunk_path = self._start_new_chunk_blocking(frame_size=(width, height))
+            closed_chunk_path = self._start_new_chunk_blocking(frame_size=(width, height), target_dir=target_dir)
 
         if self.writer:
             self.writer.write(frame)
-            if self.is_new_chunk:
+            if self.is_new_chunk and target_dir is None:
+                # Only add to pre-fire buffer if we are in normal recording mode
                 self.pre_fire_buffer.append(self.current_video_path)
                 self.is_new_chunk = False
         return closed_chunk_path
@@ -241,9 +248,14 @@ class AsyncVideoChunkSaver:
             logger.warning("Frame queue is full, dropping a frame.")
 
     def _add_frame_to_memory_buffer(self, frame: np.ndarray) -> None:
-        """Adds a frame to the in-memory buffer deque."""
+        """Adds a frame to the in-memory buffer deque.
+
+        A copy of the frame is stored to ensure that the memory is managed by
+        Python's garbage collector, preventing potential memory leaks from
+        OpenCV's internal buffer management.
+        """
         if self.memory_buffer is not None:
-            self.memory_buffer.append(frame)
+            self.memory_buffer.append(frame.copy())
 
     def reset_after_fire(self) -> None:
         """Resets the state after handling a fire event."""
@@ -450,10 +462,7 @@ class AsyncVideoChunkSaver:
         await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
 
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
-        """Continues recording until the currently active chunk is finished.
-
-        Once the active chunk (the one being written to when the fire was
-        detected) is closed, it is queued for archiving.
+        """Continues recording the active chunk and archives it upon completion.
 
         Args:
             event_dir: The destination directory for the archive.
@@ -467,7 +476,7 @@ class AsyncVideoChunkSaver:
                 if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     return
-                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame)
+                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
                 if closed_chunk:
                     logger.info("Active chunk finalized and queued for archive.")
                     try:
@@ -483,7 +492,7 @@ class AsyncVideoChunkSaver:
                     return
 
     async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves a configured number of additional chunks after a fire event.
+        """Saves a configured number of additional chunks directly to the event directory.
 
         Args:
             event_dir: The destination directory for the archive.
@@ -491,7 +500,7 @@ class AsyncVideoChunkSaver:
         if self.chunks_to_keep_after_fire <= 0:
             return
 
-        logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks...")
+        logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks directly to event directory...")
         loop = asyncio.get_running_loop()
         chunks_saved_count = 0
         timeout_retries = 0
@@ -501,13 +510,12 @@ class AsyncVideoChunkSaver:
                 if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording.")
                     return
-                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame)
+                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
                 if closed_chunk:
                     chunks_saved_count += 1
-                    try:
-                        self.archive_queue.put_nowait((closed_chunk, event_dir))
-                    except asyncio.QueueFull:
-                        logger.error(f"Archive queue is full. Failed to queue chunk {closed_chunk}.")
+                    logger.info(
+                        f"Saved post-fire chunk {chunks_saved_count}/{self.chunks_to_keep_after_fire} directly to event directory."  # noqa: E501
+                    )
             except TimeoutError:
                 timeout_retries += 1
                 logger.warning(f"Timeout waiting for frame... Retry {timeout_retries}/{self.MAX_TIMEOUT_RETRIES}...")
