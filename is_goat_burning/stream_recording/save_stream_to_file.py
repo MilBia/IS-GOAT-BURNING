@@ -71,6 +71,7 @@ class AsyncVideoChunkSaver:
     fps: float = 30.0
     FILENAME_PREFIX: ClassVar[str] = "goat-cam_"
     FILENAME_SUFFIX: ClassVar[str] = ".mp4"
+    VIDEO_CODEC: ClassVar[str] = "mp4v"
     MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
 
     # --- Internal State ---
@@ -197,7 +198,7 @@ class AsyncVideoChunkSaver:
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.current_video_path = os.path.join(self.output_dir, f"{self.FILENAME_PREFIX}{timestamp}{self.FILENAME_SUFFIX}")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
         self.writer = cv2.VideoWriter(self.current_video_path, fourcc, self.fps, frame_size)
         self.chunk_start_time = time.time()
         self.is_new_chunk = True
@@ -332,7 +333,7 @@ class AsyncVideoChunkSaver:
         first_frame = frames[0]
         height, width, _ = first_frame.shape
         frame_size = (width, height)
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
         writer = cv2.VideoWriter(path, fourcc, self.fps, frame_size)
         if not writer.isOpened():
             logger.error(f"Failed to open video writer for path: {path}")
