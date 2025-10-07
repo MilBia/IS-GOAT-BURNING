@@ -113,7 +113,7 @@ class AsyncVideoChunkSaver:
             if self.max_chunks > 0:
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
         else:
-            raise NotImplementedError(f"Buffer mode '{buffer_mode}' is not implemented.")
+            raise NotImplementedError(f'Buffer mode "{buffer_mode}" is not implemented.')
 
     def create_storage_directory(self) -> None:
         """Creates the output directory if it doesn't exist."""
@@ -292,11 +292,16 @@ class AsyncVideoChunkSaver:
         while True:
             # This will suspend the task indefinitely until the event is set.
             await self.signal_handler.fire_detected_event.wait()
-
-            try:
-                await self._handle_fire_event_async()
-            finally:
-                self.reset_after_fire()
+            async with self._fire_handling_lock:
+                # If the event was handled and reset while waiting for the lock, do nothing.
+                if not self.signal_handler.is_fire_detected():
+                    continue
+                try:
+                    await self._handle_fire_event_async()
+                finally:
+                    # This ensures the event is reset, preventing a busy-loop
+                    # if _handle_fire_event_async raises an exception.
+                    self.reset_after_fire()
 
     async def _writer_task(self) -> None:
         """The main consumer task that writes frames from the queue to disk."""
