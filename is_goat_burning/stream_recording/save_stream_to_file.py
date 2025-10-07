@@ -113,7 +113,7 @@ class AsyncVideoChunkSaver:
             if self.max_chunks > 0:
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
         else:
-            raise NotImplementedError(f'Buffer mode "{buffer_mode}" is not implemented.')
+            raise NotImplementedError(f"Buffer mode '{buffer_mode}' is not implemented.")
 
     def create_storage_directory(self) -> None:
         """Creates the output directory if it doesn't exist."""
@@ -264,12 +264,8 @@ class AsyncVideoChunkSaver:
         self.signal_handler.reset_fire_event()
         self.signal_handler.reset_fire_extinguished_event()
         if settings.video.buffer_mode == "memory":
-            # Drain any leftover frames from post-fire recording to prevent a memory leak.
-            while not self.frame_queue.empty():
-                try:
-                    self.frame_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            # Re-initialize the queue to discard any leftover frames from post-fire recording.
+            self.frame_queue = asyncio.Queue()
             self.__call__ = self._add_frame_to_memory_buffer
         logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
 
