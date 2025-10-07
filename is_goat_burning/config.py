@@ -143,6 +143,8 @@ class Settings(BaseSettings):
     cuda: bool = Field(validation_alias="CUDA", default=False)
     reconnect_delay_seconds: int = Field(default=5, validation_alias="RECONNECT_DELAY_SECONDS")
     stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
+    fire_detected_debounce_seconds: float = Field(default=0.0, validation_alias="FIRE_DETECTED_DEBOUNCE_SECONDS")
+    fire_extinguished_debounce_seconds: float = Field(default=5.0, validation_alias="FIRE_EXTINGUISHED_DEBOUNCE_SECONDS")
 
     # Nested settings
     email: EmailSettings = Field(default_factory=EmailSettings)
