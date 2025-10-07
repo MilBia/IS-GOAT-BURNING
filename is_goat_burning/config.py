@@ -99,6 +99,8 @@ class VideoSettings(BaseModel):
             disk when a fire is detected.
         memory_buffer_seconds: The duration in seconds of pre-fire video to
             hold in RAM when using "memory" buffer mode.
+        record_during_fire: If True, recording will continue for the entire
+            duration of the fire event.
     """
 
     save_video_chunks: bool = Field(default=False)
@@ -108,6 +110,7 @@ class VideoSettings(BaseModel):
     chunks_to_keep_after_fire: int = Field(default=10)
     buffer_mode: Literal["disk", "memory"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
+    record_during_fire: bool = Field(default=False)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:

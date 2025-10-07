@@ -191,6 +191,7 @@ class AsyncVideoChunkSaver:
             The file path of the chunk that was just closed, or None if there
             was no previous chunk.
         """
+        # Note: Chunk limit is only enforced on the main output directory.
         if target_dir is None:
             self.chunk_limit_action()
 
@@ -261,6 +262,7 @@ class AsyncVideoChunkSaver:
         """Resets the state after handling a fire event."""
         self.pre_fire_buffer.clear()
         self.signal_handler.reset_fire_event()
+        self.signal_handler.reset_fire_extinguished_event()
         if settings.video.buffer_mode == "memory":
             # Drain any leftover frames from post-fire recording to prevent a memory leak.
             while not self.frame_queue.empty():
@@ -487,6 +489,7 @@ class AsyncVideoChunkSaver:
                 if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     return
+                # Pass event_dir to ensure the next chunk (if any) is created there
                 closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
                 if closed_chunk:
                     logger.info("Active chunk finalized and queued for archive.")
@@ -502,8 +505,23 @@ class AsyncVideoChunkSaver:
                     logger.error("Max retries exceeded waiting for frame. Aborting event.")
                     return
 
-    async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves a configured number of additional chunks directly to the event directory.
+    async def _record_during_fire_loop(self, event_dir: str) -> None:
+        """Records video chunks until the 'fire extinguished' signal is received."""
+        logger.info("Recording will continue for the duration of the fire.")
+        loop = asyncio.get_running_loop()
+        while not self.signal_handler.is_fire_extinguished():
+            try:
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                if frame is None:
+                    logger.warning("Shutdown signaled during primary fire recording.")
+                    return
+                await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
+            except TimeoutError:
+                continue
+        logger.info("Fire extinguished signal received. Saving final post-fire chunks.")
+
+    async def _record_final_chunks_loop(self, event_dir: str) -> None:
+        """Saves a configured number of final video chunks.
 
         Args:
             event_dir: The destination directory for the archive.
@@ -511,7 +529,7 @@ class AsyncVideoChunkSaver:
         if self.chunks_to_keep_after_fire <= 0:
             return
 
-        logger.info(f"Now saving {self.chunks_to_keep_after_fire} post-fire chunks directly to event directory...")
+        logger.info(f"Now saving {self.chunks_to_keep_after_fire} final post-fire chunks...")
         loop = asyncio.get_running_loop()
         chunks_saved_count = 0
         timeout_retries = 0
@@ -533,3 +551,15 @@ class AsyncVideoChunkSaver:
                 if timeout_retries >= self.MAX_TIMEOUT_RETRIES:
                     logger.error("Max retries exceeded waiting for frame during post-fire recording.")
                     return
+
+    async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
+        """Saves a configured number of additional chunks directly to the event directory.
+
+        If `record_during_fire` is True, this method will first record indefinitely
+        until the `fire_extinguished` signal is received, and then record the
+        final number of chunks.
+        """
+        if settings.video.record_during_fire:
+            await self._record_during_fire_loop(event_dir)
+
+        await self._record_final_chunks_loop(event_dir)

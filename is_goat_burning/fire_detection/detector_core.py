@@ -158,8 +158,7 @@ class StreamFireDetector:
                     # State transition: FIRE -> NO FIRE
                     self.fire_is_currently_detected = False
                     logger.info("Fire is no longer detected. Resuming normal monitoring.")
-                    # NOTE: We do not reset the global fire_detected_event here,
-                    # as that is the responsibility of the video archiver.
+                    self.signal_handler.fire_extinguished()
 
                 if self.video_output:
                     cv2.imshow("output", annotated_frame)
