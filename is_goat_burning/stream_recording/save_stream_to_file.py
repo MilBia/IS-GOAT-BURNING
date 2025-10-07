@@ -261,8 +261,13 @@ class AsyncVideoChunkSaver:
         """Resets the state after handling a fire event."""
         self.pre_fire_buffer.clear()
         self.signal_handler.reset_fire_event()
-        # If in memory mode, switch back to buffering in memory
         if settings.video.buffer_mode == "memory":
+            # Drain any leftover frames from post-fire recording to prevent a memory leak.
+            while not self.frame_queue.empty():
+                try:
+                    self.frame_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             self.__call__ = self._add_frame_to_memory_buffer
         logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
 
