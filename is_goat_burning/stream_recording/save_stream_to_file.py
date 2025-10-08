@@ -61,8 +61,9 @@ class AsyncVideoChunkSaver:
             to be moved to an event archive directory.
         writer (cv2.VideoWriter | None): The OpenCV video writer instance for
             the currently active video chunk.
-        pre_fire_buffer (deque): A deque that stores the paths of the most
-            recent video chunks, used for pre-event archiving.
+        pre_fire_buffer (deque[str] | None): A deque that stores the paths of the most
+            recent video chunks, used for pre-event archiving. Initialized only
+            in 'disk' mode.
         strategy (BufferStrategy): The active buffering strategy instance.
     """
 
@@ -89,14 +90,13 @@ class AsyncVideoChunkSaver:
     chunk_limit_action: Callable[[], None] = field(init=False, repr=False)
     makedirs_callable: Callable[..., None] = field(init=False, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
-    pre_fire_buffer: deque[str] = field(init=False)
+    pre_fire_buffer: deque[str] | None = field(init=False, default=None)
     is_new_chunk: bool = field(init=False, default=False)
     _fire_handling_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
     strategy: BufferStrategy = field(init=False)
 
     def __post_init__(self) -> None:
         """Initializes state and selects the appropriate buffer strategy."""
-        self.pre_fire_buffer = deque(maxlen=self.max_chunks)
         self.chunk_limit_action = self._noop
         self.makedirs_callable = partial(os.makedirs, exist_ok=True)
         if not self.enabled:
@@ -110,6 +110,7 @@ class AsyncVideoChunkSaver:
         elif buffer_mode == "disk":
             logger.info("Video saver initializing with DISK buffer strategy.")
             self.strategy = DiskBufferStrategy(context=self)
+            self.pre_fire_buffer = deque(maxlen=self.max_chunks)
             if self.max_chunks > 0:
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
         else:
@@ -209,7 +210,7 @@ class AsyncVideoChunkSaver:
 
         if self.writer:
             self.writer.write(frame)
-            if self.is_new_chunk and target_dir is None:
+            if self.is_new_chunk and target_dir is None and self.pre_fire_buffer is not None:
                 self.pre_fire_buffer.append(self.current_video_path)
                 self.is_new_chunk = False
         return closed_chunk_path

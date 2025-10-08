@@ -100,7 +100,8 @@ class DiskBufferStrategy(BufferStrategy):
 
     def reset(self) -> None:
         """Resets the pre-fire buffer and safely drains the frame queue."""
-        self.context.pre_fire_buffer.clear()
+        if self.context.pre_fire_buffer is not None:
+            self.context.pre_fire_buffer.clear()
         # Safely drain the queue to avoid issues with other potential producers.
         while not self.context.frame_queue.empty():
             try:
@@ -119,35 +120,37 @@ class DiskBufferStrategy(BufferStrategy):
             event_dir: The destination directory for the archived videos.
         """
         # Archive all chunks currently in the buffer except the active one.
-        cold_chunks = list(self.context.pre_fire_buffer)[:-1]
-        logger.info(f"Queueing {len(cold_chunks)} pre-fire chunks for archiving.")
-        for path in cold_chunks:
-            try:
-                self.context.archive_queue.put_nowait((path, event_dir))
-            except asyncio.QueueFull:
-                logger.error(f"Archive queue is full. Failed to queue chunk for archiving {path}.")
+        if self.context.pre_fire_buffer is not None:
+            cold_chunks = list(self.context.pre_fire_buffer)[:-1]
+            logger.info(f"Queueing {len(cold_chunks)} pre-fire chunks for archiving.")
+            for path in cold_chunks:
+                try:
+                    self.context.archive_queue.put_nowait((path, event_dir))
+                except asyncio.QueueFull:
+                    logger.error(f"Archive queue is full. Failed to queue chunk for archiving {path}.")
 
         await self.context._finalize_active_chunk_async(event_dir)
 
-    async def _run_main_loop(self) -> None:
-        """The main consumer task that writes frames from the queue to disk.
+    async def _handle_fire_signal(self) -> None:
+        """Checks for and handles the fire detection signal."""
+        if self.context.signal_handler.is_fire_detected() and not self.context._fire_handling_lock.locked():
+            async with self.context._fire_handling_lock:
+                if self.context.signal_handler.is_fire_detected():
+                    try:
+                        await self.context._handle_fire_event_async()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Unexpected error during disk strategy fire event handling.")
+                    finally:
+                        self.context.reset_after_fire()
 
-        This loop continuously checks for frames to write and also monitors for
-        fire detection signals to trigger the event handling logic.
-        """
+    async def _run_main_loop(self) -> None:
+        """The main consumer task that writes frames from the queue to disk."""
         loop = asyncio.get_running_loop()
         try:
             while True:
-                if self.context.signal_handler.is_fire_detected() and not self.context._fire_handling_lock.locked():
-                    async with self.context._fire_handling_lock:
-                        if self.context.signal_handler.is_fire_detected():
-                            try:
-                                await self.context._handle_fire_event_async()
-                            except Exception:
-                                logger.exception("Unexpected error during disk strategy fire event handling.")
-                            finally:
-                                self.context.reset_after_fire()
-
+                await self._handle_fire_signal()
                 try:
                     frame = await asyncio.wait_for(
                         self.context.frame_queue.get(), timeout=self.context.FRAME_QUEUE_POLL_TIMEOUT
@@ -159,7 +162,7 @@ class DiskBufferStrategy(BufferStrategy):
                     continue
                 except asyncio.CancelledError:
                     logger.info("Disk strategy writer task cancelled during frame wait.")
-                    raise  # Ensure cancellation propagates
+                    raise
                 except Exception:
                     logger.exception("Error in disk strategy writer task, but will continue running.")
         except asyncio.CancelledError:
@@ -257,6 +260,8 @@ class MemoryBufferStrategy(BufferStrategy):
                         continue
                     try:
                         await self.context._handle_fire_event_async()
+                    except asyncio.CancelledError:
+                        raise
                     except Exception:
                         logger.exception("Unexpected error during memory strategy fire event handling.")
                     finally:
