@@ -138,25 +138,33 @@ class StreamFireDetector:
         now = time.monotonic()
 
         if fire_in_frame:
-            self._potential_fire_end_time = None  # Reset end timer
-            if not self.fire_is_currently_detected:
-                if self._potential_fire_start_time is None:
-                    self._potential_fire_start_time = now
-                if now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
-                    self.fire_is_currently_detected = True
-                    self._potential_fire_start_time = None
-                    self.signal_handler.fire_detected()
-                    await self.on_fire_action()
-        else:
-            self._potential_fire_start_time = None  # Reset start timer
+            self._potential_fire_end_time = None  # Reset any pending extinguish signal
             if self.fire_is_currently_detected:
-                if self._potential_fire_end_time is None:
-                    self._potential_fire_end_time = now
-                if now - self._potential_fire_end_time >= settings.fire_extinguished_debounce_seconds:
-                    self.fire_is_currently_detected = False
-                    self._potential_fire_end_time = None
-                    logger.info("Fire is no longer detected (after debounce).")
-                    self.signal_handler.fire_extinguished()
+                return  # Already in fire state, no change needed
+
+            # Start or continue debounce for fire detection
+            if self._potential_fire_start_time is None:
+                self._potential_fire_start_time = now
+
+            if now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
+                self.fire_is_currently_detected = True
+                self._potential_fire_start_time = None  # Clear timer
+                self.signal_handler.fire_detected()
+                await self.on_fire_action()
+        else:
+            self._potential_fire_start_time = None  # Reset any pending fire signal
+            if not self.fire_is_currently_detected:
+                return  # Already in no-fire state, no change needed
+
+            # Start or continue debounce for fire extinguished
+            if self._potential_fire_end_time is None:
+                self._potential_fire_end_time = now
+
+            if now - self._potential_fire_end_time >= settings.fire_extinguished_debounce_seconds:
+                self.fire_is_currently_detected = False
+                self._potential_fire_end_time = None  # Clear timer
+                logger.info("Fire is no longer detected (after debounce).")
+                self.signal_handler.fire_extinguished()
 
     async def __call__(self) -> None:
         """Starts the fire detection loop.
