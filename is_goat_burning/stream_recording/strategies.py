@@ -155,8 +155,6 @@ class DiskBufferStrategy(BufferStrategy):
                     frame = await asyncio.wait_for(
                         self.context.frame_queue.get(), timeout=self.context.FRAME_QUEUE_POLL_TIMEOUT
                     )
-                    if frame is None:
-                        break
                     await loop.run_in_executor(None, self.context._write_frame_blocking, frame)
                 except TimeoutError:
                     continue
