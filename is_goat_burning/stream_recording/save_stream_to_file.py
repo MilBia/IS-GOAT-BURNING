@@ -79,6 +79,7 @@ class AsyncVideoChunkSaver:
     VIDEO_CODEC: ClassVar[str] = "mp4v"
     MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
+    POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
 
     # --- Internal State ---
     frame_queue: asyncio.Queue[np.ndarray | None] = field(init=False, default_factory=asyncio.Queue)
@@ -145,6 +146,7 @@ class AsyncVideoChunkSaver:
             tasks.append(self._archive_task)
 
         if tasks:
+            # Shield tasks to ensure cleanup completes even if stop() is cancelled.
             await asyncio.gather(*(asyncio.shield(t) for t in tasks), return_exceptions=True)
 
         if self.writer is not None:
@@ -313,7 +315,7 @@ class AsyncVideoChunkSaver:
         timeout_retries = 0
         while True:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.POST_FIRE_FRAME_TIMEOUT)
                 if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     return
@@ -358,7 +360,7 @@ class AsyncVideoChunkSaver:
         timeout_retries = 0
         while chunks_saved_count < self.chunks_to_keep_after_fire:
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=5.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.POST_FIRE_FRAME_TIMEOUT)
                 if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording.")
                     return
