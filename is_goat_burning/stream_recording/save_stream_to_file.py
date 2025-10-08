@@ -158,6 +158,14 @@ class AsyncVideoChunkSaver:
         """A "no-operation" method used when the saver is disabled."""
         pass
 
+    def _drain_frame_queue(self) -> None:
+        """Safely drains the frame queue to discard any pending frames."""
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
     def _enforce_chunk_limit_blocking(self) -> None:
         """Deletes the oldest video chunk(s) if the `max_chunks` limit is exceeded."""
         try:

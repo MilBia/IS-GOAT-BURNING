@@ -102,12 +102,7 @@ class DiskBufferStrategy(BufferStrategy):
         """Resets the pre-fire buffer and safely drains the frame queue."""
         if self.context.pre_fire_buffer is not None:
             self.context.pre_fire_buffer.clear()
-        # Safely drain the queue to avoid issues with other potential producers.
-        while not self.context.frame_queue.empty():
-            try:
-                self.context.frame_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        self.context._drain_frame_queue()
 
     async def handle_fire_event(self, event_dir: str) -> None:
         """Handles the fire event for 'disk' buffering mode.
@@ -187,12 +182,7 @@ class MemoryBufferStrategy(BufferStrategy):
         """Resets the memory buffer, drains the frame queue, and restores initial behavior."""
         self.memory_buffer.clear()
         self._is_post_fire_recording = False
-        # Safely drain the queue to avoid issues with other potential producers.
-        while not self.context.frame_queue.empty():
-            try:
-                self.context.frame_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        self.context._drain_frame_queue()
 
     def add_frame(self, frame: np.ndarray) -> None:
         """Adds a frame to memory or the disk queue based on the current recording state."""
