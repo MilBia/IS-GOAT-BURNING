@@ -143,6 +143,8 @@ class DiskBufferStrategy(BufferStrategy):
                         if self.context.signal_handler.is_fire_detected():
                             try:
                                 await self.context._handle_fire_event_async()
+                            except Exception:
+                                logger.exception("Unexpected error during disk strategy fire event handling.")
                             finally:
                                 self.context.reset_after_fire()
 
@@ -255,6 +257,8 @@ class MemoryBufferStrategy(BufferStrategy):
                         continue
                     try:
                         await self.context._handle_fire_event_async()
+                    except Exception:
+                        logger.exception("Unexpected error during memory strategy fire event handling.")
                     finally:
                         self.context.reset_after_fire()
         except asyncio.CancelledError:
