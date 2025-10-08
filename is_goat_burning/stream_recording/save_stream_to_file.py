@@ -248,7 +248,6 @@ class AsyncVideoChunkSaver:
         self.signal_handler.reset_fire_event()
         self.signal_handler.reset_fire_extinguished_event()
         self.strategy.reset()
-        logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
 
     def __call__(self, frame: np.ndarray) -> None:
         """Delegates frame handling to the current strategy object.
@@ -339,9 +338,9 @@ class AsyncVideoChunkSaver:
         try:
             await self.strategy.handle_fire_event(event_dir)
             await self._save_post_fire_chunks_async(event_dir)
+            logger.info("Fire event handled. Restoring normal chunk rotation policy.")
         finally:
             self.chunk_limit_action = original_cleanup_action
-            logger.info("Fire event handled. Restoring normal chunk rotation policy.")
 
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
         """Continues recording the active chunk and archives it upon completion.

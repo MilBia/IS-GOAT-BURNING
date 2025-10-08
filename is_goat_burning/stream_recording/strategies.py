@@ -135,6 +135,7 @@ class DiskBufferStrategy(BufferStrategy):
                 if self.context.signal_handler.is_fire_detected():
                     try:
                         await self.context._handle_fire_event_async()
+                        logger.debug("Disk strategy fire event handling completed successfully.")
                     except asyncio.CancelledError:
                         raise
                     except (OSError, shutil.Error, cv2.error):
@@ -250,6 +251,7 @@ class MemoryBufferStrategy(BufferStrategy):
                         continue
                     try:
                         await self.context._handle_fire_event_async()
+                        logger.debug("Memory strategy fire event handling completed successfully.")
                     except asyncio.CancelledError:
                         raise
                     except (OSError, shutil.Error, cv2.error):
