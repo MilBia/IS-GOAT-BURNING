@@ -15,8 +15,10 @@ import asyncio
 from collections import deque
 from datetime import datetime
 import os
+import shutil
 from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 
 from is_goat_burning.config import settings
@@ -135,8 +137,8 @@ class DiskBufferStrategy(BufferStrategy):
                         await self.context._handle_fire_event_async()
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
-                        logger.exception("Unexpected error during disk strategy fire event handling.")
+                    except (OSError, shutil.Error, cv2.error):
+                        logger.exception("Unexpected but recoverable error during disk strategy fire event handling.")
                     finally:
                         self.context.reset_after_fire()
 
@@ -156,7 +158,7 @@ class DiskBufferStrategy(BufferStrategy):
                 except asyncio.CancelledError:
                     logger.info("Disk strategy writer task cancelled during frame wait.")
                     raise
-                except Exception:
+                except (OSError, cv2.error):
                     logger.exception("Error in disk strategy writer task, but will continue running.")
         except asyncio.CancelledError:
             logger.info("Disk strategy main loop was cancelled.")
@@ -250,8 +252,8 @@ class MemoryBufferStrategy(BufferStrategy):
                         await self.context._handle_fire_event_async()
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
-                        logger.exception("Unexpected error during memory strategy fire event handling.")
+                    except (OSError, shutil.Error, cv2.error):
+                        logger.exception("Unexpected but recoverable error during memory strategy fire event handling.")
                     finally:
                         self.context.reset_after_fire()
         except asyncio.CancelledError:
