@@ -99,9 +99,14 @@ class DiskBufferStrategy(BufferStrategy):
             logger.warning("Frame queue is full, dropping a frame.")
 
     def reset(self) -> None:
-        """Resets the pre-fire buffer and clears the frame queue."""
+        """Resets the pre-fire buffer and safely drains the frame queue."""
         self.context.pre_fire_buffer.clear()
-        self.context.frame_queue = asyncio.Queue()
+        # Safely drain the queue to avoid issues with other potential producers.
+        while not self.context.frame_queue.empty():
+            try:
+                self.context.frame_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def handle_fire_event(self, event_dir: str) -> None:
         """Handles the fire event for 'disk' buffering mode.
@@ -142,7 +147,9 @@ class DiskBufferStrategy(BufferStrategy):
                                 self.context.reset_after_fire()
 
                 try:
-                    frame = await asyncio.wait_for(self.context.frame_queue.get(), timeout=1)
+                    frame = await asyncio.wait_for(
+                        self.context.frame_queue.get(), timeout=self.context.FRAME_QUEUE_POLL_TIMEOUT
+                    )
                     if frame is None:
                         break
                     await loop.run_in_executor(None, self.context._write_frame_blocking, frame)
@@ -174,10 +181,15 @@ class MemoryBufferStrategy(BufferStrategy):
         logger.info(f"Memory buffer initialized with a capacity for {buffer_size} frames.")
 
     def reset(self) -> None:
-        """Resets the memory buffer, clears the frame queue, and restores initial behavior."""
+        """Resets the memory buffer, drains the frame queue, and restores initial behavior."""
         self.memory_buffer.clear()
-        self.context.frame_queue = asyncio.Queue()
         self._is_post_fire_recording = False
+        # Safely drain the queue to avoid issues with other potential producers.
+        while not self.context.frame_queue.empty():
+            try:
+                self.context.frame_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     def add_frame(self, frame: np.ndarray) -> None:
         """Adds a frame to memory or the disk queue based on the current recording state."""

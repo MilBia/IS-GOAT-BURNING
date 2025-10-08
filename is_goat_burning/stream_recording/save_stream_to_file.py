@@ -54,6 +54,16 @@ class AsyncVideoChunkSaver:
         chunks_to_keep_after_fire (int): The number of additional chunks to
             record and archive after a fire is first detected.
         fps (float): The frames per second of the video stream.
+        frame_queue (asyncio.Queue): A queue for incoming frames to be written
+            to disk, primarily used by the DiskBufferStrategy or during
+            post-fire recording.
+        archive_queue (asyncio.Queue): A queue for video chunk paths that need
+            to be moved to an event archive directory.
+        writer (cv2.VideoWriter | None): The OpenCV video writer instance for
+            the currently active video chunk.
+        pre_fire_buffer (deque): A deque that stores the paths of the most
+            recent video chunks, used for pre-event archiving.
+        strategy (BufferStrategy): The active buffering strategy instance.
     """
 
     # --- Configuration ---
@@ -67,6 +77,7 @@ class AsyncVideoChunkSaver:
     FILENAME_SUFFIX: ClassVar[str] = ".mp4"
     VIDEO_CODEC: ClassVar[str] = "mp4v"
     MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
+    FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
 
     # --- Internal State ---
     frame_queue: asyncio.Queue[np.ndarray | None] = field(init=False, default_factory=asyncio.Queue)
@@ -322,7 +333,7 @@ class AsyncVideoChunkSaver:
         loop = asyncio.get_running_loop()
         while not self.signal_handler.is_fire_extinguished():
             try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1.0)
+                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.FRAME_QUEUE_POLL_TIMEOUT)
                 if frame is None:
                     logger.warning("Shutdown signaled during primary fire recording.")
                     return
