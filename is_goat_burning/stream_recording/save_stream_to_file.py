@@ -4,6 +4,9 @@ This module provides the `AsyncVideoChunkSaver` class, which is responsible for
 asynchronously writing video frames to MP4 files. It manages file rotation,
 enforces disk space limits, and contains special logic for archiving video
 chunks before and after a fire event is detected.
+
+This class uses a Strategy pattern to delegate the specific buffering logic
+(e.g., 'disk' vs 'memory' mode) to dedicated strategy objects.
 """
 
 import asyncio
@@ -25,23 +28,22 @@ import numpy as np
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
+from is_goat_burning.stream_recording.strategies import BufferStrategy
+from is_goat_burning.stream_recording.strategies import DiskBufferStrategy
+from is_goat_burning.stream_recording.strategies import MemoryBufferStrategy
 
 logger = get_logger("AsyncVideoChunkSaver")
 
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
 class AsyncVideoChunkSaver:
-    """Manages saving a video stream into timed, rotating file chunks.
+    """Manages saving a video stream into timed, rotating file chunks using a buffer strategy.
 
-    This class provides an asynchronous interface to save video frames. It supports
-    two modes, configured via `settings.video.buffer_mode`:
-    - "disk": Uses a background task to continuously write frames to disk in
-      chunks.
-    - "memory": Holds frames in a rolling in-memory buffer (`collections.deque`)
-      and only writes to disk when a fire event is triggered.
-
-    It integrates with the `SignalHandler` to perform special archiving logic
-    when a fire is detected.
+    This class acts as the context for a buffer strategy (`DiskBufferStrategy`
+    or `MemoryBufferStrategy`), which is chosen based on the application's
+    configuration. It provides the shared, low-level functionality for writing
+    video files and archiving them, while the strategy object manages the
+    high-level logic of when and how frames are processed.
 
     Attributes:
         enabled (bool): If False, all operations are no-ops.
@@ -52,14 +54,6 @@ class AsyncVideoChunkSaver:
         chunks_to_keep_after_fire (int): The number of additional chunks to
             record and archive after a fire is first detected.
         fps (float): The frames per second of the video stream.
-        frame_queue (asyncio.Queue): A queue for incoming frames to be written
-            (used in "disk" mode and post-fire "memory" mode).
-        archive_queue (asyncio.Queue): A queue for video chunks to be archived.
-        writer (cv2.VideoWriter): The OpenCV video writer instance.
-        pre_fire_buffer (deque): A deque that stores the paths of the most
-            recent video chunks, used for pre-event archiving ("disk" mode).
-        memory_buffer (deque): A deque that stores recent frames in memory
-            (used in "memory" mode).
     """
 
     # --- Configuration ---
@@ -80,21 +74,18 @@ class AsyncVideoChunkSaver:
     writer: cv2.VideoWriter | None = field(init=False, default=None, repr=False)
     chunk_start_time: float = field(init=False, default=0.0)
     current_video_path: str | None = field(init=False, default=None)
-    _main_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
     _archive_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
-    __call__: Callable[[np.ndarray], None]
     chunk_limit_action: Callable[[], None] = field(init=False, repr=False)
     makedirs_callable: Callable[..., None] = field(init=False, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
     pre_fire_buffer: deque[str] = field(init=False)
-    memory_buffer: deque[np.ndarray] | None = field(init=False, default=None)
     is_new_chunk: bool = field(init=False, default=False)
     _fire_handling_lock: asyncio.Lock = field(init=False, default_factory=asyncio.Lock)
+    strategy: BufferStrategy = field(init=False)
 
     def __post_init__(self) -> None:
-        """Initializes state and methods based on the `enabled` flag and buffer mode."""
+        """Initializes state and selects the appropriate buffer strategy."""
         self.pre_fire_buffer = deque(maxlen=self.max_chunks)
-        self.__call__ = self._noop
         self.chunk_limit_action = self._noop
         self.makedirs_callable = partial(os.makedirs, exist_ok=True)
         if not self.enabled:
@@ -103,13 +94,11 @@ class AsyncVideoChunkSaver:
         self.create_storage_directory()
         buffer_mode = settings.video.buffer_mode
         if buffer_mode == "memory":
-            logger.info("Video saver initializing in MEMORY buffer mode.")
-            buffer_size = int(settings.video.memory_buffer_seconds * self.fps)
-            self.memory_buffer = deque(maxlen=buffer_size)
-            self.__call__ = self._add_frame_to_memory_buffer
+            logger.info("Video saver initializing with MEMORY buffer strategy.")
+            self.strategy = MemoryBufferStrategy(context=self)
         elif buffer_mode == "disk":
-            logger.info("Video saver initializing in DISK buffer mode.")
-            self.__call__ = self._queue_frame
+            logger.info("Video saver initializing with DISK buffer strategy.")
+            self.strategy = DiskBufferStrategy(context=self)
             if self.max_chunks > 0:
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
         else:
@@ -122,34 +111,34 @@ class AsyncVideoChunkSaver:
             logger.info(f"Video chunks will be saved to: {self.output_dir}")
         except OSError as e:
             logger.error(f"Could not create directory {self.output_dir}: {e}")
-            self.__call__ = self._noop  # Disable if directory creation fails
+            self.enabled = False
 
     def start(self) -> None:
-        """Starts the necessary background tasks based on the operating mode."""
+        """Starts the background archive task and the selected strategy's main loop."""
         if not self.enabled:
             return
 
         self._archive_task = asyncio.create_task(self.archive_task())
-        self._main_task = asyncio.create_task(self._run_main_loop())
+        asyncio.create_task(self.strategy.start())
 
     async def stop(self) -> None:
         """Signals the background tasks to stop and waits for them to finish."""
         if not self.enabled:
             return
 
-        tasks = []
-        if self._main_task and not self._main_task.done():
-            self._main_task.cancel()
-            tasks.append(self._main_task)
+        tasks = [self.strategy.stop()]
 
         if self._archive_task and not self._archive_task.done():
-            # The archive task waits on a queue, so putting None is a clean
-            # way to make it exit its loop before we gather it.
             await self.archive_queue.put(None)
             tasks.append(self._archive_task)
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        if self.writer is not None:
+            self.writer.release()
+            if self.current_video_path:
+                logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
 
     def _noop(self, *args: Any, **kwargs: Any) -> None:
         """A "no-operation" method used when the saver is disabled."""
@@ -178,20 +167,7 @@ class AsyncVideoChunkSaver:
             logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
 
     def _start_new_chunk_blocking(self, frame_size: tuple[int, int], target_dir: str | None = None) -> str | None:
-        """Closes the current video chunk and starts a new one.
-
-        This is a synchronous method intended to be run in an executor.
-
-        Args:
-            frame_size: A tuple of (width, height) for the new video chunk.
-            target_dir: If provided, the new chunk will be created in this
-                directory instead of the default one.
-
-        Returns:
-            The file path of the chunk that was just closed, or None if there
-            was no previous chunk.
-        """
-        # Note: Chunk limit is only enforced on the main output directory.
+        """Closes the current video chunk and starts a new one."""
         if target_dir is None:
             self.chunk_limit_action()
 
@@ -212,20 +188,7 @@ class AsyncVideoChunkSaver:
         return previous_chunk_path
 
     def _write_frame_blocking(self, frame: np.ndarray, target_dir: str | None = None) -> str | None:
-        """Writes a single frame to the current video chunk.
-
-        This method handles the logic for starting a new chunk when the time
-        limit is reached. It is a synchronous method intended to be run in an
-        executor.
-
-        Args:
-            frame: The video frame (as a NumPy array) to be written.
-            target_dir: If provided, any new chunk created will be placed in
-                this directory.
-
-        Returns:
-            The path of a video chunk if it was just closed, otherwise None.
-        """
+        """Writes a single frame, starting a new chunk if necessary."""
         closed_chunk_path: str | None = None
         is_new_chunk_needed = self.writer is None or (time.time() - self.chunk_start_time) >= self.chunk_length_seconds
 
@@ -236,123 +199,28 @@ class AsyncVideoChunkSaver:
         if self.writer:
             self.writer.write(frame)
             if self.is_new_chunk and target_dir is None:
-                # Only add to pre-fire buffer if we are in normal recording mode
                 self.pre_fire_buffer.append(self.current_video_path)
                 self.is_new_chunk = False
         return closed_chunk_path
 
-    def _queue_frame(self, frame: np.ndarray) -> None:
-        """Puts a frame onto the asynchronous queue to be written."""
-        try:
-            self.frame_queue.put_nowait(frame)
-        except asyncio.QueueFull:
-            logger.warning("Frame queue is full, dropping a frame.")
-
-    def _add_frame_to_memory_buffer(self, frame: np.ndarray) -> None:
-        """Adds a frame to the in-memory buffer deque.
-
-        A copy of the frame is stored to ensure that the memory is managed by
-        Python's garbage collector, preventing potential memory leaks from
-        OpenCV's internal buffer management.
-        """
-        if self.memory_buffer is not None:
-            self.memory_buffer.append(frame.copy())
-
     def reset_after_fire(self) -> None:
         """Resets the state after handling a fire event."""
-        self.pre_fire_buffer.clear()
         self.signal_handler.reset_fire_event()
         self.signal_handler.reset_fire_extinguished_event()
-        if settings.video.buffer_mode == "memory":
-            # Re-initialize the queue to discard any leftover frames from post-fire recording.
-            self.frame_queue = asyncio.Queue()
-            self.__call__ = self._add_frame_to_memory_buffer
+        self.strategy.reset()
         logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
 
-    async def _run_main_loop(self) -> None:
-        """Starts the appropriate main loop based on the buffer mode."""
-        try:
-            if settings.video.buffer_mode == "disk":
-                await self._writer_task()
-            elif settings.video.buffer_mode == "memory":
-                await self._memory_mode_event_loop()
-        except asyncio.CancelledError:
-            logger.info("Main saver task was cancelled.")
-            # Re-raise to ensure the task actually terminates.
-            raise
-        finally:
-            if self.writer is not None:
-                self.writer.release()
-                if self.current_video_path:
-                    logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
-
-    async def _memory_mode_event_loop(self) -> None:
-        """The main event loop when operating in 'memory' buffer mode.
-
-        This loop waits efficiently for the fire signal and triggers the
-        event handling logic when it is set.
-        """
-        while True:
-            # This will suspend the task indefinitely until the event is set.
-            await self.signal_handler.fire_detected_event.wait()
-            async with self._fire_handling_lock:
-                # If the event was handled and reset while waiting for the lock, do nothing.
-                if not self.signal_handler.is_fire_detected():
-                    continue
-                try:
-                    await self._handle_fire_event_async()
-                finally:
-                    # This ensures the event is reset, preventing a busy-loop
-                    # if _handle_fire_event_async raises an exception.
-                    self.reset_after_fire()
-
-    async def _writer_task(self) -> None:
-        """The main consumer task that writes frames from the queue to disk."""
-        loop = asyncio.get_running_loop()
-        while True:
-            if self.signal_handler.is_fire_detected() and not self._fire_handling_lock.locked():
-                async with self._fire_handling_lock:
-                    if self.signal_handler.is_fire_detected():
-                        try:
-                            await self._handle_fire_event_async()
-                        finally:
-                            self.reset_after_fire()
-
-            try:
-                frame = await asyncio.wait_for(self.frame_queue.get(), timeout=1)
-                if frame is None:
-                    break
-                await loop.run_in_executor(None, self._write_frame_blocking, frame)
-            except TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                logger.info("Writer task cancelled during frame wait.")
-                raise  # Ensure cancellation propagates
-            except Exception:
-                logger.exception("Error in writer task, but will continue running.")
-
     def __call__(self, frame: np.ndarray) -> None:
-        """Allows the class instance to be called like a function.
-
-        This method is dynamically assigned during initialization based on the
-        configured buffer mode.
-        """
-        raise NotImplementedError("This class must be initialized before it can be called.")
+        """Delegates frame handling to the current strategy object."""
+        if self.enabled:
+            self.strategy.add_frame(frame)
 
     def _flush_buffer_to_disk_blocking(self, frames: deque[np.ndarray], path: str) -> None:
-        """Writes a deque of frames to a single video file.
-
-        This is a synchronous, blocking method designed to be run in an executor.
-
-        Args:
-            frames: A deque of video frames to write.
-            path: The full path of the video file to create.
-        """
+        """Writes a deque of frames to a single video file."""
         if not frames:
             logger.warning("Memory buffer is empty, cannot flush to disk.")
             return
 
-        # Get frame size from the first frame
         first_frame = frames[0]
         height, width, _ = first_frame.shape
         frame_size = (width, height)
@@ -372,7 +240,7 @@ class AsyncVideoChunkSaver:
 
     @staticmethod
     def _move_file_blocking(chunk_path: str, event_dir: str) -> None:
-        """Moves a file from the main directory to an event archive directory."""
+        """Moves a file to an event archive directory."""
         try:
             if os.path.exists(chunk_path):
                 shutil.move(chunk_path, event_dir)
@@ -393,11 +261,7 @@ class AsyncVideoChunkSaver:
             await loop.run_in_executor(None, self._move_file_blocking, chunk_path, event_dir)
 
     async def _create_event_directory(self) -> str | None:
-        """Creates a timestamped directory for a fire event.
-
-        Returns:
-            The path to the created directory, or None if creation failed.
-        """
+        """Creates a timestamped directory for a fire event."""
         event_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         event_dir = os.path.join(self.output_dir, f"event_{event_timestamp}")
         try:
@@ -420,62 +284,14 @@ class AsyncVideoChunkSaver:
         self.chunk_limit_action = self._noop
 
         try:
-            if settings.video.buffer_mode == "memory":
-                await self._handle_memory_mode_fire_event(event_dir)
-            else:  # 'disk' mode
-                await self._handle_disk_mode_fire_event(event_dir)
+            await self.strategy.handle_fire_event(event_dir)
+            await self._save_post_fire_chunks_async(event_dir)
         finally:
             self.chunk_limit_action = original_cleanup_action
             logger.info("Fire event handled. Restoring normal chunk rotation policy.")
 
-    async def _handle_disk_mode_fire_event(self, event_dir: str) -> None:
-        """Handles the fire event for 'disk' buffering mode."""
-        # Archive all chunks currently in the buffer except the active one.
-        cold_chunks = list(self.pre_fire_buffer)[:-1]
-        logger.info(f"Queueing {len(cold_chunks)} pre-fire chunks for archiving.")
-        for path in cold_chunks:
-            try:
-                self.archive_queue.put_nowait((path, event_dir))
-            except asyncio.QueueFull:
-                logger.error(f"Archive queue is full. Failed to queue chunk for archiving {path}.")
-
-        await self._finalize_active_chunk_async(event_dir)
-        await self._save_post_fire_chunks_async(event_dir)
-
-    async def _handle_memory_mode_fire_event(self, event_dir: str) -> None:
-        """Handles the fire event for 'memory' buffering mode."""
-        await self._flush_and_archive_memory_buffer(event_dir)
-
-        # Switch to disk mode to capture post-fire chunks.
-        logger.info("Switching to disk mode for post-fire recording.")
-        self.__call__ = self._queue_frame
-
-        await self._save_post_fire_chunks_async(event_dir)
-
-    async def _flush_and_archive_memory_buffer(self, event_dir: str) -> None:
-        """Flushes the in-memory frame buffer to a file in the event directory."""
-        if self.memory_buffer is None:
-            logger.error("Memory buffer not initialized, cannot handle fire event.")
-            return
-
-        frames_to_flush = self.memory_buffer.copy()
-        self.memory_buffer.clear()
-        logger.info(f"Captured {len(frames_to_flush)} pre-fire frames from memory.")
-
-        if not frames_to_flush:
-            return
-
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        pre_fire_path = os.path.join(event_dir, f"{self.FILENAME_PREFIX}pre-fire-buffer_{timestamp}{self.FILENAME_SUFFIX}")
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._flush_buffer_to_disk_blocking, frames_to_flush, pre_fire_path)
-
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
-        """Continues recording the active chunk and archives it upon completion.
-
-        Args:
-            event_dir: The destination directory for the archive.
-        """
+        """Continues recording the active chunk and archives it upon completion."""
         logger.info("Finalizing the video chunk active during fire detection...")
         loop = asyncio.get_running_loop()
         timeout_retries = 0
@@ -485,7 +301,6 @@ class AsyncVideoChunkSaver:
                 if frame is None:
                     logger.warning("Shutdown signaled while finalizing active chunk.")
                     return
-                # Pass event_dir to ensure the next chunk (if any) is created there
                 closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
                 if closed_chunk:
                     logger.info("Active chunk finalized and queued for archive.")
@@ -517,11 +332,7 @@ class AsyncVideoChunkSaver:
         logger.info("Fire extinguished signal received. Saving final post-fire chunks.")
 
     async def _record_final_chunks_loop(self, event_dir: str) -> None:
-        """Saves a configured number of final video chunks.
-
-        Args:
-            event_dir: The destination directory for the archive.
-        """
+        """Saves a configured number of final video chunks."""
         if self.chunks_to_keep_after_fire <= 0:
             return
 
@@ -551,12 +362,7 @@ class AsyncVideoChunkSaver:
                     return
 
     async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves a configured number of additional chunks directly to the event directory.
-
-        If `record_during_fire` is True, this method will first record indefinitely
-        until the `fire_extinguished` signal is received, and then record the
-        final number of chunks.
-        """
+        """Saves additional chunks directly to the event directory after a fire."""
         if settings.video.record_during_fire:
             await self._record_during_fire_loop(event_dir)
 
