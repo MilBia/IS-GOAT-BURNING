@@ -222,7 +222,11 @@ class AsyncVideoChunkSaver:
         logger.debug("FIRE EVENT HANDLING COMPLETE. Resuming normal operations.")
 
     def __call__(self, frame: np.ndarray) -> None:
-        """Delegates frame handling to the current strategy object."""
+        """Delegates frame handling to the current strategy object.
+
+        Args:
+            frame: The video frame to process.
+        """
         if self.enabled:
             self.strategy.add_frame(frame)
 
