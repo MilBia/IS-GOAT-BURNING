@@ -189,7 +189,17 @@ class AsyncVideoChunkSaver:
             logger.error(f"Error listing files in {self.output_dir} for cleanup: {e}")
 
     def _start_new_chunk_blocking(self, frame_size: tuple[int, int], target_dir: str | None = None) -> str | None:
-        """Closes the current video chunk and starts a new one."""
+        """Closes the current video chunk and starts a new one.
+
+        Args:
+            frame_size: A tuple of (width, height) for the new video chunk.
+            target_dir: If provided, the new chunk is created in this directory;
+                otherwise, it's created in the default output directory.
+
+        Returns:
+            The file path of the chunk that was just closed, or None if there
+            was no previous chunk.
+        """
         if target_dir is None:
             self.chunk_limit_action()
 
@@ -210,7 +220,15 @@ class AsyncVideoChunkSaver:
         return previous_chunk_path
 
     def _write_frame_blocking(self, frame: np.ndarray, target_dir: str | None = None) -> str | None:
-        """Writes a single frame, starting a new chunk if necessary."""
+        """Writes a single frame, starting a new chunk if necessary.
+
+        Args:
+            frame: The video frame (as a NumPy array) to be written.
+            target_dir: The target directory for new chunks, if one needs to be started.
+
+        Returns:
+            The path of a video chunk if it was just closed, otherwise None.
+        """
         closed_chunk_path: str | None = None
         is_new_chunk_needed = self.writer is None or (time.time() - self.chunk_start_time) >= self.chunk_length_seconds
 
@@ -242,7 +260,12 @@ class AsyncVideoChunkSaver:
             self.strategy.add_frame(frame)
 
     def _flush_buffer_to_disk_blocking(self, frames: deque[np.ndarray], path: str) -> None:
-        """Writes a deque of frames to a single video file."""
+        """Writes a deque of frames to a single video file.
+
+        Args:
+            frames: A deque of video frames to write to the file.
+            path: The full path of the output video file.
+        """
         if not frames:
             logger.warning("Memory buffer is empty, cannot flush to disk.")
             return
@@ -287,7 +310,11 @@ class AsyncVideoChunkSaver:
             await loop.run_in_executor(None, self._move_file_blocking, chunk_path, event_dir)
 
     async def _create_event_directory(self) -> str | None:
-        """Creates a timestamped directory for a fire event."""
+        """Creates a timestamped directory for a fire event.
+
+        Returns:
+            The path to the created directory, or None if creation failed.
+        """
         event_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         event_dir = os.path.join(self.output_dir, f"event_{event_timestamp}")
         try:
@@ -317,7 +344,11 @@ class AsyncVideoChunkSaver:
             logger.info("Fire event handled. Restoring normal chunk rotation policy.")
 
     async def _finalize_active_chunk_async(self, event_dir: str) -> None:
-        """Continues recording the active chunk and archives it upon completion."""
+        """Continues recording the active chunk and archives it upon completion.
+
+        Args:
+            event_dir: The destination directory for the archive.
+        """
         logger.info("Finalizing the video chunk active during fire detection...")
         loop = asyncio.get_running_loop()
         timeout_retries = 0
@@ -343,7 +374,11 @@ class AsyncVideoChunkSaver:
                     return
 
     async def _record_during_fire_loop(self, event_dir: str) -> None:
-        """Records video chunks until the 'fire extinguished' signal is received."""
+        """Records video chunks until the 'fire extinguished' signal is received.
+
+        Args:
+            event_dir: The directory where video chunks will be saved.
+        """
         logger.info("Recording will continue for the duration of the fire.")
         loop = asyncio.get_running_loop()
         while not self.signal_handler.is_fire_extinguished():
@@ -358,7 +393,11 @@ class AsyncVideoChunkSaver:
         logger.info("Fire extinguished signal received. Saving final post-fire chunks.")
 
     async def _record_final_chunks_loop(self, event_dir: str) -> None:
-        """Saves a configured number of final video chunks."""
+        """Saves a configured number of final video chunks.
+
+        Args:
+            event_dir: The directory where video chunks will be saved.
+        """
         if self.chunks_to_keep_after_fire <= 0:
             return
 
@@ -388,7 +427,11 @@ class AsyncVideoChunkSaver:
                     return
 
     async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves additional chunks directly to the event directory after a fire."""
+        """Saves additional chunks directly to the event directory after a fire.
+
+        Args:
+            event_dir: The destination directory for the post-fire videos.
+        """
         if settings.video.record_during_fire:
             await self._record_during_fire_loop(event_dir)
 

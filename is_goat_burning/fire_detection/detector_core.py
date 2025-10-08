@@ -130,7 +130,11 @@ class StreamFireDetector:
                 frame_counter -= frames_between_step
 
     async def _handle_fire_detection(self, fire_in_frame: bool) -> None:
-        """Handles the state logic for fire detection with debouncing."""
+        """Handles the state logic for fire detection with debouncing.
+
+        Args:
+            fire_in_frame: A boolean indicating if fire was detected in the current frame.
+        """
         now = time.monotonic()
 
         if fire_in_frame:
