@@ -145,7 +145,7 @@ class AsyncVideoChunkSaver:
             tasks.append(self._archive_task)
 
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*(asyncio.shield(t) for t in tasks), return_exceptions=True)
 
         if self.writer is not None:
             self.writer.release()
