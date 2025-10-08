@@ -539,7 +539,9 @@ class AsyncVideoChunkSaver:
                 if closed_chunk:
                     chunks_saved_count += 1
                     logger.info(
-                        f"Saved post-fire chunk {chunks_saved_count}/{self.chunks_to_keep_after_fire} directly to event directory."  # noqa: E501
+                        "Saved post-fire chunk %d/%d directly to event directory.",
+                        chunks_saved_count,
+                        self.chunks_to_keep_after_fire,
                     )
             except TimeoutError:
                 timeout_retries += 1
