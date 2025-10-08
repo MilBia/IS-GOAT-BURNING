@@ -86,3 +86,32 @@ async def test_fire_extinguished_debounce_triggers_signal_after_delay(detector: 
 
     detector.signal_handler.fire_extinguished.assert_called_once()
     assert detector.fire_is_currently_detected is False
+
+
+@pytest.mark.asyncio
+async def test_fire_detected_with_zero_debounce_triggers_immediately(
+    detector: StreamFireDetector, mock_settings: MagicMock
+) -> None:
+    """Verify that a fire detection with zero debounce triggers on the first frame."""
+    mock_settings.fire_detected_debounce_seconds = 0.0
+
+    with patch("time.monotonic", return_value=100):
+        await detector._handle_fire_detection(fire_in_frame=True)
+
+    detector.signal_handler.fire_detected.assert_called_once()
+    assert detector.fire_is_currently_detected is True
+
+
+@pytest.mark.asyncio
+async def test_fire_extinguished_with_zero_debounce_triggers_immediately(
+    detector: StreamFireDetector, mock_settings: MagicMock
+) -> None:
+    """Verify that a fire extinguished signal with zero debounce triggers on the first frame."""
+    mock_settings.fire_extinguished_debounce_seconds = 0.0
+    detector.fire_is_currently_detected = True  # Assume fire is ongoing
+
+    with patch("time.monotonic", return_value=200):
+        await detector._handle_fire_detection(fire_in_frame=False)
+
+    detector.signal_handler.fire_extinguished.assert_called_once()
+    assert detector.fire_is_currently_detected is False

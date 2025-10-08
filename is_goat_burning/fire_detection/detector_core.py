@@ -142,7 +142,7 @@ class StreamFireDetector:
             if not self.fire_is_currently_detected:
                 if self._potential_fire_start_time is None:
                     self._potential_fire_start_time = now
-                elif now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
+                if now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
                     self.fire_is_currently_detected = True
                     self._potential_fire_start_time = None
                     self.signal_handler.fire_detected()
@@ -152,7 +152,7 @@ class StreamFireDetector:
             if self.fire_is_currently_detected:
                 if self._potential_fire_end_time is None:
                     self._potential_fire_end_time = now
-                elif now - self._potential_fire_end_time >= settings.fire_extinguished_debounce_seconds:
+                if now - self._potential_fire_end_time >= settings.fire_extinguished_debounce_seconds:
                     self.fire_is_currently_detected = False
                     self._potential_fire_end_time = None
                     logger.info("Fire is no longer detected (after debounce).")
