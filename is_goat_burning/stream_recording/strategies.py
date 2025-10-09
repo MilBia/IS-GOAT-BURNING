@@ -164,6 +164,8 @@ class DiskBufferStrategy(BufferStrategy):
         except asyncio.CancelledError:
             logger.info("Disk strategy main loop was cancelled.")
             raise
+        finally:
+            self.context._release_writer()
 
 
 class MemoryBufferStrategy(BufferStrategy):
@@ -261,3 +263,5 @@ class MemoryBufferStrategy(BufferStrategy):
         except asyncio.CancelledError:
             logger.info("Memory strategy main loop was cancelled.")
             raise
+        finally:
+            self.context._release_writer()

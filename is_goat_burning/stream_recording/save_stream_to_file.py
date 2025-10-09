@@ -149,14 +149,17 @@ class AsyncVideoChunkSaver:
             # Shield tasks to ensure cleanup completes even if stop() is cancelled.
             await asyncio.gather(*(asyncio.shield(t) for t in tasks), return_exceptions=True)
 
-        if self.writer is not None:
-            self.writer.release()
-            if self.current_video_path:
-                logger.info(f"Saved final video chunk on exit: {self.current_video_path}")
-
     def _noop(self, *args: Any, **kwargs: Any) -> None:
         """A "no-operation" method used when the saver is disabled."""
         pass
+
+    def _release_writer(self) -> None:
+        """Releases the video writer and logs the final saved chunk."""
+        if self.writer is not None:
+            self.writer.release()
+            if self.current_video_path:
+                logger.info(f"Saved final video chunk on exit: {os.path.basename(self.current_video_path)}")
+            self.writer = None
 
     def _drain_frame_queue(self) -> None:
         """Safely drains the frame queue to discard any pending frames."""
