@@ -11,9 +11,12 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 ## Features
 
 - **Real-time Fire Detection:** Utilizes computer vision to analyze the live webcam feed for signs of fire.
-- **Email Notifications:** Sends email alerts immediately upon detecting fire, notifying designated recipients.
-- **Discord Notifications:** Sends Discord alerts immediately upon detecting fire, notifying designated recipients.
-- **Configurable Monitoring:** Allows adjustment of monitoring frequency to control resource usage and sensitivity.
+- **Advanced Fire Debouncing:** Prevents false positives from brief visual flickers by requiring a sustained detection before triggering alerts.
+- **Email & Discord Notifications:** Sends immediate alerts to designated recipients via email and/or Discord webhooks.
+- **Flexible Video Archiving:** Choose between two strategies for saving footage:
+    - **Memory Mode (Default):** Keeps a pre-fire buffer in RAM for minimal disk I/O, flushing video to disk only when a fire is detected. This mode is optimized for performance and reduced wear on storage devices.
+    - **Disk Mode:** Continuously saves video chunks to disk, ideal for systems with limited RAM.
+- **Continuous Fire Recording:** Optionally record video for the entire duration of a fire event, plus a configured time after it is extinguished.
 - **Dockerized Deployment:** Easily deployable with Docker, ensuring consistent performance across different environments.
 - **CUDA Acceleration (Optional):** Supports CUDA for significantly faster processing on NVIDIA GPUs.
 
@@ -83,6 +86,10 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
+| **Debouncing** | | |
+| `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |
+| `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`| Seconds a fire must be continuously absent before the 'extinguished' state is registered. | `5.0` |
+| | | |
 | **Email Settings** | | |
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |
 | `EMAIL__SENDER` | Your sender email address. | `""` |
@@ -98,11 +105,12 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
 | `VIDEO__VIDEO_OUTPUT_DIRECTORY` | Directory to save video files. | `"./recordings"` |
-| `VIDEO__BUFFER_MODE` | Buffering strategy: `disk` (constant saving) or `memory`. | `"memory"` |
+| `VIDEO__BUFFER_MODE` | Buffering strategy: `memory` (default) or `disk`. | `"memory"` |
 | `VIDEO__MEMORY_BUFFER_SECONDS`| Duration (seconds) of pre-fire footage to keep in RAM in `memory` mode. | `60` |
-| `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds for `disk` mode. | `300` |
-| `VIDEO__MAX_VIDEO_CHUNKS` | Max number of `disk` chunks to keep (old ones are deleted). | `20` |
-| `VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE` | Number of extra chunks to save *after* a fire is detected. | `10` |
+| `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds. | `300` |
+| `VIDEO__MAX_VIDEO_CHUNKS` | Max number of `disk` mode chunks to keep (old ones are deleted). | `20` |
+| `VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE` | Defines the duration of post-fire recording (`chunks_to_keep * chunk_length`). | `10` |
+| `VIDEO__RECORD_DURING_FIRE` | If `true`, recording continues for the entire fire duration plus the post-fire period. | `false` |
 
 
 **Important Notes**:
@@ -111,8 +119,8 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 -   **Video Output:** `VIDEO_OUTPUT=true` is for local debugging only. Do not use it in a headless or Docker environment without X11 forwarding.
 -   **CUDA:** `CUDA=true` requires a compatible NVIDIA GPU and properly installed drivers. See the Docker section for setup instructions.
 -   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
-    -   `disk` (default): Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
-    -   `memory`: Holds a buffer of recent video frames in RAM, controlled by `VIDEO__MEMORY_BUFFER_SECONDS`. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and the video's resolution/framerate.
+    -   `memory` (default): Holds a buffer of recent, compressed video frames in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and video resolution/framerate.
+    -   `disk`: Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
 
 ## HOW TO RUN
 
@@ -288,7 +296,6 @@ This is the recommended way to validate changes in a clean, production-like envi
 ## SOURCES
 
 -   [Gävle Goat](https://en.wikipedia.org/wiki/G%C3%A4vle_goat) - Information about the Gävle Goat.
--   [VidGear](https://pypi.org/project/vidgear/) - A video processing framework.
 -   [yt-dlp](https://pypi.org/project/yt-dlp/) - A youtube-dl fork with additional features.
 -   [Fire Detection System](https://github.com/gunarakulangunaretnam/fire-detection-system-in-python-opencv) - The core computer vision logic for fire detection.
 -   [Python Email Examples](https://docs.python.org/3/library/email.examples.html) - Example on email sending using python
