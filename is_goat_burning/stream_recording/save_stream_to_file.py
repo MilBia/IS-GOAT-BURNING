@@ -51,8 +51,8 @@ class AsyncVideoChunkSaver:
         chunk_length_seconds (int): The duration of each video chunk file.
         max_chunks (int): The maximum number of non-archived chunks to keep on
             disk. Older chunks are deleted to enforce this limit.
-        chunks_to_keep_after_fire (int): The number of additional chunks to
-            record and archive after a fire is first detected.
+        chunks_to_keep_after_fire: The number of chunk-lengths of video to save after a
+            fire is detected.
         fps (float): The frames per second of the video stream.
         frame_queue (asyncio.Queue): A queue for incoming frames to be written
             to disk, primarily used by the DiskBufferStrategy or during
@@ -292,10 +292,11 @@ class AsyncVideoChunkSaver:
         try:
             # Write the already decoded first frame
             writer.write(first_frame)
-            # Decode and write the rest of the frames by iterating directly over the deque
-            for i, encoded_frame in enumerate(frames):
-                if i == 0:
-                    continue  # The first frame is already written
+            # Decode and write the rest of the frames. We create an iterator
+            # and skip the first frame, which has already been written.
+            remaining_frames = iter(frames)
+            next(remaining_frames, None)
+            for encoded_frame in remaining_frames:
                 frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
                 frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
                 if frame is not None:
