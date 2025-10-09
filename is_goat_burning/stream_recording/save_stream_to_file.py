@@ -294,11 +294,13 @@ class AsyncVideoChunkSaver:
             # Write the already decoded first frame
             writer.write(first_frame)
             # Decode and write the rest of the frames.
-            for encoded_frame in itertools.islice(frames, 1, None):
+            for i, encoded_frame in enumerate(itertools.islice(frames, 1, None), start=1):
                 frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
                 frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
                 if frame is not None:
                     writer.write(frame)
+                else:
+                    logger.warning(f"Could not decode frame index {i} from memory buffer. Skipping.")
         finally:
             writer.release()
             logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
