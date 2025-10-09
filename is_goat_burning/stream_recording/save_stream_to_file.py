@@ -424,17 +424,19 @@ class AsyncVideoChunkSaver:
 
         logger.info(f"Now saving ~{total_duration_seconds} seconds of post-fire video ({total_frames_to_record} frames)...")
         loop = asyncio.get_running_loop()
-
-        for i in range(total_frames_to_record):
+        frames_recorded = 0
+        while frames_recorded < total_frames_to_record:
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.POST_FIRE_FRAME_TIMEOUT)
                 if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording. Finalizing early.")
                     break
                 await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
+                frames_recorded += 1
             except TimeoutError:
                 logger.warning(
-                    f"Stream ended during post-fire recording. Saved {i}/{total_frames_to_record} frames before timeout."
+                    f"Stream ended during post-fire recording. "
+                    f"Saved {frames_recorded}/{total_frames_to_record} frames before timeout."
                 )
                 break
 
