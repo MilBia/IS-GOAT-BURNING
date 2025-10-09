@@ -1,4 +1,4 @@
-name: IS-GOAT-BURNING
+name: Python Tests & Coverage Badge
 
 on:
   push:
