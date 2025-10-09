@@ -2,53 +2,35 @@ name: Python Tests & Coverage Badge
 
 on:
   push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
-permissions:
-  # Important: This permission is required for the action to push the badge back to the repo.
-  contents: write
-
 jobs:
-  test-and-update-badge:
-    name: Run tests and update coverage badge
+  build:
+
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
+    - uses: actions/checkout@v3
     - name: Set up Python 3.12
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v3
       with:
         python-version: "3.12"
-        cache: 'pip'
-
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libgl1 libglib2.0-0
-
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements-dev.txt
-
-    - name: Run tests and generate coverage report
+    - name: Test with pytest
       run: |
-        PYTHONPATH=. pytest --cov=is_goat_burning --cov-report=json
-
+        PYTHONPATH=. pytest --cov=is_goat_burning --cov-report=term-missing
     - name: Generate coverage badge
       run: |
+        rm -f coverage.svg
         coverage-badge -o coverage.svg
-
-    - name: Commit and push coverage badge
-      # This step only runs for pushes to the main branch, not for pull requests.
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    - name: Commit coverage badge
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-        git add coverage.svg
-        # Check if there are changes to commit
-        git diff --staged --quiet || (git commit -m "ci: update coverage badge" && git push)
+        git add --force coverage.svg
+        git commit -m "chore(tests): update coverage badge" || echo "No changes to commit"
+        git push || echo "No changes to push"
