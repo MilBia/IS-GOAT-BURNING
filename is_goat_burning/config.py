@@ -89,10 +89,18 @@ class VideoSettings(BaseModel):
     Attributes:
         save_video_chunks: If True, saving video chunks to disk is enabled.
         video_output_directory: The directory to save video files in.
-        video_chunk_length_seconds: The duration of each video chunk.
+        video_chunk_length_seconds: The duration of each video chunk file when
+            using the "disk" buffer mode.
         max_video_chunks: The maximum number of chunks to keep on disk.
-        chunks_to_keep_after_fire: The number of extra chunks to save after a
+        chunks_to_keep_after_fire: The number of chunk-lengths of video to save after a
             fire is detected.
+        buffer_mode: The buffering strategy. "disk" saves chunks to disk
+            continuously. "memory" holds frames in RAM and only saves to
+            disk when a fire is detected.
+        memory_buffer_seconds: The duration in seconds of pre-fire video to
+            hold in RAM when using "memory" buffer mode.
+        record_during_fire: If True, recording will continue for the entire
+            duration of the fire event.
     """
 
     save_video_chunks: bool = Field(default=False)
@@ -100,6 +108,9 @@ class VideoSettings(BaseModel):
     video_chunk_length_seconds: int = Field(default=300)
     max_video_chunks: int = Field(default=20)
     chunks_to_keep_after_fire: int = Field(default=10)
+    buffer_mode: Literal["disk", "memory"] = Field(default="memory")
+    memory_buffer_seconds: int = Field(default=60)
+    record_during_fire: bool = Field(default=False)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
@@ -132,6 +143,8 @@ class Settings(BaseSettings):
     cuda: bool = Field(validation_alias="CUDA", default=False)
     reconnect_delay_seconds: int = Field(default=5, validation_alias="RECONNECT_DELAY_SECONDS")
     stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
+    fire_detected_debounce_seconds: float = Field(default=0.0, validation_alias="FIRE_DETECTED_DEBOUNCE_SECONDS")
+    fire_extinguished_debounce_seconds: float = Field(default=5.0, validation_alias="FIRE_EXTINGUISHED_DEBOUNCE_SECONDS")
 
     # Nested settings
     email: EmailSettings = Field(default_factory=EmailSettings)

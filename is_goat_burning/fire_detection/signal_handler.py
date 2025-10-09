@@ -18,6 +18,8 @@ class SignalHandler:
     Attributes:
         fire_detected_event (asyncio.Event): An event that is set when a fire
             is detected and cleared once handled.
+        fire_extinguished_event (asyncio.Event): An event that is set when a
+            fire is no longer detected.
         main_task (asyncio.Task | None): The main application task that should
             be cancelled upon receiving a termination signal.
     """
@@ -43,6 +45,7 @@ class SignalHandler:
             return
 
         self.fire_detected_event = asyncio.Event()
+        self.fire_extinguished_event = asyncio.Event()
         self.main_task: asyncio.Task | None = None
         self._running = True
 
@@ -96,3 +99,18 @@ class SignalHandler:
         """Resets the fire event after it has been handled."""
         self.fire_detected_event.clear()
         logger.info("Fire event has been handled and reset.")
+
+    def fire_extinguished(self) -> None:
+        """Sets the event to signal that a fire is no longer detected."""
+        if not self.fire_extinguished_event.is_set():
+            logger.info("FIRE EXTINGUISHED signal received.")
+            self.fire_extinguished_event.set()
+
+    def is_fire_extinguished(self) -> bool:
+        """Checks if the fire extinguished event has been triggered."""
+        return self.fire_extinguished_event.is_set()
+
+    def reset_fire_extinguished_event(self) -> None:
+        """Resets the fire extinguished event after it has been handled."""
+        self.fire_extinguished_event.clear()
+        logger.debug("Fire extinguished event has been handled and reset.")

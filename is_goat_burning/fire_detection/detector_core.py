@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
+import time
 from typing import Any
 
 import cv2
 import numpy as np
 
+from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.detectors import FireDetector
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
@@ -53,6 +55,8 @@ class StreamFireDetector:
         self.stream: VideoStreamer | None = None
         self.fire_detector: FireDetector | None = None
         self.fire_is_currently_detected = False
+        self._potential_fire_start_time: float | None = None
+        self._potential_fire_end_time: float | None = None
 
     @classmethod
     async def create(
@@ -125,6 +129,43 @@ class StreamFireDetector:
                 yield frame
                 frame_counter -= frames_between_step
 
+    async def _handle_fire_detection(self, fire_in_frame: bool) -> None:
+        """Handles the state logic for fire detection with debouncing.
+
+        Args:
+            fire_in_frame: A boolean indicating if fire was detected in the current frame.
+        """
+        now = time.monotonic()
+
+        if fire_in_frame:
+            self._potential_fire_end_time = None  # Reset any pending extinguish signal
+            if self.fire_is_currently_detected:
+                return  # Already in fire state, no change needed
+
+            # Start or continue debounce for fire detection
+            if self._potential_fire_start_time is None:
+                self._potential_fire_start_time = now
+
+            if now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
+                self.fire_is_currently_detected = True
+                self._potential_fire_start_time = None  # Clear timer
+                self.signal_handler.fire_detected()
+                await self.on_fire_action()
+        else:
+            self._potential_fire_start_time = None  # Reset any pending fire signal
+            if not self.fire_is_currently_detected:
+                return  # Already in no-fire state, no change needed
+
+            # Start or continue debounce for fire extinguished
+            if self._potential_fire_end_time is None:
+                self._potential_fire_end_time = now
+
+            if now - self._potential_fire_end_time >= settings.fire_extinguished_debounce_seconds:
+                self.fire_is_currently_detected = False
+                self._potential_fire_end_time = None  # Clear timer
+                logger.info("Fire is no longer detected (after debounce).")
+                self.signal_handler.fire_extinguished()
+
     async def __call__(self) -> None:
         """Starts the fire detection loop.
 
@@ -147,19 +188,7 @@ class StreamFireDetector:
             loop = asyncio.get_running_loop()
             async for frame in self._frame_generator():
                 fire_in_frame, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
-
-                # --- Stateful Fire Detection Logic ---
-                if fire_in_frame and not self.fire_is_currently_detected:
-                    # State transition: NO FIRE -> FIRE
-                    self.fire_is_currently_detected = True
-                    self.signal_handler.fire_detected()
-                    await self.on_fire_action()
-                elif not fire_in_frame and self.fire_is_currently_detected:
-                    # State transition: FIRE -> NO FIRE
-                    self.fire_is_currently_detected = False
-                    logger.info("Fire is no longer detected. Resuming normal monitoring.")
-                    # NOTE: We do not reset the global fire_detected_event here,
-                    # as that is the responsibility of the video archiver.
+                await self._handle_fire_detection(fire_in_frame)
 
                 if self.video_output:
                     cv2.imshow("output", annotated_frame)

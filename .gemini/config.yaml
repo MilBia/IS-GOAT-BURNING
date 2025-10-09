@@ -10,6 +10,7 @@ ignore_patterns:
   - ".pytest_cache/"
   - "requirements*.txt" # Excludes all generated requirements files
   - "*.md" # Excludes markdown files from core context, except for the styleguide itself
+  - "!README.md"
 
 # Configuration for pull request events.
 # We will keep the defaults for now as specified in the documentation,
