@@ -90,6 +90,14 @@ class BufferStrategy(ABC):
 class DiskBufferStrategy(BufferStrategy):
     """A strategy that continuously writes incoming frames to disk chunks."""
 
+    async def stop(self) -> None:
+        """Stops the strategy's main processing loop gracefully, ensuring all frames are written."""
+        if self._main_task and not self._main_task.done():
+            # Use a sentinel value to ensure the queue is drained before stopping.
+            await self.context.frame_queue.put(None)
+            # Wait for the task to finish processing the queue.
+            await self._main_task
+
     def add_frame(self, frame: np.ndarray) -> None:
         """Puts a frame onto the asynchronous queue to be written to disk.
 
@@ -154,6 +162,8 @@ class DiskBufferStrategy(BufferStrategy):
                     frame = await asyncio.wait_for(
                         self.context.frame_queue.get(), timeout=self.context.FRAME_QUEUE_POLL_TIMEOUT
                     )
+                    if frame is None:  # Sentinel for graceful stop
+                        break
                     await loop.run_in_executor(None, self.context._write_frame_blocking, frame)
                 except TimeoutError:
                     continue
