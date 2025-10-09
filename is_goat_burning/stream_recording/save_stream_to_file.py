@@ -158,7 +158,8 @@ class AsyncVideoChunkSaver:
         if self.writer is not None:
             self.writer.release()
             if self.current_video_path:
-                logger.info(f"Saved final video chunk on exit: {os.path.basename(self.current_video_path)}")
+                # Log final chunk based on basename to avoid leaking full path
+                logger.info(f"Finalized video chunk: {os.path.basename(self.current_video_path)}")
             self.writer = None
 
     def _drain_frame_queue(self) -> None:
@@ -395,7 +396,7 @@ class AsyncVideoChunkSaver:
         logger.info("Fire extinguished signal received. Saving final post-fire chunks.")
 
     async def _record_final_chunks_loop(self, event_dir: str) -> None:
-        """Saves a configured number of final video chunks.
+        """Saves a configured number of frames, equivalent to a total duration.
 
         Args:
             event_dir: The directory where video chunks will be saved.
@@ -403,38 +404,52 @@ class AsyncVideoChunkSaver:
         if self.chunks_to_keep_after_fire <= 0:
             return
 
-        logger.info(f"Now saving {self.chunks_to_keep_after_fire} final post-fire chunks...")
+        total_duration_seconds = self.chunks_to_keep_after_fire * self.chunk_length_seconds
+        total_frames_to_record = int(total_duration_seconds * self.fps)
+
+        logger.info(f"Now saving ~{total_duration_seconds} seconds of post-fire video ({total_frames_to_record} frames)...")
         loop = asyncio.get_running_loop()
-        chunks_saved_count = 0
-        timeout_retries = 0
-        while chunks_saved_count < self.chunks_to_keep_after_fire:
+
+        for i in range(total_frames_to_record):
             try:
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.POST_FIRE_FRAME_TIMEOUT)
                 if frame is None:
-                    logger.warning("Shutdown signaled during post-fire recording.")
-                    return
-                closed_chunk = await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
-                if closed_chunk:
-                    chunks_saved_count += 1
-                    logger.info(
-                        "Saved post-fire chunk %d/%d directly to event directory.",
-                        chunks_saved_count,
-                        self.chunks_to_keep_after_fire,
-                    )
+                    logger.warning("Shutdown signaled during post-fire recording. Finalizing early.")
+                    break
+                await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
             except TimeoutError:
-                timeout_retries += 1
-                logger.warning(f"Timeout waiting for frame... Retry {timeout_retries}/{self.MAX_TIMEOUT_RETRIES}...")
-                if timeout_retries >= self.MAX_TIMEOUT_RETRIES:
-                    logger.error("Max retries exceeded waiting for frame during post-fire recording.")
-                    return
+                logger.warning(
+                    f"Stream ended during post-fire recording. Saved {i}/{total_frames_to_record} frames before timeout."
+                )
+                break
+
+    async def _flush_remaining_frames(self) -> None:
+        """Drains the frame queue and writes any remaining frames to the current writer."""
+        if self.writer is None:
+            return
+
+        loop = asyncio.get_running_loop()
+        if not self.frame_queue.empty():
+            logger.info(f"Flushing {self.frame_queue.qsize()} remaining frames from queue to finalize video chunk...")
+            while not self.frame_queue.empty():
+                try:
+                    frame = self.frame_queue.get_nowait()
+                    if frame is not None:
+                        # Writing is blocking, so run in executor. The target_dir doesn't
+                        # matter here as we are not starting a new chunk.
+                        await loop.run_in_executor(None, self.writer.write, frame)
+                except asyncio.QueueEmpty:
+                    break
+            logger.info("Finished flushing remaining frames.")
 
     async def _save_post_fire_chunks_async(self, event_dir: str) -> None:
-        """Saves additional chunks directly to the event directory after a fire.
+        """Saves additional chunks directly to the event directory after a fire."""
+        try:
+            if settings.video.record_during_fire:
+                await self._record_during_fire_loop(event_dir)
 
-        Args:
-            event_dir: The destination directory for the post-fire videos.
-        """
-        if settings.video.record_during_fire:
-            await self._record_during_fire_loop(event_dir)
-
-        await self._record_final_chunks_loop(event_dir)
+            await self._record_final_chunks_loop(event_dir)
+        finally:
+            await self._flush_remaining_frames()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._release_writer)

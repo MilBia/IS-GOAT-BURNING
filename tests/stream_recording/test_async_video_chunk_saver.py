@@ -13,9 +13,7 @@ from is_goat_burning.stream_recording.strategies import MemoryBufferStrategy
 
 # --- Test Constants ---
 TEST_NUM_PRE_FIRE_FRAMES = 5
-TEST_NUM_POST_FIRE_FRAMES_TO_QUEUE = 3
-DURING_FIRE_FRAMES = 2  # Frames to simulate during the fire event
-FINAL_CHUNKS_TO_KEEP = 2  # Should match chunks_to_keep_after_fire
+FINAL_CHUNKS_TO_KEEP = 2
 
 
 @pytest.fixture
@@ -204,6 +202,7 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
     mock_settings.video.buffer_mode = "memory"
     mock_settings.video.chunks_to_keep_after_fire = FINAL_CHUNKS_TO_KEEP
     mock_settings.video.record_during_fire = False
+    mock_settings.video.chunk_length_seconds = 1  # Make calculation easy
     mocker.patch(
         "is_goat_burning.stream_recording.strategies.settings",
         **{"video.memory_buffer_seconds": 10, "video.fps": 1.0},
@@ -213,20 +212,15 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
         enabled=True, output_dir=".", chunk_length_seconds=1, max_chunks=1, chunks_to_keep_after_fire=2, fps=1
     )
 
-    # --- FIX: Patch the class methods using string paths, not the instance ---
     mock_flush = mocker.patch(
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
     )
-    mock_write = mocker.patch(
-        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking",
-        side_effect=[None, "chunk1.mp4", "chunk2.mp4"],
-    )
+    mock_write = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking")
     mock_create_dir = mocker.patch(
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._create_event_directory",
         new_callable=mocker.AsyncMock,
         return_value="mock_event_dir",
     )
-
     mocker.patch.object(saver.archive_queue, "put_nowait")
 
     # --- Simulation ---
@@ -236,25 +230,22 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
         saver(frame)
     assert len(saver.strategy.memory_buffer) == 5
 
-    # 2. Fire Event Triggered
-    # (Populate frame queue for post-fire recording)
-    post_fire_frames = [np.ones((1, 1, 3), dtype=np.uint8) for _ in range(3)]
+    # 2. Fire Event: Populate queue with more frames than needed to test termination
+    frames_to_record = saver.chunks_to_keep_after_fire * saver.chunk_length_seconds * int(saver.fps)
+    # Put more frames in the queue than we expect to write
+    post_fire_frames = [np.ones((1, 1, 3), dtype=np.uint8) for _ in range(frames_to_record + 5)]
     for frame in post_fire_frames:
         await saver.frame_queue.put(frame)
 
     await saver._handle_fire_event_async()
 
     # --- Assertions ---
-    # 1. Assert event directory was created
     mock_create_dir.assert_awaited_once()
-
-    # 2. Assert pre-fire buffer was flushed
     mock_flush.assert_called_once()
     flushed_frames_arg = mock_flush.call_args[0][0]
     assert len(flushed_frames_arg) == 5
 
-    # 3. Assert post-fire chunks were written
-    assert mock_write.call_count == 3
-    expected_calls = [call(frame, "mock_event_dir") for frame in post_fire_frames]
-    # Use assert_has_calls because the exact call order might be complex
+    # 3. Assert that the correct number of post-fire frames were written
+    assert mock_write.call_count == frames_to_record
+    expected_calls = [call(frame, "mock_event_dir") for frame in post_fire_frames[:frames_to_record]]
     mock_write.assert_has_calls(expected_calls)
