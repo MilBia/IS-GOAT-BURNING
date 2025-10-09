@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 from functools import partial
+import itertools
 import os
 import shutil
 import time
@@ -292,11 +293,8 @@ class AsyncVideoChunkSaver:
         try:
             # Write the already decoded first frame
             writer.write(first_frame)
-            # Decode and write the rest of the frames. We create an iterator
-            # and skip the first frame, which has already been written.
-            remaining_frames = iter(frames)
-            next(remaining_frames, None)
-            for encoded_frame in remaining_frames:
+            # Decode and write the rest of the frames.
+            for encoded_frame in itertools.islice(frames, 1, None):
                 frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
                 frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
                 if frame is not None:

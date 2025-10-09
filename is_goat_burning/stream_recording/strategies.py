@@ -17,6 +17,7 @@ from datetime import datetime
 import os
 import shutil
 from typing import TYPE_CHECKING
+from typing import ClassVar
 
 import cv2
 import numpy as np
@@ -171,6 +172,8 @@ class DiskBufferStrategy(BufferStrategy):
 class MemoryBufferStrategy(BufferStrategy):
     """A strategy that holds recent frames in memory and writes them to disk only on a fire event."""
 
+    JPEG_ENCODING_FORMAT: ClassVar[str] = ".jpg"
+
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the memory buffer strategy.
 
@@ -198,7 +201,7 @@ class MemoryBufferStrategy(BufferStrategy):
 
     def _add_frame_to_memory_buffer(self, frame: np.ndarray) -> None:
         """Compresses a frame to JPEG and adds it to the in-memory buffer deque."""
-        success, encoded_image = cv2.imencode(".jpg", frame)
+        success, encoded_image = cv2.imencode(self.JPEG_ENCODING_FORMAT, frame)
         if success:
             self.memory_buffer.append(encoded_image.tobytes())
 
