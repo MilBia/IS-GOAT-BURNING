@@ -1,4 +1,4 @@
-name: Python Tests & Coverage Badge
+name: IS-GOAT-BURNING
 
 on:
   push:
@@ -25,6 +25,7 @@ jobs:
         PYTHONPATH=. pytest --cov=is_goat_burning --cov-report=term-missing
     - name: Generate coverage badge
       run: |
+        rm -f coverage.svg
         coverage-badge -o coverage.svg
     - name: Commit coverage badge
       run: |
