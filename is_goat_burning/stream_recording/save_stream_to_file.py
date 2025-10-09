@@ -262,18 +262,24 @@ class AsyncVideoChunkSaver:
         if self.enabled:
             self.strategy.add_frame(frame)
 
-    def _flush_buffer_to_disk_blocking(self, frames: deque[np.ndarray], path: str) -> None:
-        """Writes a deque of frames to a single video file.
+    def _flush_buffer_to_disk_blocking(self, frames: deque[bytes], path: str) -> None:
+        """Writes a deque of compressed frames to a single video file.
 
         Args:
-            frames: A deque of video frames to write to the file.
+            frames: A deque of JPEG-compressed video frames (as bytes) to write.
             path: The full path of the output video file.
         """
         if not frames:
             logger.warning("Memory buffer is empty, cannot flush to disk.")
             return
 
-        first_frame = frames[0]
+        # Decode the first frame to get the video dimensions
+        first_frame_array = np.frombuffer(frames[0], dtype=np.uint8)
+        first_frame = cv2.imdecode(first_frame_array, cv2.IMREAD_COLOR)
+        if first_frame is None:
+            logger.error("Could not decode first frame from memory buffer. Aborting flush.")
+            return
+
         height, width, _ = first_frame.shape
         frame_size = (width, height)
         fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
@@ -282,10 +288,16 @@ class AsyncVideoChunkSaver:
             logger.error(f"Failed to open video writer for path: {path}")
             return
 
-        logger.info(f"Flushing {len(frames)} frames from memory to {os.path.basename(path)}...")
+        logger.info(f"Flushing {len(frames)} compressed frames from memory to {os.path.basename(path)}...")
         try:
-            for frame in frames:
-                writer.write(frame)
+            # Write the already decoded first frame
+            writer.write(first_frame)
+            # Decode and write the rest of the frames
+            for encoded_frame in list(frames)[1:]:
+                frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
+                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+                if frame is not None:
+                    writer.write(frame)
         finally:
             writer.release()
             logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
@@ -450,6 +462,9 @@ class AsyncVideoChunkSaver:
 
             await self._record_final_chunks_loop(event_dir)
         finally:
+            # This block is critical. It ensures that after all recording loops finish
+            # (or are interrupted), any frames still buffered in the queue are written
+            # out, and the video file is properly finalized and closed.
             await self._flush_remaining_frames()
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._release_writer)

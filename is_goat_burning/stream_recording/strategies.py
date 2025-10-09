@@ -179,9 +179,9 @@ class MemoryBufferStrategy(BufferStrategy):
         """
         super().__init__(context)
         buffer_size = int(settings.video.memory_buffer_seconds * self.context.fps)
-        self.memory_buffer: deque[np.ndarray] = deque(maxlen=buffer_size)
+        self.memory_buffer: deque[bytes] = deque(maxlen=buffer_size)
         self._is_post_fire_recording: bool = False
-        logger.info(f"Memory buffer initialized with a capacity for {buffer_size} frames.")
+        logger.info(f"Memory buffer initialized with a capacity for {buffer_size} compressed frames.")
 
     def reset(self) -> None:
         """Resets the memory buffer, drains the frame queue, and restores initial behavior."""
@@ -197,21 +197,23 @@ class MemoryBufferStrategy(BufferStrategy):
             self._add_frame_to_memory_buffer(frame)
 
     def _add_frame_to_memory_buffer(self, frame: np.ndarray) -> None:
-        """Adds a frame to the in-memory buffer deque."""
-        self.memory_buffer.append(frame.copy())
+        """Compresses a frame to JPEG and adds it to the in-memory buffer deque."""
+        success, encoded_image = cv2.imencode(".jpg", frame)
+        if success:
+            self.memory_buffer.append(encoded_image.tobytes())
 
     def _queue_frame(self, frame: np.ndarray) -> None:
-        """Queues a frame for disk writing, used during post-fire recording."""
+        """Queues a raw frame for disk writing, used during post-fire recording."""
         try:
             self.context.frame_queue.put_nowait(frame)
         except asyncio.QueueFull:
             logger.warning("Frame queue is full, dropping a frame.")
 
     async def _flush_and_archive_memory_buffer(self, event_dir: str) -> None:
-        """Flushes the in-memory frame buffer to a file in the event directory."""
+        """Flushes the in-memory buffer of compressed frames to a file in the event directory."""
         frames_to_flush = self.memory_buffer.copy()
         self.memory_buffer.clear()
-        logger.info(f"Captured {len(frames_to_flush)} pre-fire frames from memory.")
+        logger.info(f"Captured {len(frames_to_flush)} compressed pre-fire frames from memory.")
 
         if not frames_to_flush:
             return
