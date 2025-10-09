@@ -2,6 +2,7 @@ name: Python Tests & Coverage Badge
 
 on:
   push:
+    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 

@@ -1,6 +1,6 @@
 # Is the Gävle Goat Burning?
 
-![Code Coverage](https://raw.githubusercontent.com/MilBia/IS-GOAT-BURNING/main/coverage.svg)
+![Code Coverage](coverage.svg)
 
 This project monitors the [Gävle Goat webcam](https://youtu.be/vDFPpkp9krY) feed to detect if the goat is on fire. It uses computer vision techniques to analyze the video feed and sends email and/or Discord notifications if fire is detected.
 
