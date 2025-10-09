@@ -92,7 +92,7 @@ class VideoSettings(BaseModel):
         video_chunk_length_seconds: The duration of each video chunk file when
             using the "disk" buffer mode.
         max_video_chunks: The maximum number of chunks to keep on disk.
-        chunks_to_keep_after_fire: The number of extra chunks to save after a
+        chunks_to_keep_after_fire: The number of chunk-lengths of video to save after a
             fire is detected.
         buffer_mode: The buffering strategy. "disk" saves chunks to disk
             continuously. "memory" holds frames in RAM and only saves to

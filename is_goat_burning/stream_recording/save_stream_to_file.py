@@ -292,8 +292,10 @@ class AsyncVideoChunkSaver:
         try:
             # Write the already decoded first frame
             writer.write(first_frame)
-            # Decode and write the rest of the frames
-            for encoded_frame in list(frames)[1:]:
+            # Decode and write the rest of the frames by iterating directly over the deque
+            for i, encoded_frame in enumerate(frames):
+                if i == 0:
+                    continue  # The first frame is already written
                 frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
                 frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
                 if frame is not None:
