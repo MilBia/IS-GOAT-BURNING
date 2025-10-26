@@ -120,7 +120,7 @@ class Application:
                 # running state to False, so we only need to log other errors.
                 _, others = exc_group.split(asyncio.CancelledError)
                 if others:
-                    logger.error(f"Detector or connection attempt failed: {others.exceptions}")
+                    logger.error("Detector or connection attempt failed", exc_info=others)
             finally:
                 if detector and detector.stream:
                     await detector.stream.stop()
