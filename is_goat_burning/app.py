@@ -102,32 +102,38 @@ class Application:
             detector = None
             try:
                 try:
+                    logger.info(f"Attempting to start stream from source: {settings.source}")
+                    detector = await StreamFireDetector.create(
+                        src=settings.source,
+                        threshold=settings.fire_detection_threshold,
+                        video_output=settings.video_output,
+                        on_fire_action=self._queue_fire_event,
+                        checks_per_second=settings.checks_per_second,
+                    )
                     async with asyncio.TaskGroup() as tg:
-                        logger.info(f"Attempting to start stream from source: {settings.source}")
-                        detector = await StreamFireDetector.create(
-                            src=settings.source,
-                            threshold=settings.fire_detection_threshold,
-                            video_output=settings.video_output,
-                            on_fire_action=self._queue_fire_event,
-                            checks_per_second=settings.checks_per_second,
-                        )
                         detector_task = tg.create_task(detector())
                         self.signal_handler.set_main_task(detector_task)
                 except* Exception as exc_group:
                     logger.error(f"Detector task group failed: {exc_group.exceptions}")
-                finally:
-                    if detector and detector.stream:
-                        await detector.stream.stop()  # Ensure cleanup on group exit
-
-                if self.signal_handler.is_running():
-                    logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
-                    await asyncio.sleep(settings.reconnect_delay_seconds)
 
             except asyncio.CancelledError:
                 logger.info("Main run loop cancelled by shutdown signal.")
-                break  # Exit the while loop
+                break  # Exit the while loop immediately.
             except Exception:
-                logger.exception("An unexpected critical error occurred in the main run loop.")
+                # This catches errors from StreamFireDetector.create() and others.
+                logger.exception("An unexpected error occurred during the connection attempt.")
+            finally:
+                # This block executes regardless of success or failure, ensuring cleanup and delay.
+                if detector and detector.stream:
+                    await detector.stream.stop()
+
+                if self.signal_handler.is_running():
+                    logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
+                    try:
+                        await asyncio.sleep(settings.reconnect_delay_seconds)
+                    except asyncio.CancelledError:
+                        logger.info("Reconnect wait cancelled by shutdown signal.")
+                        break  # Exit the while loop immediately.
 
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""
