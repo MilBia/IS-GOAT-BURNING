@@ -30,7 +30,6 @@ class Application:
         action_queue (asyncio.Queue[str]): A queue for communicating events.
         on_fire_action_handler (OnceAction | None): The handler that executes
             notification actions.
-        detector_task (asyncio.Task | None): The task running the detector loop.
         action_manager_task (asyncio.Task | None): The task managing the event
             queue and triggering actions.
     """
@@ -40,7 +39,6 @@ class Application:
         self.signal_handler = SignalHandler()
         self.action_queue: asyncio.Queue[str] = asyncio.Queue()
         self.on_fire_action_handler: OnceAction | None = None
-        self.detector_task: asyncio.Task | None = None
         self.action_manager_task: asyncio.Task | None = None
         self._setup_actions()
 
@@ -103,35 +101,33 @@ class Application:
         while self.signal_handler.is_running():
             detector = None
             try:
-                logger.info(f"Attempting to start stream from source: {settings.source}")
-                detector = await StreamFireDetector.create(
-                    src=settings.source,
-                    threshold=settings.fire_detection_threshold,
-                    video_output=settings.video_output,
-                    on_fire_action=self._queue_fire_event,
-                    checks_per_second=settings.checks_per_second,
-                )
-                self.detector_task = asyncio.create_task(detector())
-                self.signal_handler.set_main_task(self.detector_task)
-                await self.detector_task
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        logger.info(f"Attempting to start stream from source: {settings.source}")
+                        detector = await StreamFireDetector.create(
+                            src=settings.source,
+                            threshold=settings.fire_detection_threshold,
+                            video_output=settings.video_output,
+                            on_fire_action=self._queue_fire_event,
+                            checks_per_second=settings.checks_per_second,
+                        )
+                        detector_task = tg.create_task(detector())
+                        self.signal_handler.set_main_task(detector_task)
+                except* Exception as exc_group:
+                    logger.error(f"Detector task group failed: {exc_group.exceptions}")
+                finally:
+                    if detector and detector.stream:
+                        await detector.stream.stop()  # Ensure cleanup on group exit
+
+                if self.signal_handler.is_running():
+                    logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
+                    await asyncio.sleep(settings.reconnect_delay_seconds)
 
             except asyncio.CancelledError:
-                # This is caught when exit_gracefully is called.
-                logger.info("Detector task cancelled by signal handler.")
+                logger.info("Main run loop cancelled by shutdown signal.")
                 break  # Exit the while loop
             except Exception:
-                logger.exception("Detector failed with an unhandled exception")
-            finally:
-                if detector and detector.stream:
-                    await detector.stream.stop()  # Ensure cleanup
-
-            if self.signal_handler.is_running():
-                logger.info(f"Stream has stopped unexpectedly. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
-                try:
-                    await asyncio.sleep(settings.reconnect_delay_seconds)
-                except asyncio.CancelledError:
-                    logger.info("Reconnect wait cancelled by shutdown signal.")
-                    break  # Exit the while loop immediately
+                logger.exception("An unexpected critical error occurred in the main run loop.")
 
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""
@@ -142,11 +138,6 @@ class Application:
             self.action_manager_task.cancel()
             tasks.append(self.action_manager_task)
 
-        # The detector task is managed by the run loop, but we ensure it's
-        # cancelled if it's still somehow running.
-        if self.detector_task and not self.detector_task.done():
-            self.detector_task.cancel()
-            tasks.append(self.detector_task)
-
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         logger.info("Application has shut down.")

@@ -26,14 +26,20 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
     """Verifies the app triggers the action handler when the detector signals fire."""
 
     # --- Setup ---
+    # This mock represents the detector instance returned by the factory.
+    # Its __call__ method will be executed by the TaskGroup.
     mock_detector_instance = AsyncMock()
 
-    async def factory_side_effect(**kwargs):
-        on_fire_action = kwargs.get("on_fire_action")
-        mock_detector_instance.side_effect = on_fire_action
-        return mock_detector_instance
+    async def detector_call_side_effect():
+        """Simulate the detector running and then emitting a fire signal."""
+        # The `on_fire_action` callback is passed to the factory during app.run()
+        # We retrieve it from the factory's call arguments to invoke it.
+        on_fire_action_callback = mock_detector_factory.call_args.kwargs["on_fire_action"]
+        await on_fire_action_callback()
 
-    mock_detector_factory.side_effect = factory_side_effect
+    mock_detector_instance.side_effect = detector_call_side_effect
+    # The factory itself returns our mocked instance.
+    mock_detector_factory.return_value = mock_detector_instance
 
     test_settings = Settings(
         source="mock://source",
@@ -48,13 +54,12 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
     app = Application()
     app.on_fire_action_handler = AsyncMock()
 
-    # Control the run loop using a stateful callable to prevent StopIteration.
-    # The list simulates a mutable "nonlocal" variable for the lambda.
+    # Control the run loop to execute only once.
     run_count = [0]
 
     def is_running_side_effect():
         run_count[0] += 1
-        return run_count[0] <= 1  # True only on the first call
+        return run_count[0] <= 1
 
     app.signal_handler.is_running = MagicMock(side_effect=is_running_side_effect)
 
@@ -63,8 +68,11 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
     await app.shutdown()
 
     # --- Assertion ---
+    # Verify the factory was called to create the detector.
     mock_detector_factory.assert_awaited_once()
+    # Verify the detector instance itself was called by the TaskGroup.
     mock_detector_instance.assert_awaited_once()
+    # Verify the core logic: the on_fire_action handler was triggered.
     app.on_fire_action_handler.assert_called_once()
 
 
@@ -75,6 +83,7 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory
     """Verifies the action handler is not called if the detector never signals fire."""
 
     # --- Setup ---
+    # The detector instance will be called, but its side effect will do nothing.
     mock_detector_instance = AsyncMock()
     mock_detector_factory.return_value = mock_detector_instance
 
@@ -91,12 +100,12 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory
     app = Application()
     app.on_fire_action_handler = AsyncMock()
 
-    # Control the run loop using a stateful callable.
+    # Control the run loop to execute only once.
     run_count = [0]
 
     def is_running_side_effect():
         run_count[0] += 1
-        return run_count[0] <= 1  # True only on the first call
+        return run_count[0] <= 1
 
     app.signal_handler.is_running = MagicMock(side_effect=is_running_side_effect)
 
@@ -107,4 +116,5 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory
     # --- Assertion ---
     mock_detector_factory.assert_awaited_once()
     mock_detector_instance.assert_awaited_once()
+    # Verify the core logic: the on_fire_action handler was NOT triggered.
     app.on_fire_action_handler.assert_not_called()
