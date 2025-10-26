@@ -30,7 +30,6 @@ class Application:
         action_queue (asyncio.Queue[str]): A queue for communicating events.
         on_fire_action_handler (OnceAction | None): The handler that executes
             notification actions.
-        detector_task (asyncio.Task | None): The task running the detector loop.
         action_manager_task (asyncio.Task | None): The task managing the event
             queue and triggering actions.
     """
@@ -40,7 +39,6 @@ class Application:
         self.signal_handler = SignalHandler()
         self.action_queue: asyncio.Queue[str] = asyncio.Queue()
         self.on_fire_action_handler: OnceAction | None = None
-        self.detector_task: asyncio.Task | None = None
         self.action_manager_task: asyncio.Task | None = None
         self._setup_actions()
 
@@ -111,42 +109,38 @@ class Application:
                     on_fire_action=self._queue_fire_event,
                     checks_per_second=settings.checks_per_second,
                 )
-                self.detector_task = asyncio.create_task(detector())
-                self.signal_handler.set_main_task(self.detector_task)
-                await self.detector_task
+                async with asyncio.TaskGroup() as tg:
+                    detector_task = tg.create_task(detector())
+                    self.signal_handler.set_main_task(detector_task)
 
-            except asyncio.CancelledError:
-                # This is caught when exit_gracefully is called.
-                logger.info("Detector task cancelled by signal handler.")
-                break  # Exit the while loop
-            except Exception:
-                logger.exception("Detector failed with an unhandled exception")
+            except* Exception as exc_group:
+                # We catch all exceptions here. The loop's continuation is decided
+                # by `signal_handler.is_running()` at the top of the loop.
+                # `CancelledError` is a result of the signal handler setting the
+                # running state to False, so we only need to log other errors.
+                _, others = exc_group.split(asyncio.CancelledError)
+                if others:
+                    logger.error("Detector or connection attempt failed", exc_info=others)
             finally:
                 if detector and detector.stream:
-                    await detector.stream.stop()  # Ensure cleanup
+                    await detector.stream.stop()
 
-            if self.signal_handler.is_running():
-                logger.info(f"Stream has stopped unexpectedly. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
-                try:
-                    await asyncio.sleep(settings.reconnect_delay_seconds)
-                except asyncio.CancelledError:
-                    logger.info("Reconnect wait cancelled by shutdown signal.")
-                    break  # Exit the while loop immediately
+                if self.signal_handler.is_running():
+                    logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
+                    try:
+                        await asyncio.sleep(settings.reconnect_delay_seconds)
+                    except asyncio.CancelledError:
+                        # If a shutdown signal arrives during sleep, we exit gracefully.
+                        logger.info("Reconnect wait cancelled by shutdown signal.")
 
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""
         logger.info("Initiating graceful shutdown.")
-
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():
             self.action_manager_task.cancel()
             tasks.append(self.action_manager_task)
 
-        # The detector task is managed by the run loop, but we ensure it's
-        # cancelled if it's still somehow running.
-        if self.detector_task and not self.detector_task.done():
-            self.detector_task.cancel()
-            tasks.append(self.detector_task)
-
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         logger.info("Application has shut down.")
