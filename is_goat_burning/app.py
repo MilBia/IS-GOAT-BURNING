@@ -101,29 +101,27 @@ class Application:
         while self.signal_handler.is_running():
             detector = None
             try:
-                try:
-                    logger.info(f"Attempting to start stream from source: {settings.source}")
-                    detector = await StreamFireDetector.create(
-                        src=settings.source,
-                        threshold=settings.fire_detection_threshold,
-                        video_output=settings.video_output,
-                        on_fire_action=self._queue_fire_event,
-                        checks_per_second=settings.checks_per_second,
-                    )
-                    async with asyncio.TaskGroup() as tg:
-                        detector_task = tg.create_task(detector())
-                        self.signal_handler.set_main_task(detector_task)
-                except* Exception as exc_group:
-                    logger.error(f"Detector task group failed: {exc_group.exceptions}")
+                logger.info(f"Attempting to start stream from source: {settings.source}")
+                detector = await StreamFireDetector.create(
+                    src=settings.source,
+                    threshold=settings.fire_detection_threshold,
+                    video_output=settings.video_output,
+                    on_fire_action=self._queue_fire_event,
+                    checks_per_second=settings.checks_per_second,
+                )
+                async with asyncio.TaskGroup() as tg:
+                    detector_task = tg.create_task(detector())
+                    self.signal_handler.set_main_task(detector_task)
 
-            except asyncio.CancelledError:
-                logger.info("Main run loop cancelled by shutdown signal.")
-                break  # Exit the while loop immediately.
-            except Exception:
-                # This catches errors from StreamFireDetector.create() and others.
-                logger.exception("An unexpected error occurred during the connection attempt.")
+            except* Exception as exc_group:
+                # We catch all exceptions here. The loop's continuation is decided
+                # by `signal_handler.is_running()` at the top of the loop.
+                # `CancelledError` is a result of the signal handler setting the
+                # running state to False, so we only need to log other errors.
+                _, others = exc_group.split(asyncio.CancelledError)
+                if others:
+                    logger.error(f"Detector or connection attempt failed: {others.exceptions}")
             finally:
-                # This block executes regardless of success or failure, ensuring cleanup and delay.
                 if detector and detector.stream:
                     await detector.stream.stop()
 
@@ -132,13 +130,12 @@ class Application:
                     try:
                         await asyncio.sleep(settings.reconnect_delay_seconds)
                     except asyncio.CancelledError:
+                        # If a shutdown signal arrives during sleep, we exit gracefully.
                         logger.info("Reconnect wait cancelled by shutdown signal.")
-                        break  # Exit the while loop immediately.
 
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""
         logger.info("Initiating graceful shutdown.")
-
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():
             self.action_manager_task.cancel()
