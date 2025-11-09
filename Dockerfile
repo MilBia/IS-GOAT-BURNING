@@ -1,5 +1,6 @@
 # Define build arguments for version consistency
 ARG SETUPTOOLS_VERSION=75.8.0
+ARG NUMPY_VERSION=2.3.3
 
 # --- Base Stage ---
 # Use a specific Ubuntu version and install Python for consistency.
@@ -60,8 +61,9 @@ CMD ["python3", "burning_goat_detection.py"]
 # This stage builds OpenCV with CUDA support.
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS gpu_builder
 
-# Expose the setuptools version argument to this stage
+# Expose build arguments to this stage
 ARG SETUPTOOLS_VERSION
+ARG NUMPY_VERSION
 
 # Set the working directory.
 WORKDIR /app
@@ -69,21 +71,11 @@ WORKDIR /app
 ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for building OpenCV and bootstrap pip in a single layer.
-RUN apt-get update && apt-get install -y --no-install-recommends  \
-    software-properties-common gnupg ca-certificates &&  \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y --no-install-recommends  \
-    python3.13-full python3.13-dev \
-    build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
-    libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
-    libx264-dev libgtk-3-dev wget unzip curl && \
-    apt-get purge -y --auto-remove software-properties-common gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 && \
-    python3 -m ensurepip --upgrade && \
-    python3 -m pip install --no-cache-dir --upgrade pip setuptools==${SETUPTOOLS_VERSION} numpy
+# Copy and run the centralized GPU builder setup script
+COPY scripts/setup_gpu_builder.sh /tmp/
+RUN chmod +x /tmp/setup_gpu_builder.sh && \
+    /tmp/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
+    rm /tmp/setup_gpu_builder.sh
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
