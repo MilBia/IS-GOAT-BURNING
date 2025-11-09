@@ -1,3 +1,5 @@
+"""Unit tests for the SendEmail action class."""
+
 import smtplib
 from unittest.mock import MagicMock
 from unittest.mock import patch
