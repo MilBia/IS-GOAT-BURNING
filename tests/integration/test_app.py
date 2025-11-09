@@ -1,5 +1,3 @@
-# tests/integration/test_app.py
-
 """Integration tests for the main Application class.
 
 These tests validate the end-to-end behavior of the Application's run

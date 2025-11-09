@@ -1,5 +1,3 @@
-# tests/test_config.py
-
 """Unit tests for the Pydantic settings models in `is_goat_burning.config`.
 
 These tests verify the loading of settings from mock `.env` files and the

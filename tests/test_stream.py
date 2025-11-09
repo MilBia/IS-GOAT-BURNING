@@ -1,5 +1,3 @@
-# tests/test_stream.py
-
 """Unit tests for the video streaming module (is_goat_burning/stream.py).
 
 This module tests the YouTube URL resolution and the VideoStreamer class,
