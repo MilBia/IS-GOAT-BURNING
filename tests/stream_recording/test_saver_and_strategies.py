@@ -254,3 +254,21 @@ async def test_post_fire_loop_handles_stream_ending_early(
     except Exception as e:
         pytest.fail(f"Loop raised an unexpected exception: {e}")
     assert mock_write.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_create_event_directory_handles_os_error(saver: AsyncVideoChunkSaver, mocker: MockerFixture) -> None:
+    """
+    Arrange: Mock the saver's makedirs callable to raise an OSError.
+    Act: Call the _create_event_directory method.
+    Assert: The method returns None and does not raise an exception.
+    """
+    # Arrange
+    # FIX: Patch the 'makedirs_callable' attribute on the instance itself.
+    mocker.patch.object(saver, "makedirs_callable", side_effect=OSError("Permission denied"))
+
+    # Act
+    result = await saver._create_event_directory()
+
+    # Assert
+    assert result is None
