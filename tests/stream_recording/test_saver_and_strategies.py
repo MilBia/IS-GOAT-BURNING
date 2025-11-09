@@ -67,7 +67,7 @@ def mock_saver_context() -> MagicMock:
 async def test_disk_strategy_continuously_writes_frames(mock_saver_context: MagicMock, mock_frame: np.ndarray) -> None:
     strategy = DiskBufferStrategy(context=mock_saver_context)
     strategy.add_frame(mock_frame)
-    strategy.add_frame(None)
+    await mock_saver_context.frame_queue.put(None)  # Sentinel to stop the loop
     await strategy._run_main_loop()
     mock_saver_context._write_frame_blocking.assert_called_once_with(mock_frame)
 
