@@ -99,7 +99,9 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory
 @patch("is_goat_burning.app.asyncio.sleep", new_callable=AsyncMock)
 @patch("is_goat_burning.app.StreamFireDetector.create")
 async def test_run_loop_reconnects_after_detector_creation_failure(
-    mock_detector_factory: AsyncMock, mock_sleep: AsyncMock, test_settings: Settings
+    mock_detector_factory: AsyncMock,
+    mock_sleep: AsyncMock,
+    test_settings: Settings,
 ) -> None:
     """
     Arrange: Mock StreamFireDetector.create to fail once, then succeed.

@@ -161,7 +161,11 @@ async def test_frame_generator_yields_all_frames_without_throttling(detector: St
     ],
 )
 async def test_frame_generator_throttles_frames_correctly(
-    detector: StreamFireDetector, stream_fps: float, checks_per_sec: float, total_frames: int, expected_yields: int
+    detector: StreamFireDetector,
+    stream_fps: float,
+    checks_per_sec: float,
+    total_frames: int,
+    expected_yields: int,
 ) -> None:
     """
     Arrange: Configure detector with specific FPS and check rates. Mock stream source.

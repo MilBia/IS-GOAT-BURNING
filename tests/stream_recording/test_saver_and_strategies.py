@@ -121,7 +121,9 @@ def memory_strategy(mock_saver_context: MagicMock) -> MemoryBufferStrategy:
 
 
 def test_memory_strategy_buffers_frames_in_ram_by_default(
-    memory_strategy: MemoryBufferStrategy, mock_frame: np.ndarray, mocker: MockerFixture
+    memory_strategy: MemoryBufferStrategy,
+    mock_frame: np.ndarray,
+    mocker: MockerFixture,
 ) -> None:
     """
     Arrange: Initialize MemoryBufferStrategy.
@@ -170,7 +172,7 @@ async def test_memory_strategy_switches_to_queueing_after_fire(
 
 
 @pytest.fixture
-def saver(mocker: MockerFixture, mock_settings_base) -> AsyncVideoChunkSaver:
+def saver(mocker: MockerFixture, mock_settings_base: MagicMock) -> AsyncVideoChunkSaver:
     mock_settings_base.video.buffer_mode = "disk"
     mocker.patch("os.makedirs")
     return AsyncVideoChunkSaver(
