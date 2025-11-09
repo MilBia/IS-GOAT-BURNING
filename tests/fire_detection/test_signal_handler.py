@@ -52,7 +52,7 @@ async def test_exit_gracefully_cancels_main_task() -> None:
     handler = SignalHandler()
     handler._running = True
 
-    async def dummy_task_func():
+    async def dummy_task_func() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.sleep(30)
 
