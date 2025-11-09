@@ -205,6 +205,8 @@ async def test_record_during_fire_loop_continues_until_extinguished_signal(
 
 
 def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: AsyncVideoChunkSaver) -> None:
+    import os
+
     saver.max_chunks = 3
     file_list = ["goat-cam_2.mp4", "goat-cam_3.mp4", "goat-cam_1.mp4", "goat-cam_4.mp4"]
     mock_listdir = mocker.patch("os.listdir", return_value=file_list)
@@ -212,7 +214,10 @@ def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: 
     mocker.patch("os.path.isfile", return_value=True)
     saver._enforce_chunk_limit_blocking()
     mock_listdir.assert_called_once_with(saver.output_dir)
-    expected_calls = [call(f"{saver.output_dir}/goat-cam_1.mp4"), call(f"{saver.output_dir}/goat-cam_2.mp4")]
+    expected_calls = [
+        call(os.path.join(saver.output_dir, "goat-cam_1.mp4")),
+        call(os.path.join(saver.output_dir, "goat-cam_2.mp4")),
+    ]
     mock_remove.assert_has_calls(expected_calls, any_order=True)
     assert mock_remove.call_count == 2
 
