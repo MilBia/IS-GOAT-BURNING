@@ -8,6 +8,7 @@ Video).
 import importlib
 import os
 
+from _pytest.monkeypatch import MonkeyPatch
 from pydantic import ValidationError
 import pytest
 
@@ -60,7 +61,7 @@ def test_validators_do_not_raise_error_when_disabled() -> None:
         pytest.fail("ValidationError was raised unexpectedly when services are disabled.")
 
 
-def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch) -> None:
+def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatch) -> None:
     """
     Arrange: Set the input environment variable to a custom value.
     Act: Reload the config module to trigger its top-level side effect.
