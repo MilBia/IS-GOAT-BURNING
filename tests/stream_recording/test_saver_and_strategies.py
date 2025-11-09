@@ -19,6 +19,12 @@ from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunk
 from is_goat_burning.stream_recording.strategies import DiskBufferStrategy
 from is_goat_burning.stream_recording.strategies import MemoryBufferStrategy
 
+TEST_CHUNK_LENGTH_S = 1
+TEST_MAX_CHUNKS = 1
+TEST_CHUNKS_TO_KEEP = 2
+TEST_FPS = 10
+
+
 # ==============================================================================
 # == Test Fixtures
 # ==============================================================================
@@ -176,7 +182,12 @@ def saver(mocker: MockerFixture, mock_settings_base: MagicMock) -> AsyncVideoChu
     mock_settings_base.video.buffer_mode = "disk"
     mocker.patch("os.makedirs")
     return AsyncVideoChunkSaver(
-        enabled=True, output_dir=".", chunk_length_seconds=1, max_chunks=1, chunks_to_keep_after_fire=2, fps=10
+        enabled=True,
+        output_dir=".",
+        chunk_length_seconds=TEST_CHUNK_LENGTH_S,
+        max_chunks=TEST_MAX_CHUNKS,
+        chunks_to_keep_after_fire=TEST_CHUNKS_TO_KEEP,
+        fps=TEST_FPS,
     )
 
 
@@ -186,11 +197,12 @@ async def test_post_fire_loop_records_for_configured_duration(
 ) -> None:
     mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
     expected_frames = 20
-    for _ in range(expected_frames + 5):
+    extra_frames_in_queue = 5
+    for _ in range(expected_frames + extra_frames_in_queue):
         await saver.frame_queue.put(mock_frame)
     await saver._record_final_chunks_loop("event_dir")
     assert mock_write.call_count == expected_frames
-    assert saver.frame_queue.qsize() == 5
+    assert saver.frame_queue.qsize() == extra_frames_in_queue
 
 
 @pytest.mark.asyncio
@@ -198,13 +210,17 @@ async def test_record_during_fire_loop_continues_until_extinguished_signal(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
     mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
-    mock_is_extinguished = mocker.patch.object(SignalHandler, "is_fire_extinguished", side_effect=[False, False, False, True])
-    for _ in range(5):
+    frames_before_extinguish = 3
+    total_frames_added = 5
+    mock_is_extinguished = mocker.patch.object(
+        SignalHandler, "is_fire_extinguished", side_effect=([False] * frames_before_extinguish) + [True]
+    )
+    for _ in range(total_frames_added):
         await saver.frame_queue.put(mock_frame)
     await saver._record_during_fire_loop("event_dir")
-    assert mock_write.call_count == 3
-    assert mock_is_extinguished.call_count == 4
-    assert saver.frame_queue.qsize() == 2
+    assert mock_write.call_count == frames_before_extinguish
+    assert mock_is_extinguished.call_count == frames_before_extinguish + 1
+    assert saver.frame_queue.qsize() == total_frames_added - frames_before_extinguish
 
 
 def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: AsyncVideoChunkSaver) -> None:

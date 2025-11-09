@@ -1,3 +1,5 @@
+# tests/test_stream.py
+
 """Unit tests for the video streaming module (is_goat_burning/stream.py).
 
 This module tests the YouTube URL resolution and the VideoStreamer class,
@@ -19,6 +21,19 @@ from yt_dlp.utils import DownloadError
 from is_goat_burning.stream import VideoStreamer
 from is_goat_burning.stream import YouTubeStream
 
+# --- Test Constants ---
+TEST_URL = "https://youtube.com/watch?v=test"
+TEST_STREAM_URL = "https://some.stream/url"
+TEST_FPS = 30.0
+TEST_WIDTH = 1920
+TEST_HEIGHT = 1080
+SMALL_TEST_WIDTH = 100
+SMALL_TEST_HEIGHT = 100
+TINY_FRAME_WIDTH = 1
+TINY_FRAME_HEIGHT = 1
+TEST_FRAME_SHAPE = (10, 10, 3)
+NUM_TEST_FRAMES = 2
+
 # ==============================================================================
 # == Tests for YouTubeStream
 # ==============================================================================
@@ -39,7 +54,7 @@ async def test_resolve_url_succeeds_on_first_attempt(mock_ytdlp: MagicMock) -> N
     """
     # Arrange
     mock_ytdlp.return_value.__enter__.return_value.extract_info.return_value = {"url": "https://best.stream/url"}
-    resolver = YouTubeStream(url="https://youtube.com/watch?v=test")
+    resolver = YouTubeStream(url=TEST_URL)
 
     # Act
     resolved_url = await resolver.resolve_url()
@@ -61,7 +76,7 @@ async def test_resolve_url_uses_fallback_when_preferred_format_fails(mock_ytdlp:
         DownloadError("Requested format is not available"),
         {"url": "https://fallback.stream/url"},
     ]
-    resolver = YouTubeStream(url="https://youtube.com/watch?v=test")
+    resolver = YouTubeStream(url=TEST_URL)
 
     # Act
     resolved_url = await resolver.resolve_url()
@@ -80,7 +95,7 @@ async def test_resolve_url_raises_value_error_on_download_error(mock_ytdlp: Magi
     """
     # Arrange
     mock_ytdlp.return_value.__enter__.return_value.extract_info.side_effect = DownloadError("Generic download error")
-    resolver = YouTubeStream(url="https://youtube.com/watch?v=test")
+    resolver = YouTubeStream(url=TEST_URL)
 
     # Act & Assert
     with pytest.raises(ValueError, match="Failed to resolve stream URL."):
@@ -99,7 +114,7 @@ async def test_resolve_url_raises_value_error_when_fallback_also_fails(mock_ytdl
         DownloadError("Requested format is not available"),
         DownloadError("Fallback also failed"),
     ]
-    resolver = YouTubeStream(url="https://youtube.com/watch?v=test")
+    resolver = YouTubeStream(url=TEST_URL)
 
     # Act & Assert
     with pytest.raises(ValueError, match="Failed to resolve stream URL."):
@@ -147,17 +162,17 @@ async def test_create_video_streamer_succeeds_with_valid_url(
     # Arrange
     mock_capture = MagicMock()
     mock_capture.isOpened.return_value = True
-    mock_capture.get.side_effect = [30.0, 1920, 1080]  # FPS, width, height
+    mock_capture.get.side_effect = [TEST_FPS, TEST_WIDTH, TEST_HEIGHT]
     mock_cv2_video_capture.return_value = mock_capture
 
     # Act
-    streamer = await VideoStreamer.create(url="https://some.stream/url")
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
 
     # Assert
     assert isinstance(streamer, VideoStreamer)
-    assert streamer.framerate == 30.0
-    assert streamer.frame_shape == (1920, 1080)
-    mock_cv2_video_capture.assert_called_once_with("https://some.stream/url")
+    assert streamer.framerate == TEST_FPS
+    assert streamer.frame_shape == (TEST_WIDTH, TEST_HEIGHT)
+    mock_cv2_video_capture.assert_called_once_with(TEST_STREAM_URL)
     mock_video_saver.start.assert_called_once()
 
 
@@ -177,7 +192,7 @@ async def test_create_video_streamer_raises_runtime_error_on_open_failure(
 
     # Act & Assert
     with pytest.raises(RuntimeError, match="Could not open video stream"):
-        await VideoStreamer.create(url="https://some.stream/url")
+        await VideoStreamer.create(url=TEST_STREAM_URL)
     mock_video_saver.start.assert_not_called()
 
 
@@ -210,11 +225,11 @@ async def test_process_frame_selects_correct_backend(
 
     mock_capture = MagicMock()
     mock_capture.isOpened.return_value = True
-    mock_capture.get.side_effect = [30.0, 100, 100]
+    mock_capture.get.side_effect = [TEST_FPS, SMALL_TEST_WIDTH, SMALL_TEST_HEIGHT]
     mock_cv2_video_capture.return_value = mock_capture
 
-    streamer = await VideoStreamer.create(url="dummy")
-    raw_frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
+    raw_frame = np.zeros(TEST_FRAME_SHAPE, dtype=np.uint8)
 
     # Act & Assert
     if backend == "cpu":
@@ -245,31 +260,31 @@ async def test_frames_generator_yields_frames_and_stops(
     Assert: The correct number of frames are yielded and the loop terminates gracefully.
     """
     # Arrange
-    frame1 = np.ones((1, 1, 3), dtype=np.uint8)
-    frame2 = np.ones((1, 1, 3), dtype=np.uint8) * 2
+    frame1 = np.ones((TINY_FRAME_HEIGHT, TINY_FRAME_WIDTH, 3), dtype=np.uint8)
+    frame2 = np.ones((TINY_FRAME_HEIGHT, TINY_FRAME_WIDTH, 3), dtype=np.uint8) * 2
 
     mock_capture = MagicMock()
     mock_capture.isOpened.return_value = True
-    mock_capture.get.side_effect = [30.0, 1, 1]
+    mock_capture.get.side_effect = [TEST_FPS, TINY_FRAME_WIDTH, TINY_FRAME_HEIGHT]
     mock_capture.read.side_effect = [(True, frame1), (True, frame2), (False, None)]
     mock_cv2_video_capture.return_value = mock_capture
 
     mock_settings.cuda = False
     mock_settings.open_cl = False
 
-    streamer = await VideoStreamer.create(url="dummy")
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
 
     # Act
     yielded_frames = [frame async for frame in streamer.frames()]
     await streamer.stop()
 
     # Assert
-    assert len(yielded_frames) == 2
+    assert len(yielded_frames) == NUM_TEST_FRAMES
     np.testing.assert_array_equal(yielded_frames[0], frame1)
     np.testing.assert_array_equal(yielded_frames[1], frame2)
 
     # Verify that the raw frames were passed to the video saver
     mock_video_saver.assert_has_calls([call(frame1), call(frame2)])
-    assert mock_video_saver.call_count == 2
+    assert mock_video_saver.call_count == NUM_TEST_FRAMES
 
     mock_video_saver.stop.assert_awaited_once()
