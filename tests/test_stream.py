@@ -236,7 +236,6 @@ async def test_frames_generator_yields_frames_and_stops(mock_cv2_video_capture: 
     mock_settings.open_cl = False
 
     streamer = await VideoStreamer.create(url="dummy")
-    # FIX: Use AsyncMock for objects with async methods
     streamer.video_saver = AsyncMock()
 
     # Act

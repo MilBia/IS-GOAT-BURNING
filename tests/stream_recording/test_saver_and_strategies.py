@@ -172,7 +172,6 @@ async def test_memory_strategy_switches_to_queueing_after_fire(
 def saver(mocker: MockerFixture, mock_settings_base) -> AsyncVideoChunkSaver:
     mock_settings_base.video.buffer_mode = "disk"
     mocker.patch("os.makedirs")
-    # FIX: DO NOT patch _write_frame_blocking here. Let the tests do it if they need to.
     return AsyncVideoChunkSaver(
         enabled=True, output_dir=".", chunk_length_seconds=1, max_chunks=1, chunks_to_keep_after_fire=2, fps=10
     )
@@ -182,7 +181,6 @@ def saver(mocker: MockerFixture, mock_settings_base) -> AsyncVideoChunkSaver:
 async def test_post_fire_loop_records_for_configured_duration(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
-    # FIX: Patch the method here since this test does not want to test its internals.
     mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
     expected_frames = 20
     for _ in range(expected_frames + 5):
@@ -196,7 +194,6 @@ async def test_post_fire_loop_records_for_configured_duration(
 async def test_record_during_fire_loop_continues_until_extinguished_signal(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
-    # FIX: Patch the method here.
     mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
     mock_is_extinguished = mocker.patch.object(SignalHandler, "is_fire_extinguished", side_effect=[False, False, False, True])
     for _ in range(5):
@@ -245,7 +242,6 @@ def test_write_frame_blocking_rotates_chunk_after_timeout(
 async def test_post_fire_loop_handles_stream_ending_early(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
-    # FIX: Patch the method here.
     mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
     for _ in range(5):
         await saver.frame_queue.put(mock_frame)
@@ -264,7 +260,6 @@ async def test_create_event_directory_handles_os_error(saver: AsyncVideoChunkSav
     Assert: The method returns None and does not raise an exception.
     """
     # Arrange
-    # FIX: Patch the 'makedirs_callable' attribute on the instance itself.
     mocker.patch.object(saver, "makedirs_callable", side_effect=OSError("Permission denied"))
 
     # Act

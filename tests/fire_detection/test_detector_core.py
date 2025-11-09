@@ -191,7 +191,6 @@ async def test_frame_generator_handles_empty_stream(detector: StreamFireDetector
     """
     # Arrange
     detector.stream = MagicMock()
-    # FIX: Explicitly set framerate on the mock to avoid TypeError.
     detector.stream.framerate = 30.0
     detector.stream.frames.return_value = mock_frame_source(0)
 
