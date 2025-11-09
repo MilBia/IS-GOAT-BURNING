@@ -18,7 +18,7 @@ from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
 
 
-def test_settings_loads_source_from_env_var(monkeypatch) -> None:
+def test_settings_loads_source_from_env_var(monkeypatch: MonkeyPatch) -> None:
     """Verifies that the main Settings object loads values from an environment variable."""
     # Arrange
     # Pydantic settings prioritizes environment variables. This is the most direct way to test loading.
