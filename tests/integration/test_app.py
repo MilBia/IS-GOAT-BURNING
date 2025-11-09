@@ -50,7 +50,7 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
 
     mock_detector_instance = AsyncMock()
 
-    async def detector_call_side_effect():
+    async def detector_call_side_effect() -> None:
         """Simulate the detector running and then stopping the main loop."""
         on_fire_action_callback = mock_detector_factory.call_args.kwargs["on_fire_action"]
         await on_fire_action_callback()
@@ -79,7 +79,7 @@ async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory
 
     mock_detector_instance = AsyncMock()
 
-    async def detector_call_side_effect():
+    async def detector_call_side_effect() -> None:
         """Simulate the detector running and then stopping the main loop."""
         # Signal the loop to stop after one successful run.
         app.signal_handler.is_running.return_value = False
@@ -113,7 +113,7 @@ async def test_run_loop_reconnects_after_detector_creation_failure(
 
     mock_detector_instance = AsyncMock()
 
-    async def successful_detector_run():
+    async def successful_detector_run() -> None:
         # On the successful run, stop the main loop.
         app.signal_handler.is_running.return_value = False
 

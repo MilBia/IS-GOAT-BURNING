@@ -83,7 +83,7 @@ async def test_disk_strategy_triggers_fire_event_handling(mock_saver_context: Ma
     strategy = DiskBufferStrategy(context=mock_saver_context)
     mock_saver_context.signal_handler.is_fire_detected.return_value = True
 
-    async def stop_loop(*args, **kwargs):  # noqa: ARG001
+    async def stop_loop(*args, **kwargs) -> None:  # noqa: ARG001
         mock_saver_context.signal_handler.is_fire_detected.return_value = False
 
     mock_saver_context._handle_fire_event_async.side_effect = stop_loop
