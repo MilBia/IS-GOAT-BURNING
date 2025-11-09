@@ -17,7 +17,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Copy and run the centralized Python installation script
 COPY scripts/install_python.sh /tmp/
 RUN chmod +x /tmp/install_python.sh && \
-    /tmp/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu
+    /tmp/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
+    rm /tmp/install_python.sh
 
 # Set the working directory.
 WORKDIR /app
@@ -152,7 +153,8 @@ COPY scripts/install_python.sh /tmp/
 RUN chmod +x /tmp/install_python.sh && \
     /tmp/install_python.sh \
     python3.13-full gosu \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
+    rm /tmp/install_python.sh
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
@@ -162,9 +164,7 @@ RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir --upgrade pip && \
-    python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
-
+RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
 # Copy the entrypoint script and make it executable.
 # This script is used to set the correct user permissions and execute the main application.
