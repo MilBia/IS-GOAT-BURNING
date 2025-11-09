@@ -82,4 +82,4 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     # Cleanup: Restore the default value by unsetting the variable and reloading again.
     monkeypatch.delenv("STREAM_INACTIVITY_TIMEOUT")
     importlib.reload(config)
-    assert "60" in os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{60 * MICROSECONDS_PER_SECOND}"

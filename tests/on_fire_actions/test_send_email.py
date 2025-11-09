@@ -60,7 +60,4 @@ async def test_send_email_with_html(email_sender: SendEmail) -> None:
 async def test_send_email_handles_exceptions_gracefully(email_sender: SendEmail, exception_to_raise: Exception) -> None:
     with patch("smtplib.SMTP") as mock_smtp:
         mock_smtp.return_value.__enter__.side_effect = exception_to_raise
-        try:
-            await email_sender()
-        except Exception as e:
-            pytest.fail(f"SendEmail unexpectedly raised an exception: {e}")
+        await email_sender()
