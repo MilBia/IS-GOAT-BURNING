@@ -52,7 +52,7 @@ FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
 COPY requirements-cpu.txt .
-RUN pip install --no-cache-dir -r requirements-cpu.txt setuptools==75.8.0
+RUN python3 -m pip install --no-cache-dir -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
 COPY pyproject.toml burning_goat_detection.py ./
@@ -80,6 +80,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev wget unzip curl && \
+    apt-get purge -y --auto-remove software-properties-common gnupg && \
     rm -rf /var/lib/apt/lists/* && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
 
@@ -155,7 +156,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
-    apt-get remove -y --autoremove software-properties-common gnupg && \
+    apt-get purge -y --autoremove software-properties-common gnupg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
@@ -207,7 +208,7 @@ RUN mkdir -p /app/.pytest_cache && \
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN python3 -m pip install --no-cache-dir -r requirements-dev.txt
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
@@ -228,7 +229,7 @@ RUN mkdir -p /app/.pytest_cache && \
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
 # Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
+RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install --no-cache-dir -r /tmp/reqs.txt && rm /tmp/reqs.txt
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
