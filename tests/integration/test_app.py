@@ -37,7 +37,7 @@ def test_settings(monkeypatch: MonkeyPatch) -> Settings:
 
 @pytest.mark.asyncio
 @patch("is_goat_burning.app.StreamFireDetector.create")
-async def test_app_detects_fire_and_triggers_action(mock_detector_factory: AsyncMock) -> None:
+async def test_app_detects_fire_and_triggers_action(mock_detector_factory: AsyncMock, test_settings: Settings) -> None:  # noqa: ARG001
     """Verifies the app triggers the action handler when the detector signals fire."""
     app = Application()
     app.on_fire_action_handler = AsyncMock()
@@ -67,7 +67,7 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
 
 @pytest.mark.asyncio
 @patch("is_goat_burning.app.StreamFireDetector.create")
-async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory: AsyncMock) -> None:
+async def test_app_does_not_detect_fire_and_remains_silent(mock_detector_factory: AsyncMock, test_settings: Settings) -> None:  # noqa: ARG001
     """Verifies the action handler is not called if the detector never signals fire."""
     app = Application()
     app.on_fire_action_handler = AsyncMock()
