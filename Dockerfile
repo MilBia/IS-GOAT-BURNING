@@ -1,3 +1,6 @@
+# Define build arguments for version consistency
+ARG SETUPTOOLS_VERSION=75.8.0
+
 # --- Base Stage ---
 # Use a specific Ubuntu version and install Python for consistency.
 FROM ubuntu:22.04 AS base
@@ -50,9 +53,12 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 # This stage is for the CPU-only image.
 FROM base AS cpu
 
+# Expose the setuptools version argument to this stage
+ARG SETUPTOOLS_VERSION
+
 # Copy CPU-specific requirements and install them.
 COPY requirements-cpu.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements-cpu.txt setuptools==75.8.0
+RUN python3 -m pip install --no-cache-dir -r requirements-cpu.txt setuptools==${SETUPTOOLS_VERSION}
 
 # Copy the rest of the application code.
 COPY pyproject.toml burning_goat_detection.py ./
@@ -65,13 +71,16 @@ CMD ["python3", "burning_goat_detection.py"]
 # This stage builds OpenCV with CUDA support.
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS gpu_builder
 
+# Expose the setuptools version argument to this stage
+ARG SETUPTOOLS_VERSION
+
 # Set the working directory.
 WORKDIR /app
 
 ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies for building OpenCV.
+# Install system dependencies for building OpenCV and bootstrap pip in a single layer.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
     software-properties-common gnupg ca-certificates &&  \
     add-apt-repository -y ppa:deadsnakes/ppa && \
@@ -82,12 +91,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     libx264-dev libgtk-3-dev wget unzip curl && \
     apt-get purge -y --auto-remove software-properties-common gnupg && \
     rm -rf /var/lib/apt/lists/* && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
-
-# CRITICAL FIX: Bootstrap pip and install Python build dependencies BEFORE cmake
-# This prevents issues with cmake finding the correct python version
-RUN python3 -m ensurepip --upgrade && \
-    python3 -m pip install --no-cache-dir --upgrade pip setuptools==75.8.0 numpy
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 && \
+    python3 -m ensurepip --upgrade && \
+    python3 -m pip install --no-cache-dir --upgrade pip setuptools==${SETUPTOOLS_VERSION} numpy
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -138,6 +144,9 @@ RUN mkdir -p /app/opencv/build && \
 # This stage is for the GPU-accelerated image.
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 
+# Expose the setuptools version argument to this stage
+ARG SETUPTOOLS_VERSION
+
 # Set the working directory.
 WORKDIR /app
 
@@ -170,7 +179,7 @@ RUN ldconfig
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
 RUN python3 -m ensurepip --upgrade && \
-    python3 -m pip install --no-cache-dir -r requirements.txt setuptools==75.8.0
+    python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
 
 # Copy the entrypoint script and make it executable.
