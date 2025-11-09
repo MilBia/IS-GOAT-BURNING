@@ -19,6 +19,8 @@ from is_goat_burning.config import EmailSettings
 from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
 
+TINY_RECONNECT_DELAY = 1
+
 
 @pytest.fixture
 def test_settings(monkeypatch: MonkeyPatch) -> Settings:
@@ -26,7 +28,7 @@ def test_settings(monkeypatch: MonkeyPatch) -> Settings:
     settings = Settings(
         source="mock://source",
         log_level="CRITICAL",
-        reconnect_delay_seconds=0.001,  # Use a tiny delay for tests
+        reconnect_delay_seconds=TINY_RECONNECT_DELAY,  # Use a tiny delay for tests
         email=EmailSettings(use_emails=False),
         discord=DiscordSettings(use_discord=False),
         video=VideoSettings(save_video_chunks=False),
@@ -36,6 +38,7 @@ def test_settings(monkeypatch: MonkeyPatch) -> Settings:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(5)
 @patch("is_goat_burning.app.StreamFireDetector.create")
 async def test_app_detects_fire_and_triggers_action(mock_detector_factory: AsyncMock, test_settings: Settings) -> None:  # noqa: ARG001
     """Verifies the app triggers the action handler when the detector signals fire."""
