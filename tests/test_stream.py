@@ -8,7 +8,6 @@ dependencies.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import call
 
@@ -124,12 +123,26 @@ def mock_settings(mocker: MockerFixture) -> MagicMock:
     return mocker.patch("is_goat_burning.stream.settings")
 
 
+@pytest.fixture
+def mock_video_saver(mocker: MockerFixture) -> MagicMock:
+    """
+    Mocks the AsyncVideoChunkSaver class to prevent real task creation
+    and returns the mock instance for assertion.
+    """
+    mock_saver_class = mocker.patch("is_goat_burning.stream.AsyncVideoChunkSaver", autospec=True)
+    return mock_saver_class.return_value
+
+
 @pytest.mark.asyncio
-async def test_create_video_streamer_succeeds_with_valid_url(mock_cv2_video_capture: MagicMock) -> None:
+async def test_create_video_streamer_succeeds_with_valid_url(
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,  # noqa: ARG001
+    mock_video_saver: MagicMock,
+) -> None:
     """
     Arrange: Mock cv2.VideoCapture to return an "opened" capture object.
     Act: Call VideoStreamer.create.
-    Assert: A VideoStreamer instance is created successfully.
+    Assert: A VideoStreamer instance is created successfully and the saver is started.
     """
     # Arrange
     mock_capture = MagicMock()
@@ -145,14 +158,17 @@ async def test_create_video_streamer_succeeds_with_valid_url(mock_cv2_video_capt
     assert streamer.framerate == 30.0
     assert streamer.frame_shape == (1920, 1080)
     mock_cv2_video_capture.assert_called_once_with("https://some.stream/url")
+    mock_video_saver.start.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_create_video_streamer_raises_runtime_error_on_open_failure(mock_cv2_video_capture: MagicMock) -> None:
+async def test_create_video_streamer_raises_runtime_error_on_open_failure(
+    mock_cv2_video_capture: MagicMock, mock_video_saver: MagicMock
+) -> None:
     """
     Arrange: Mock cv2.VideoCapture to return a "closed" capture object.
     Act: Call VideoStreamer.create.
-    Assert: A RuntimeError is raised.
+    Assert: A RuntimeError is raised and saver is not started.
     """
     # Arrange
     mock_capture = MagicMock()
@@ -162,6 +178,7 @@ async def test_create_video_streamer_raises_runtime_error_on_open_failure(mock_c
     # Act & Assert
     with pytest.raises(RuntimeError, match="Could not open video stream"):
         await VideoStreamer.create(url="https://some.stream/url")
+    mock_video_saver.start.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -179,6 +196,7 @@ async def test_process_frame_selects_correct_backend(
     opencl_setting: bool,
     mock_cv2_video_capture: MagicMock,
     mock_settings: MagicMock,
+    mock_video_saver: MagicMock,  # noqa: ARG001
     mocker: MockerFixture,
 ) -> None:
     """
@@ -216,7 +234,11 @@ async def test_process_frame_selects_correct_backend(
 
 
 @pytest.mark.asyncio
-async def test_frames_generator_yields_frames_and_stops(mock_cv2_video_capture: MagicMock, mock_settings: MagicMock) -> None:
+async def test_frames_generator_yields_frames_and_stops(
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,
+    mock_video_saver: MagicMock,
+) -> None:
     """
     Arrange: Mock VideoCapture to return a few frames then indicate the stream has ended.
     Act: Iterate through the frames() async generator.
@@ -236,7 +258,6 @@ async def test_frames_generator_yields_frames_and_stops(mock_cv2_video_capture: 
     mock_settings.open_cl = False
 
     streamer = await VideoStreamer.create(url="dummy")
-    streamer.video_saver = AsyncMock()
 
     # Act
     yielded_frames = [frame async for frame in streamer.frames()]
@@ -248,7 +269,7 @@ async def test_frames_generator_yields_frames_and_stops(mock_cv2_video_capture: 
     np.testing.assert_array_equal(yielded_frames[1], frame2)
 
     # Verify that the raw frames were passed to the video saver
-    streamer.video_saver.assert_has_calls([call(frame1), call(frame2)])
-    assert streamer.video_saver.call_count == 2
+    mock_video_saver.assert_has_calls([call(frame1), call(frame2)])
+    assert mock_video_saver.call_count == 2
 
-    streamer.video_saver.stop.assert_awaited_once()
+    mock_video_saver.stop.assert_awaited_once()
