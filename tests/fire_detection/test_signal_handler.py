@@ -35,6 +35,7 @@ async def test_fire_detection_event_logic() -> None:
 
 @pytest.mark.asyncio
 async def test_fire_extinguished_event_logic() -> None:
+    """Tests the set, check, and reset logic of the fire extinguished event."""
     handler = SignalHandler()
     handler.reset_fire_extinguished_event()
     assert not handler.is_fire_extinguished()
