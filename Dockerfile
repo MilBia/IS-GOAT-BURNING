@@ -1,6 +1,6 @@
 # --- Base Stage ---
-# Use a specific Python version for consistency.
-FROM python:3.13-slim-bullseye AS base
+# Use a specific Ubuntu version and install Python for consistency.
+FROM ubuntu:22.04 AS base
 
 # Set environment variables for Python and PIP.
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,17 +11,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Etc/UTC \
     DEBIAN_FRONTEND=noninteractive
 
+# Install Python 3.13 from PPA and other system dependencies.
+# This single RUN layer is optimized for caching.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    software-properties-common gnupg ca-certificates && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3.13 python3.13-venv \
+    libgl1-mesa-glx libglib2.0-0 gosu && \
+    apt-get purge -y --auto-remove software-properties-common gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 && \
+    python3 -m ensurepip --upgrade && \
+    python3 -m pip install --no-cache-dir --upgrade pip
+
 # Set the working directory.
 WORKDIR /app
-
-# Install common system dependencies.
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y \
-    libgl1-mesa-glx libglib2.0-0 gosu && \
-    apt-get autoremove --yes && \
-    apt-get clean && \
-    pip install --upgrade pip && \
-    rm -rf /var/lib/apt/lists/*
 
 # Copy the entrypoint script and make it executable.
 COPY entrypoint.sh /usr/local/bin/
@@ -44,14 +52,14 @@ FROM base AS cpu
 
 # Copy CPU-specific requirements and install them.
 COPY requirements-cpu.txt .
-RUN pip install -r requirements-cpu.txt setuptools==75.8.0
+RUN pip install --no-cache-dir -r requirements-cpu.txt setuptools==75.8.0
 
 # Copy the rest of the application code.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
 
 # Default command to run the application.
-CMD ["python3.13", "burning_goat_detection.py"]
+CMD ["python3", "burning_goat_detection.py"]
 
 # --- GPU Builder Stage ---
 # This stage builds OpenCV with CUDA support.
@@ -65,19 +73,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies for building OpenCV.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
-    software-properties-common &&  \
+    software-properties-common gnupg ca-certificates &&  \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full python3.13-dev \
     build-essential cmake git pkg-config libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev wget unzip curl && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
 
-# CRITICAL FIX 1: Bootstrap pip and install Python build dependencies BEFORE cmake
+# CRITICAL FIX: Bootstrap pip and install Python build dependencies BEFORE cmake
 # This prevents issues with cmake finding the correct python version
-RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir --upgrade pip setuptools==75.8.0 numpy
+RUN python3 -m ensurepip --upgrade && \
+    python3 -m pip install --no-cache-dir --upgrade pip setuptools==75.8.0 numpy
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -141,14 +150,15 @@ ENV TZ=Etc/UTC \
 
 # Install runtime dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends  \
-    software-properties-common && \
+    software-properties-common gnupg ca-certificates && \
     add-apt-repository -y ppa:deadsnakes/ppa && \
     apt-get update && apt-get install -y --no-install-recommends  \
     python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
-    apt-get remove -y --autoremove software-properties-common && \
+    apt-get remove -y --autoremove software-properties-common gnupg && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
@@ -158,8 +168,8 @@ RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
-RUN python3.13 -m ensurepip --upgrade --default-pip && \
-    python3.13 -m pip install --no-cache-dir -r requirements.txt setuptools==75.8.0
+RUN python3 -m ensurepip --upgrade && \
+    python3 -m pip install --no-cache-dir -r requirements.txt setuptools==75.8.0
 
 
 # Copy the entrypoint script and make it executable.
@@ -185,7 +195,7 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
 # Default command to run the application.
 # This starts the main application script.
-CMD ["python3.13", "burning_goat_detection.py"]
+CMD ["python3", "burning_goat_detection.py"]
 
 
 # --- Test Stage ---
@@ -197,7 +207,7 @@ RUN mkdir -p /app/.pytest_cache && \
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
-RUN pip install -r requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
@@ -218,7 +228,7 @@ RUN mkdir -p /app/.pytest_cache && \
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
 # Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
+RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install -r /tmp/reqs.txt && rm /tmp/reqs.txt
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
