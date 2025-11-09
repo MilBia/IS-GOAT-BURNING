@@ -18,6 +18,9 @@ from is_goat_burning.config import EmailSettings
 from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
 
+MICROSECONDS_PER_SECOND = 1_000_000
+TEST_TIMEOUT_VAL = "99"
+
 
 def test_settings_loads_source_from_env_var(monkeypatch: MonkeyPatch) -> None:
     """Verifies that the main Settings object loads values from an environment variable."""
@@ -67,14 +70,13 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     Act: Reload the config module to trigger its top-level side effect.
     Assert: The output environment variable is set to the correct derived value.
     """
-    # Arrange: Set the input environment variable that the module will read.
-    monkeypatch.setenv("STREAM_INACTIVITY_TIMEOUT", "99")
-
+    # Arrange: Define constants and variables to avoid magic numbers.
+    monkeypatch.setenv("STREAM_INACTIVITY_TIMEOUT", TEST_TIMEOUT_VAL)
     # Act: Reload the module to re-run its top-level statements.
     importlib.reload(config)
 
     # Assert: Check that the side effect (setting the other env var) happened correctly.
-    expected_value = f"timeout;{99 * 1_000_000}"
+    expected_value = f"timeout;{int(TEST_TIMEOUT_VAL) * MICROSECONDS_PER_SECOND}"
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == expected_value
 
     # Cleanup: Restore the default value by unsetting the variable and reloading again.
