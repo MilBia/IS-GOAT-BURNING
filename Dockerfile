@@ -16,10 +16,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive
 
 # Copy and run the centralized Python installation script
-COPY scripts/install_python.sh /tmp/
-RUN chmod +x /tmp/install_python.sh && \
-    /tmp/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
-    rm /tmp/install_python.sh
+COPY scripts/ /tmp/scripts/
+RUN chmod +x /tmp/scripts/install_python.sh && \
+    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
+    rm -rf /tmp/scripts
 
 # Set the working directory.
 WORKDIR /app
@@ -72,10 +72,10 @@ ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy and run the centralized GPU builder setup script
-COPY scripts/setup_gpu_builder.sh /tmp/
-RUN chmod +x /tmp/setup_gpu_builder.sh && \
-    /tmp/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
-    rm /tmp/setup_gpu_builder.sh
+COPY scripts/ /tmp/scripts/
+RUN chmod +x /tmp/scripts/setup_gpu_builder.sh && \
+    /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
+    rm -rf /tmp/scripts
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -141,12 +141,12 @@ ENV TZ=Etc/UTC \
     XDG_CACHE_HOME=/app/.cache
 
 # Copy and run the centralized Python installation script
-COPY scripts/install_python.sh /tmp/
-RUN chmod +x /tmp/install_python.sh && \
-    /tmp/install_python.sh \
+COPY scripts/ /tmp/scripts/
+RUN chmod +x /tmp/scripts/install_python.sh && \
+    /tmp/scripts/install_python.sh \
     python3.13-full gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
-    rm /tmp/install_python.sh
+    rm -rf /tmp/scripts
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
