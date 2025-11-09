@@ -5,6 +5,7 @@ Unit and integration tests for the AsyncVideoChunkSaver and its buffer strategie
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import call
@@ -205,8 +206,6 @@ async def test_record_during_fire_loop_continues_until_extinguished_signal(
 
 
 def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: AsyncVideoChunkSaver) -> None:
-    import os
-
     saver.max_chunks = 3
     file_list = ["goat-cam_2.mp4", "goat-cam_3.mp4", "goat-cam_1.mp4", "goat-cam_4.mp4"]
     mock_listdir = mocker.patch("os.listdir", return_value=file_list)
