@@ -19,6 +19,7 @@ from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
 
 MICROSECONDS_PER_SECOND = 1_000_000
+DEFAULT_INACTIVITY_TIMEOUT = 60
 TEST_TIMEOUT_VAL = "99"
 
 
@@ -74,12 +75,10 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     monkeypatch.setenv("STREAM_INACTIVITY_TIMEOUT", TEST_TIMEOUT_VAL)
     # Act: Reload the module to re-run its top-level statements.
     importlib.reload(config)
-
     # Assert: Check that the side effect (setting the other env var) happened correctly.
     expected_value = f"timeout;{int(TEST_TIMEOUT_VAL) * MICROSECONDS_PER_SECOND}"
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == expected_value
-
     # Cleanup: Restore the default value by unsetting the variable and reloading again.
     monkeypatch.delenv("STREAM_INACTIVITY_TIMEOUT")
     importlib.reload(config)
-    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{60 * MICROSECONDS_PER_SECOND}"
+    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{DEFAULT_INACTIVITY_TIMEOUT * MICROSECONDS_PER_SECOND}"
