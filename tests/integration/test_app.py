@@ -147,7 +147,7 @@ async def test_run_loop_handles_cancellation_during_sleep(
     # Detector creation fails, triggering the reconnect sleep.
     mock_detector_factory.side_effect = Exception("Stream connection failed")
 
-    async def sleep_and_stop_loop(*args, **kwargs):  # noqa: ARG001
+    async def sleep_and_stop_loop(*args, **kwargs) -> None:  # noqa: ARG001
         # When sleep is called, we stop the loop and raise the error.
         app.signal_handler.is_running.return_value = False
         raise asyncio.CancelledError
