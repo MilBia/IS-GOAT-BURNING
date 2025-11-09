@@ -14,28 +14,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Etc/UTC \
     DEBIAN_FRONTEND=noninteractive
 
-# Install Python 3.13 from PPA and other system dependencies.
-# This single RUN layer is optimized for caching.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    software-properties-common gnupg ca-certificates && \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3.13 python3.13-venv \
-    libgl1-mesa-glx libglib2.0-0 gosu && \
-    apt-get purge -y --auto-remove software-properties-common gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 && \
-    python3 -m ensurepip --upgrade && \
-    python3 -m pip install --no-cache-dir --upgrade pip
+# Copy and run the centralized Python installation script
+COPY scripts/install_python.sh /tmp/
+RUN chmod +x /tmp/install_python.sh && \
+    /tmp/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu
 
 # Set the working directory.
 WORKDIR /app
 
 # Copy the entrypoint script and make it executable.
-COPY entrypoint.sh /usr/local/bin/
+COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create the recordings and cache directories and set permissions.
@@ -90,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends  \
     libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libxvidcore-dev \
     libx264-dev libgtk-3-dev wget unzip curl && \
     apt-get purge -y --auto-remove software-properties-common gnupg && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1 && \
     python3 -m ensurepip --upgrade && \
@@ -158,17 +147,12 @@ ENV TZ=Etc/UTC \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     XDG_CACHE_HOME=/app/.cache
 
-# Install runtime dependencies.
-RUN apt-get update && apt-get install -y --no-install-recommends  \
-    software-properties-common gnupg ca-certificates && \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y --no-install-recommends  \
+# Copy and run the centralized Python installation script
+COPY scripts/install_python.sh /tmp/
+RUN chmod +x /tmp/install_python.sh && \
+    /tmp/install_python.sh \
     python3.13-full gosu \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
-    apt-get purge -y --autoremove software-properties-common gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
@@ -178,13 +162,13 @@ RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
-RUN python3 -m ensurepip --upgrade && \
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
 
 # Copy the entrypoint script and make it executable.
 # This script is used to set the correct user permissions and execute the main application.
-COPY entrypoint.sh /usr/local/bin/
+COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Create the recordings directory.
