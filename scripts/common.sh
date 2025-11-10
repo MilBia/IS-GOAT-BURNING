@@ -31,7 +31,8 @@ finalize_python_setup() {
     local python_executable="$1"
 
     echo "Setting ${python_executable} as the default python3 alternative..."
-    update-alternatives --install /usr/bin/python3 python3 "/usr/bin/${python_executable}" 1
+    # Use a high priority to ensure this version becomes the default.
+    update-alternatives --install /usr/bin/python3 python3 "/usr/bin/${python_executable}" 100
 
     echo "Bootstrapping pip for ${python_executable}..."
     "${python_executable}" -m ensurepip --upgrade

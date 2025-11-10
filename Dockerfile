@@ -15,17 +15,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Etc/UTC \
     DEBIAN_FRONTEND=noninteractive
 
-# Copy and run the centralized Python installation script
-COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
-    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu
-
-# Set the working directory.
+# Set the working directory early.
 WORKDIR /app
 
-# Set up the runtime environment by copying entrypoint and creating directories.
-# This script is reused in the 'gpu' stage to avoid duplication.
-RUN chmod +x /tmp/scripts/setup_runtime.sh && /tmp/scripts/setup_runtime.sh && rm -rf /tmp/scripts
+# Copy scripts, install Python, set up the runtime environment, and clean up
+# all in a single layer to optimize image size.
+COPY scripts/ /tmp/scripts/
+RUN chmod +x /tmp/scripts/*.sh && \
+    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
+    /tmp/scripts/setup_runtime.sh && \
+    rm -rf /tmp/scripts
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
@@ -138,15 +137,15 @@ ENV TZ=Etc/UTC \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     XDG_CACHE_HOME=/app/.cache
 
-# Copy and run the centralized Python installation script
+# Copy scripts, install Python, set up the runtime environment, and clean up
+# all in a single layer to optimize image size.
 COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
+RUN chmod +x /tmp/scripts/*.sh && \
     /tmp/scripts/install_python.sh \
     python3.13 python3.13-full python3.13-venv gosu \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1
-
-# Set up the runtime environment by copying entrypoint and creating directories.
-RUN chmod +x /tmp/scripts/setup_runtime.sh && /tmp/scripts/setup_runtime.sh && rm -rf /tmp/scripts
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
+    /tmp/scripts/setup_runtime.sh && \
+    rm -rf /tmp/scripts
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
