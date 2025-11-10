@@ -120,7 +120,6 @@ RUN mkdir -p /app/opencv/build && \
         libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
         libavformat-dev libswscale-dev libv4l-dev \
         libxvidcore-dev libx264-dev libgtk-3-dev && \
-    apt-get autoremove --yes && \
     apt-get clean && \
     ldconfig && \
     rm -rf /app/opencv && \

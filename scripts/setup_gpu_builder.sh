@@ -32,7 +32,6 @@ finalize_python_setup
 
 # 6. Install additional build dependencies for OpenCV.
 echo "Installing OpenCV build dependencies..."
-apt-get update
 apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config \
     libjpeg-dev libpng-dev libtiff-dev \
