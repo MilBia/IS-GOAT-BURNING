@@ -16,10 +16,12 @@ echo "Installing Python and specified packages: $@"
 apt-get install -y --no-install-recommends "$@"
 
 # 4. Finalize the Python installation.
-finalize_python_setup
+finalize_python_setup "python3.13"
 
 # 5. Clean up apt caches. Build-time dependencies like software-properties-common
-#    are intentionally kept in runtime images for simplicity and stability.
+#    are intentionally not purged here. Purging them on Ubuntu 22.04 has been
+#    found to break the build by removing essential packages (like the system's
+#    default python3), which are required by subsequent Docker layers.
 echo "Cleaning up apt caches..."
 apt-get clean
 rm -rf /var/lib/apt/lists/*

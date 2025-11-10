@@ -28,7 +28,7 @@ apt-get install -y --no-install-recommends \
     python3.13-venv
 
 # 5. Finalize the Python installation (set default, bootstrap pip).
-finalize_python_setup
+finalize_python_setup "python3.13"
 
 # 6. Install additional build dependencies for OpenCV.
 echo "Installing OpenCV build dependencies..."
