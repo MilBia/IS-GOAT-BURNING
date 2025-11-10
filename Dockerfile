@@ -17,7 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Copy and run the centralized Python installation script
 COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/install_python.sh && \
+RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
     /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
     rm -rf /tmp/scripts
 
@@ -73,7 +73,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy and run the centralized GPU builder setup script
 COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/setup_gpu_builder.sh && \
+RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/setup_gpu_builder.sh && \
     /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
     rm -rf /tmp/scripts
 
@@ -114,7 +114,12 @@ RUN mkdir -p /app/opencv/build && \
           .. && \
     make -j$(nproc) && \
     make install && \
-    apt-get purge -y --auto-remove wget unzip curl && \
+    apt-get purge -y --auto-remove \
+        build-essential cmake git pkg-config wget unzip curl \
+        software-properties-common gnupg \
+        libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
+        libavformat-dev libswscale-dev libv4l-dev \
+        libxvidcore-dev libx264-dev libgtk-3-dev && \
     apt-get autoremove --yes && \
     apt-get clean && \
     ldconfig && \
@@ -142,9 +147,9 @@ ENV TZ=Etc/UTC \
 
 # Copy and run the centralized Python installation script
 COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/install_python.sh && \
+RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
     /tmp/scripts/install_python.sh \
-    python3.13-full gosu \
+    python3.13 python3.13-full python3.13-venv gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
     rm -rf /tmp/scripts
 
@@ -159,7 +164,6 @@ COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
 # Copy the entrypoint script and make it executable.
-# This script is used to set the correct user permissions and execute the main application.
 COPY scripts/entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
@@ -168,7 +172,6 @@ RUN mkdir -p /app/recordings && \
     mkdir -p /app/.cache && \
     chown -R nobody:nogroup /app/.cache
 # Copy the application code.
-# This includes all the python scripts and other resources needed to run the application.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
 
@@ -176,11 +179,9 @@ COPY is_goat_burning/ ./is_goat_burning/
 ENTRYPOINT ["entrypoint.sh"]
 
 # Set the Python path.
-# This ensures that the application can find its modules.
 ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
 # Default command to run the application.
-# This starts the main application script.
 CMD ["python3", "burning_goat_detection.py"]
 
 
@@ -200,7 +201,6 @@ COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
-# The PYTHONPATH is inherited from the base stage.
 CMD ["pytest"]
 
 
@@ -221,5 +221,4 @@ COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
-# The PYTHONPATH is inherited from the base stage.
 CMD ["pytest"]

@@ -1,26 +1,24 @@
 #!/bin/bash
 set -e
 
-# This script centralizes the logic for installing Python from the deadsnakes PPA.
-# It sources common functions and installs a specific set of Python-related packages.
+# This script installs Python 3.13 and other specified packages by leveraging
+# the shared functions in common.sh.
 
-# Source the common functions library
-source /tmp/scripts/common.sh
+# 1. Source the shared functions.
+SCRIPT_DIR=$(dirname "$0")
+source "${SCRIPT_DIR}/common.sh"
 
-# 1. Setup PPA prerequisites
-setup_ppa_prerequisites
+# 2. Install PPA prerequisites.
+install_base_dependencies_and_ppa
 
-# 2. Install Python and any other specified packages passed as arguments
+# 3. Install Python and all other packages passed as arguments.
+echo "Installing Python and specified packages: $@"
 apt-get install -y --no-install-recommends "$@"
 
-# 3. Clean up build-time dependencies and caches
-apt-get purge -y --auto-remove software-properties-common gnupg
+# 4. Finalize the Python installation.
+finalize_python_setup
+
+# 5. Clean up apt caches. Package purging is handled in the Dockerfile.
+echo "Cleaning up apt caches..."
 apt-get clean
 rm -rf /var/lib/apt/lists/*
-
-# 4. Set python3.13 as the default python3
-update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
-
-# 5. Bootstrap a modern, compatible version of pip
-python3 -m ensurepip --upgrade
-python3 -m pip install --no-cache-dir --upgrade pip
