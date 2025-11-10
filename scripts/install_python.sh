@@ -18,7 +18,8 @@ apt-get install -y --no-install-recommends "$@"
 # 4. Finalize the Python installation.
 finalize_python_setup
 
-# 5. Clean up apt caches. Package purging is handled in the Dockerfile.
+# 5. Clean up apt caches. Build-time dependencies like software-properties-common
+#    are intentionally kept in runtime images for simplicity and stability.
 echo "Cleaning up apt caches..."
 apt-get clean
 rm -rf /var/lib/apt/lists/*

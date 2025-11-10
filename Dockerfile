@@ -18,20 +18,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Copy and run the centralized Python installation script
 COPY scripts/ /tmp/scripts/
 RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
-    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
-    rm -rf /tmp/scripts
+    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu
 
 # Set the working directory.
 WORKDIR /app
 
-# Copy the entrypoint script and make it executable.
-COPY scripts/entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# Create the recordings and cache directories and set permissions.
-RUN mkdir -p /app/recordings && \
-    mkdir -p /app/.cache && \
-    chown -R nobody:nogroup /app/.cache
+# Set up the runtime environment by copying entrypoint and creating directories.
+# This script is reused in the 'gpu' stage to avoid duplication.
+RUN chmod +x /tmp/scripts/setup_runtime.sh && /tmp/scripts/setup_runtime.sh && rm -rf /tmp/scripts
 
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
@@ -149,8 +143,10 @@ COPY scripts/ /tmp/scripts/
 RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/install_python.sh && \
     /tmp/scripts/install_python.sh \
     python3.13 python3.13-full python3.13-venv gosu \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
-    rm -rf /tmp/scripts
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1
+
+# Set up the runtime environment by copying entrypoint and creating directories.
+RUN chmod +x /tmp/scripts/setup_runtime.sh && /tmp/scripts/setup_runtime.sh && rm -rf /tmp/scripts
 
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
@@ -162,14 +158,6 @@ RUN ldconfig
 COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
-# Copy the entrypoint script and make it executable.
-COPY scripts/entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-# Create the recordings directory.
-RUN mkdir -p /app/recordings && \
-    mkdir -p /app/.cache && \
-    chown -R nobody:nogroup /app/.cache
 # Copy the application code.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/

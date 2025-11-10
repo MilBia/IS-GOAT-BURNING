@@ -21,10 +21,12 @@ install_base_dependencies_and_ppa() {
 # Finalizes the Python 3.13 installation by setting it as the default python3
 # and bootstrapping a modern version of pip.
 finalize_python_setup() {
-    echo "Setting python3.13 as the default python3 alternative..."
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+    local python_executable="python3.13"
 
-    echo "Bootstrapping pip for python3.13..."
-    python3.13 -m ensurepip --upgrade
-    python3.13 -m pip install --no-cache-dir --upgrade pip
+    echo "Setting ${python_executable} as the default python3 alternative..."
+    update-alternatives --install /usr/bin/python3 python3 "/usr/bin/${python_executable}" 1
+
+    echo "Bootstrapping pip for ${python_executable}..."
+    "${python_executable}" -m ensurepip --upgrade
+    "${python_executable}" -m pip install --no-cache-dir --upgrade pip
 }
