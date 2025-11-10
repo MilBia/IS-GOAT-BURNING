@@ -24,7 +24,7 @@ multidict==6.6.4
     # via
     #   aiohttp
     #   yarl
-numpy==2.3.2
+numpy==2.3.3
     # via IS-GOAT-BURNING (pyproject.toml)
 propcache==0.3.2
     # via
@@ -34,7 +34,7 @@ pydantic==2.11.7
     # via pydantic-settings
 pydantic-core==2.33.2
     # via pydantic
-pydantic-settings==2.10.1
+pydantic-settings==2.11.0
     # via IS-GOAT-BURNING (pyproject.toml)
 python-dotenv==1.1.1
     # via pydantic-settings
@@ -50,5 +50,5 @@ typing-inspection==0.4.1
     #   pydantic-settings
 yarl==1.20.1
     # via aiohttp
-yt-dlp==2025.9.5
+yt-dlp==2025.9.26
     # via IS-GOAT-BURNING (pyproject.toml)
