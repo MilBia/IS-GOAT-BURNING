@@ -12,8 +12,8 @@ fi
 SETUPTOOLS_VERSION=$1
 NUMPY_VERSION=$2
 
-# 2. Source the shared functions.
-SCRIPT_DIR=$(dirname "$0")
+# 2. Source the shared functions using a robust method to find the script's directory.
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 source "${SCRIPT_DIR}/common.sh"
 
 # 3. Install PPA prerequisites.

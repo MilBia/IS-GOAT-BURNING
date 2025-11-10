@@ -1,5 +1,5 @@
 # Define build arguments for version consistency
-ARG SETUPTOOLS_VERSION=75.8.0
+ARG SETUPTOOLS_VERSION=80.9.0
 ARG NUMPY_VERSION=2.3.3
 
 # --- Base Stage ---
@@ -18,11 +18,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set the working directory early.
 WORKDIR /app
 
-# Copy scripts, install Python, set up the runtime environment, and clean up
-# all in a single layer to optimize image size.
-COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/*.sh && \
-    /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
+# Copy scripts with execute permissions, install Python, set up the runtime,
+# and clean up all in a single layer to optimize image size.
+COPY --chmod=755 scripts/ /tmp/scripts/
+RUN /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
     /tmp/scripts/setup_runtime.sh && \
     rm -rf /tmp/scripts
 
@@ -64,10 +63,9 @@ WORKDIR /app
 ENV TZ=Etc/UTC
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy and run the centralized GPU builder setup script
-COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/common.sh /tmp/scripts/setup_gpu_builder.sh && \
-    /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
+# Copy scripts with execute permissions and run the centralized GPU builder setup.
+COPY --chmod=755 scripts/ /tmp/scripts/
+RUN /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
     rm -rf /tmp/scripts
 
 # Download and build OpenCV from source.
@@ -137,11 +135,10 @@ ENV TZ=Etc/UTC \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     XDG_CACHE_HOME=/app/.cache
 
-# Copy scripts, install Python, set up the runtime environment, and clean up
-# all in a single layer to optimize image size.
-COPY scripts/ /tmp/scripts/
-RUN chmod +x /tmp/scripts/*.sh && \
-    /tmp/scripts/install_python.sh \
+# Copy scripts with execute permissions, install Python, set up the runtime,
+# and clean up all in a single layer to optimize image size.
+COPY --chmod=755 scripts/ /tmp/scripts/
+RUN /tmp/scripts/install_python.sh \
     python3.13 python3.13-full python3.13-venv gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
     /tmp/scripts/setup_runtime.sh && \

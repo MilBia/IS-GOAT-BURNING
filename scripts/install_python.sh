@@ -4,8 +4,8 @@ set -e
 # This script installs Python 3.13 and other specified packages by leveraging
 # the shared functions in common.sh.
 
-# 1. Source the shared functions.
-SCRIPT_DIR=$(dirname "$0")
+# 1. Source the shared functions using a robust method to find the script's directory.
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 source "${SCRIPT_DIR}/common.sh"
 
 # 2. Install PPA prerequisites.
