@@ -123,6 +123,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 
 # Expose the setuptools version argument to this stage
 ARG SETUPTOOLS_VERSION
+ARG NUMPY_VERSION
 
 # Set the working directory.
 WORKDIR /app
@@ -152,7 +153,7 @@ RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
+RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION} numpy==${NUMPY_VERSION}
 
 # Copy the application code.
 COPY pyproject.toml burning_goat_detection.py ./

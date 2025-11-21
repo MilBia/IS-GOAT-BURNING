@@ -44,8 +44,3 @@ echo "Installing pinned Python build dependencies..."
 python3 -m pip install --no-cache-dir \
     setuptools=="${SETUPTOOLS_VERSION}" \
     numpy=="${NUMPY_VERSION}"
-
-# 8. Clean up apt caches. Package purging is handled in the Dockerfile.
-echo "Cleaning up apt caches..."
-apt-get clean
-rm -rf /var/lib/apt/lists/*

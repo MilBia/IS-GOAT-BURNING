@@ -23,5 +23,6 @@ finalize_python_setup "python3.13"
 #    found to break the build by removing essential packages (like the system's
 #    default python3), which are required by subsequent Docker layers.
 echo "Cleaning up apt caches..."
+apt-get purge -y --auto-remove gnupg
 apt-get clean
 rm -rf /var/lib/apt/lists/*
