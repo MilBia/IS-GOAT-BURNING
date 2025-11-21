@@ -31,6 +31,9 @@ ENTRYPOINT ["entrypoint.sh"]
 # Set the Python path.
 ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
+# Default command to run the application.
+CMD ["python3", "burning_goat_detection.py"]
+
 # --- CPU Stage ---
 # This stage is for the CPU-only image.
 FROM base AS cpu
@@ -45,9 +48,6 @@ RUN python3 -m pip install --no-cache-dir -r requirements-cpu.txt setuptools==${
 # Copy the rest of the application code.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
-
-# Default command to run the application.
-CMD ["python3", "burning_goat_detection.py"]
 
 # --- GPU Builder Stage ---
 # This stage builds OpenCV with CUDA support.
@@ -163,9 +163,6 @@ ENTRYPOINT ["entrypoint.sh"]
 
 # Set the Python path.
 ENV PYTHONPATH="${PYTHONPATH:-}:/app"
-
-# Default command to run the application.
-CMD ["python3", "burning_goat_detection.py"]
 
 
 # --- Test Stage ---
