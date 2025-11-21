@@ -80,37 +80,37 @@ ARG CUDA_ARCH=8.6
 RUN mkdir -p /app/opencv/build && \
     cd /app/opencv/build && \
     cmake -D CMAKE_BUILD_TYPE=RELEASE \
-          -D CMAKE_INSTALL_PREFIX=/usr/local \
-          -D WITH_CUDA=ON \
-          -D CUDA_ARCH_BIN="${CUDA_ARCH}" \
-          -D CUDA_ARCH_PTX="" \
-          -D WITH_CUDNN=ON \
-          -D OPENCV_DNN_CUDA=ON \
-          -D ENABLE_FAST_MATH=1 \
-          -D CUDA_FAST_MATH=1 \
-          -D WITH_OPENGL=ON \
-          -D WITH_V4L=ON \
-          -D WITH_QT=OFF \
-          -D WITH_TBB=ON \
-          -D BUILD_opencv_python3=ON \
-          -D BUILD_opencv_python2=OFF \
-          -D PYTHON_EXECUTABLE=$(which python3.13) \
-          -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
-          -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
-          -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
-          -D INSTALL_PYTHON_EXAMPLES=OFF \
-          -D BUILD_EXAMPLES=OFF \
-          -D OPENCV_ENABLE_NONFREE=ON \
-          -D OPENCV_EXTRA_MODULES_PATH=/app/opencv_contrib/modules \
-          .. && \
+    -D CMAKE_INSTALL_PREFIX=/usr/local \
+    -D WITH_CUDA=ON \
+    -D CUDA_ARCH_BIN="${CUDA_ARCH}" \
+    -D CUDA_ARCH_PTX="" \
+    -D WITH_CUDNN=ON \
+    -D OPENCV_DNN_CUDA=ON \
+    -D ENABLE_FAST_MATH=1 \
+    -D CUDA_FAST_MATH=1 \
+    -D WITH_OPENGL=ON \
+    -D WITH_V4L=ON \
+    -D WITH_QT=OFF \
+    -D WITH_TBB=ON \
+    -D BUILD_opencv_python3=ON \
+    -D BUILD_opencv_python2=OFF \
+    -D PYTHON_EXECUTABLE=$(which python3.13) \
+    -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
+    -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
+    -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
+    -D INSTALL_PYTHON_EXAMPLES=OFF \
+    -D BUILD_EXAMPLES=OFF \
+    -D OPENCV_ENABLE_NONFREE=ON \
+    -D OPENCV_EXTRA_MODULES_PATH=/app/opencv_contrib/modules \
+    .. && \
     make -j$(nproc) && \
     make install && \
     apt-get purge -y --auto-remove \
-        build-essential cmake git pkg-config wget unzip curl \
-        software-properties-common gnupg \
-        libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
-        libavformat-dev libswscale-dev libv4l-dev \
-        libxvidcore-dev libx264-dev libgtk-3-dev && \
+    build-essential cmake git pkg-config wget unzip curl \
+    software-properties-common gnupg \
+    libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
+    libavformat-dev libswscale-dev libv4l-dev \
+    libxvidcore-dev libx264-dev libgtk-3-dev && \
     apt-get clean && \
     ldconfig && \
     rm -rf /app/opencv && \
@@ -123,7 +123,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 
 # Expose the setuptools version argument to this stage
 ARG SETUPTOOLS_VERSION
-ARG NUMPY_VERSION
+
 
 # Set the working directory.
 WORKDIR /app
@@ -153,7 +153,7 @@ RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION} numpy==${NUMPY_VERSION}
+RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
 # Copy the application code.
 COPY pyproject.toml burning_goat_detection.py ./
