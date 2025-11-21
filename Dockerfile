@@ -124,7 +124,6 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS gpu
 # Expose the setuptools version argument to this stage
 ARG SETUPTOOLS_VERSION
 
-
 # Set the working directory.
 WORKDIR /app
 
