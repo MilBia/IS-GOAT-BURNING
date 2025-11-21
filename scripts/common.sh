@@ -24,7 +24,7 @@ install_base_dependencies_and_ppa() {
 # Arguments:
 #   $1: The Python executable name (e.g., "python3.13").
 finalize_python_setup() {
-    if [ -z "$1" ]; then
+    if [[ -z "$1" ]]; then
         echo "Error: Python executable name must be provided to finalize_python_setup." >&2
         exit 1
     fi

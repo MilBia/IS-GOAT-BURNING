@@ -1,4 +1,5 @@
 # Define build arguments for version consistency
+# IMPORTANT: These versions should be kept in sync with pyproject.toml.
 ARG SETUPTOOLS_VERSION=80.9.0
 ARG NUMPY_VERSION=2.3.3
 
