@@ -164,6 +164,9 @@ ENTRYPOINT ["entrypoint.sh"]
 # Set the Python path.
 ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 
+# Default command to run the application.
+CMD ["python3", "burning_goat_detection.py"]
+
 
 # --- Test Stage ---
 # This stage is for running the unit and integration test suite.
