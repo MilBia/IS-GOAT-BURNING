@@ -5,8 +5,8 @@ set -e
 # for the base Python setup and then installs additional build dependencies.
 
 # 1. Validate version arguments for build tools.
-if [[ -z "$1" ]] || [[ -z "$2" ]]; then
-    echo "Error: SETUPTOOLS_VERSION and NUMPY_VERSION must be provided as arguments." >&2
+if [ "$#" -ne 2 ]; then
+    echo "Error: This script requires exactly two arguments: SETUPTOOLS_VERSION and NUMPY_VERSION." >&2
     exit 1
 fi
 SETUPTOOLS_VERSION=$1
