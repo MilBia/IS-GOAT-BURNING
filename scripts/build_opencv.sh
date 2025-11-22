@@ -54,6 +54,12 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
+# Validate arguments
+if [[ "${WITH_CUDA}" == "ON" && -z "${CUDA_ARCH_BIN}" ]]; then
+    echo "Error: --cuda-arch is required when --cuda is specified." >&2
+    exit 1
+fi
+
 echo "Building OpenCV ${OPENCV_VERSION} (Contrib: ${OPENCV_CONTRIB_VERSION})"
 echo "CUDA: ${WITH_CUDA}, OpenCL: ${WITH_OPENCL}, CUDA Arch: ${CUDA_ARCH_BIN}"
 
