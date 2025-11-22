@@ -79,10 +79,10 @@ mkdir -p opencv/build
 cd opencv/build
 
 # Determine Python paths
-PYTHON_EXEC=$(which python3)
-PYTHON_LIB=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))")
-PYTHON_INC=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['include'])")
-PYTHON_PACKAGES=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+PYTHON_EXEC="$(which python3)"
+PYTHON_LIB="$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))")"
+PYTHON_INC="$(python3 -c "import sysconfig; print(sysconfig.get_paths()['include'])")"
+PYTHON_PACKAGES="$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")"
 
 # Configure CMake
 CMAKE_ARGS=(
@@ -123,7 +123,7 @@ CMAKE_ARGS+=("-D WITH_OPENCL=${WITH_OPENCL}")
 cmake "${CMAKE_ARGS[@]}" ..
 
 # Build and Install
-make -j$(nproc)
+make -j"$(nproc)"
 make install
 ldconfig
 

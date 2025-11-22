@@ -188,7 +188,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clinfo \
     intel-opencl-icd \
     mesa-opencl-icd \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage.
