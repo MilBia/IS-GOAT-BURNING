@@ -15,7 +15,7 @@ install_base_dependencies_and_ppa() {
         ca-certificates
 
     echo "Adding deadsnakes PPA..."
-    add-apt-repository -y ppa:deadsnakes/ppa
+    add-apt-repository -y ppa:deadsnakes/ppa && apt-get update
 }
 
 # Finalizes a Python installation by setting it as the default python3
