@@ -21,17 +21,25 @@ while [[ "$#" -gt 0 ]]; do
             BUILD_TYPE="$2"
             shift 2
             ;;
-        *)
-            # Assume positional arguments for versions if not flagged
-            if [[ -z "$SETUPTOOLS_VERSION" ]]; then
-                SETUPTOOLS_VERSION="$1"
-            elif [[ -z "$NUMPY_VERSION" ]]; then
-                NUMPY_VERSION="$1"
-            else
-                echo "Unknown parameter passed: $1" >&2
+        --setuptools-version)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --setuptools-version requires a value." >&2
                 exit 1
             fi
-            shift
+            SETUPTOOLS_VERSION="$2"
+            shift 2
+            ;;
+        --numpy-version)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --numpy-version requires a value." >&2
+                exit 1
+            fi
+            NUMPY_VERSION="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown parameter passed: $1" >&2
+            exit 1
             ;;
     esac
 done

@@ -112,11 +112,7 @@ else
     CMAKE_ARGS+=("-D WITH_CUDA=OFF")
 fi
 
-if [[ "${WITH_OPENCL}" == "ON" ]]; then
-    CMAKE_ARGS+=("-D WITH_OPENCL=ON")
-else
-    CMAKE_ARGS+=("-D WITH_OPENCL=OFF")
-fi
+CMAKE_ARGS+=("-D WITH_OPENCL=${WITH_OPENCL}")
 
 cmake "${CMAKE_ARGS[@]}" ..
 
