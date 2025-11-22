@@ -86,14 +86,7 @@ fi
 if [[ "${WITH_OPENCL}" == "ON" ]]; then
     CMAKE_ARGS+=("-D WITH_OPENCL=ON")
 else
-    # Explicitly disable OpenCL if not requested, or keep default?
-    # Usually better to be explicit if we want strictly one or the other.
-    # But standard CPU build might want OpenCL if available.
-    # For this script, we follow the flag.
-    # However, the original Dockerfile didn't explicitly disable OpenCL for GPU build,
-    # but it did enable it for OpenCL build.
-    # Let's stick to the flag.
-    :
+    CMAKE_ARGS+=("-D WITH_OPENCL=OFF")
 fi
 
 cmake "${CMAKE_ARGS[@]}" ..
