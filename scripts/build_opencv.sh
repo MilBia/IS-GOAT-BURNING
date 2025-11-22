@@ -15,14 +15,43 @@ CUDA_ARCH_BIN=""
 # Parse arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --opencv-version) OPENCV_VERSION="$2"; shift ;;
-        --contrib-version) OPENCV_CONTRIB_VERSION="$2"; shift ;;
-        --cuda) WITH_CUDA="ON" ;;
-        --opencl) WITH_OPENCL="ON" ;;
-        --cuda-arch) CUDA_ARCH_BIN="$2"; shift ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+        --opencv-version)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --opencv-version requires a value." >&2
+                exit 1
+            fi
+            OPENCV_VERSION="$2"
+            shift 2
+            ;;
+        --contrib-version)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --contrib-version requires a value." >&2
+                exit 1
+            fi
+            OPENCV_CONTRIB_VERSION="$2"
+            shift 2
+            ;;
+        --cuda)
+            WITH_CUDA="ON"
+            shift
+            ;;
+        --opencl)
+            WITH_OPENCL="ON"
+            shift
+            ;;
+        --cuda-arch)
+            if [[ -z "$2" || "$2" =~ ^- ]]; then
+                echo "Error: --cuda-arch requires a value." >&2
+                exit 1
+            fi
+            CUDA_ARCH_BIN="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown parameter passed: $1" >&2
+            exit 1
+            ;;
     esac
-    shift
 done
 
 echo "Building OpenCV ${OPENCV_VERSION} (Contrib: ${OPENCV_CONTRIB_VERSION})"
