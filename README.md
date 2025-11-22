@@ -174,6 +174,11 @@ Docker allows you to run the application in a consistent and isolated environmen
             ```
         -   The `--build-arg CUDA_ARCH` flag passes the GPU architecture to the Dockerfile, which uses it to optimize the OpenCV build for your specific GPU.  If you skip this step, the application might not run correctly or might not use the GPU effectively.
 
+    -  **With OpenCL support (Intel/AMD/RPi):** This build will run the application using OpenCL acceleration.
+        ```bash
+        docker build --target opencl -t burning_goat_detection .
+        ```
+
 5.  **Run the Docker container:**
 
     -  **Base run (CPU only):**
@@ -199,7 +204,14 @@ Docker allows you to run the application in a consistent and isolated environmen
                 ```
             -   In this example, `/path/to/your/local/recordings` is a directory on your computer where you want to save the videos. The `/app/recordings` part is the default path inside the container. If you need to change this, please see the **Using a Custom Recordings Directory** section below.
 
-    -  **Configuring with an `.env` file:**
+    -   **With OpenCL support (Intel/AMD/RPi):**
+        You need to map the DRI devices to the container to allow access to the GPU.
+        ```bash
+        docker run --device /dev/dri:/dev/dri --name burning_goat_detection_container -d burning_goat_detection
+        ```
+        -   **Raspberry Pi Note:** Ensure you are using the KMS driver (dtoverlay=vc4-kms-v3d) in `/boot/config.txt`.
+
+    -   **Configuring with an `.env` file:**
         The recommended way to provide configuration (like email credentials or Discord webhooks) is to use an `.env` file with the `--env-file` flag. This securely injects all your settings into the container.
 
         - **Example:**
@@ -282,6 +294,18 @@ This is the recommended way to validate changes in a clean, production-like envi
     This command runs the GPU test image, enabling GPU access for the container. The CUDA-specific tests will now be executed.
     ```bash
     docker run --rm --gpus all goat-detector:test-gpu
+    ```
+
+#### OpenCL Tests
+
+1.  **Build the OpenCL Test Image:**
+    ```bash
+    docker build --target opencl-test -t goat-detector:test-opencl .
+    ```
+
+2.  **Run the OpenCL Test Suite:**
+    ```bash
+    docker run --rm --device /dev/dri:/dev/dri goat-detector:test-opencl
     ```
 
 ## Troubleshooting Docker/CUDA Issues

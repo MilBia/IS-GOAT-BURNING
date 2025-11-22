@@ -66,47 +66,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy scripts with execute permissions and run the centralized GPU builder setup.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
-    rm -rf /tmp/scripts
+RUN /tmp/scripts/setup_builder.sh --type gpu --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.zip -O opencv.zip && \
-    unzip opencv.zip &&     mv opencv-${OPENCV_VERSION} opencv &&     rm opencv.zip
-
 ARG OPENCV_CONTRIB_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSION}.zip -O opencv_contrib.zip &&     unzip opencv_contrib.zip &&     mv opencv_contrib-${OPENCV_CONTRIB_VERSION} opencv_contrib &&     rm opencv_contrib.zip
-
 ARG CUDA_ARCH=8.6
-RUN mkdir -p /app/opencv/build && \
-    cd /app/opencv/build && \
-    cmake \
-        -D CMAKE_BUILD_TYPE=RELEASE \
-        -D CMAKE_INSTALL_PREFIX=/usr/local \
-        -D WITH_CUDA=ON \
-        -D CUDA_ARCH_BIN="${CUDA_ARCH}" \
-        -D CUDA_ARCH_PTX="" \
-        -D WITH_CUDNN=ON \
-        -D OPENCV_DNN_CUDA=ON \
-        -D ENABLE_FAST_MATH=1 \
-        -D CUDA_FAST_MATH=1 \
-        -D WITH_OPENGL=ON \
-        -D WITH_V4L=ON \
-        -D WITH_QT=OFF \
-        -D WITH_TBB=ON \
-        -D BUILD_opencv_python3=ON \
-        -D BUILD_opencv_python2=OFF \
-        -D PYTHON_EXECUTABLE=$(which python3.13) \
-        -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
-        -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
-        -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
-        -D INSTALL_PYTHON_EXAMPLES=OFF \
-        -D BUILD_EXAMPLES=OFF \
-        -D OPENCV_ENABLE_NONFREE=ON \
-        -D OPENCV_EXTRA_MODULES_PATH=/app/opencv_contrib/modules \
-        .. && \
-    make -j$(nproc) && \
-    make install && \
+
+RUN /tmp/scripts/build_opencv.sh \
+    --opencv-version ${OPENCV_VERSION} \
+    --contrib-version ${OPENCV_CONTRIB_VERSION} \
+    --cuda \
+    --cuda-arch ${CUDA_ARCH} && \
     apt-get purge -y --auto-remove \
     build-essential cmake git pkg-config wget unzip curl \
     software-properties-common gnupg \
@@ -114,9 +85,7 @@ RUN mkdir -p /app/opencv/build && \
     libavformat-dev libswscale-dev libv4l-dev \
     libxvidcore-dev libx264-dev libgtk-3-dev && \
     apt-get clean && \
-    ldconfig && \
-    rm -rf /app/opencv && \
-    rm -rf /app/opencv_contrib && \
+    rm -rf /tmp/scripts && \
     rm -rf /var/lib/apt/lists/*
 
 # --- GPU Runtime Stage ---
@@ -170,6 +139,74 @@ ENV PYTHONPATH="${PYTHONPATH:-}:/app"
 CMD ["python3", "burning_goat_detection.py"]
 
 
+# --- OpenCL Builder Stage ---
+# This stage builds OpenCV with OpenCL support.
+FROM ubuntu:22.04 AS opencl_builder
+
+# Expose build arguments to this stage
+ARG SETUPTOOLS_VERSION
+ARG NUMPY_VERSION
+
+# Set the working directory.
+WORKDIR /app
+
+ENV TZ=Etc/UTC
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Copy scripts with execute permissions and run the centralized OpenCL builder setup.
+COPY --chmod=755 scripts/ /tmp/scripts/
+RUN /tmp/scripts/setup_builder.sh --type opencl --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
+
+# Download and build OpenCV from source.
+ARG OPENCV_VERSION=4.11.0
+ARG OPENCV_CONTRIB_VERSION=4.11.0
+
+RUN /tmp/scripts/build_opencv.sh \
+    --opencv-version ${OPENCV_VERSION} \
+    --contrib-version ${OPENCV_CONTRIB_VERSION} \
+    --opencl && \
+    apt-get purge -y --auto-remove \
+    build-essential cmake git pkg-config wget unzip \
+    software-properties-common gnupg \
+    libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
+    libavformat-dev libswscale-dev libv4l-dev \
+    libxvidcore-dev libx264-dev libgtk-3-dev && \
+    apt-get clean && \
+    rm -rf /tmp/scripts && \
+    rm -rf /var/lib/apt/lists/*
+
+# --- OpenCL Runtime Stage ---
+# This stage is for the OpenCL-accelerated image.
+FROM base AS opencl
+
+# Expose the setuptools version argument to this stage
+ARG SETUPTOOLS_VERSION
+
+# Install OpenCL runtime libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ocl-icd-libopencl1 \
+    clinfo \
+    intel-opencl-icd \
+    mesa-opencl-icd \
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy OpenCV from the builder stage.
+COPY --from=opencl_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
+COPY --from=opencl_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
+COPY --from=opencl_builder /usr/local/include/opencv4 /usr/local/include/opencv4
+RUN ldconfig
+
+# Copy CPU-specific requirements (OpenCL uses standard pip packages usually)
+COPY requirements-cpu.txt .
+# Exclude opencv-python* from requirements and install the rest
+RUN grep -v "^opencv-python" requirements-cpu.txt | python3 -m pip install --no-cache-dir -r /dev/stdin setuptools==${SETUPTOOLS_VERSION}
+
+# Copy the application code.
+COPY pyproject.toml burning_goat_detection.py ./
+COPY is_goat_burning/ ./is_goat_burning/
+
+
 # --- Test Stage ---
 # This stage is for running the unit and integration test suite.
 FROM cpu AS cpu-test
@@ -179,7 +216,8 @@ RUN mkdir -p /app/.pytest_cache && \
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements-dev.txt
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin setuptools==${SETUPTOOLS_VERSION}
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
@@ -199,7 +237,27 @@ RUN mkdir -p /app/.pytest_cache && \
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
 # Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install --no-cache-dir -r /tmp/reqs.txt && rm /tmp/reqs.txt
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin setuptools==${SETUPTOOLS_VERSION}
+
+# Copy test suite and configuration AFTER installing dependencies for better caching
+COPY tests/ ./tests/
+COPY .env.tests ./.env.tests
+
+# Set the default command for this stage to run pytest.
+CMD ["pytest"]
+
+
+# --- OpenCL Test Stage ---
+# This stage is for running the unit and integration test suite with OpenCL.
+FROM opencl AS opencl-test
+
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin setuptools==${SETUPTOOLS_VERSION}
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
