@@ -66,7 +66,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy scripts with execute permissions and run the centralized GPU builder setup.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
+RUN /tmp/scripts/setup_builder.sh --type gpu ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -155,7 +155,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy scripts with execute permissions and run the centralized OpenCL builder setup.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/setup_opencl_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
+RUN /tmp/scripts/setup_builder.sh --type opencl ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
@@ -166,7 +166,7 @@ RUN /tmp/scripts/build_opencv.sh \
     --contrib-version ${OPENCV_CONTRIB_VERSION} \
     --opencl && \
     apt-get purge -y --auto-remove \
-    build-essential cmake git pkg-config wget unzip curl \
+    build-essential cmake git pkg-config wget unzip \
     software-properties-common gnupg \
     libjpeg-dev libpng-dev libtiff-dev libavcodec-dev \
     libavformat-dev libswscale-dev libv4l-dev \
