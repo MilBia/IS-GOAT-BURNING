@@ -207,9 +207,9 @@ COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
 
 
-# --- Test Base Stage ---
-# This stage contains common test setup.
-FROM cpu AS test-base
+# --- Test Stage ---
+# This stage is for running the unit and integration test suite.
+FROM cpu AS cpu-test
 
 RUN mkdir -p /app/.pytest_cache && \
     chown -R nobody:nogroup /app/.pytest_cache
@@ -217,17 +217,11 @@ RUN mkdir -p /app/.pytest_cache && \
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
 # Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-# Note: We use /dev/stdin to avoid creating a temporary file.
 RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
-
-
-# --- Test Stage ---
-# This stage is for running the unit and integration test suite.
-FROM test-base AS cpu-test
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
@@ -237,12 +231,17 @@ CMD ["pytest"]
 # This stage is for running the unit and integration test suite on a GPU.
 FROM gpu AS gpu-test
 
-# Reuse setup from test-base
-COPY --from=test-base /app/.pytest_cache /app/.pytest_cache
-COPY --from=test-base /usr/local/lib/python3.13/dist-packages /usr/local/lib/python3.13/dist-packages
-COPY --from=test-base /usr/local/bin/pytest /usr/local/bin/pytest
-COPY --from=test-base /app/tests /app/tests
-COPY --from=test-base /app/.env.tests /app/.env.tests
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin
+
+# Copy test suite and configuration AFTER installing dependencies for better caching
+COPY tests/ ./tests/
+COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
@@ -252,12 +251,17 @@ CMD ["pytest"]
 # This stage is for running the unit and integration test suite with OpenCL.
 FROM opencl AS opencl-test
 
-# Reuse setup from test-base
-COPY --from=test-base /app/.pytest_cache /app/.pytest_cache
-COPY --from=test-base /usr/local/lib/python3.13/dist-packages /usr/local/lib/python3.13/dist-packages
-COPY --from=test-base /usr/local/bin/pytest /usr/local/bin/pytest
-COPY --from=test-base /app/tests /app/tests
-COPY --from=test-base /app/.env.tests /app/.env.tests
+RUN mkdir -p /app/.pytest_cache && \
+    chown -R nobody:nogroup /app/.pytest_cache
+
+# Install development dependencies required for testing.
+COPY requirements-dev.txt .
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin
+
+# Copy test suite and configuration AFTER installing dependencies for better caching
+COPY tests/ ./tests/
+COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
