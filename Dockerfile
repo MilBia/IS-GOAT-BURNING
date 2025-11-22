@@ -66,47 +66,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy scripts with execute permissions and run the centralized GPU builder setup.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
-    rm -rf /tmp/scripts
+RUN /tmp/scripts/setup_gpu_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.zip -O opencv.zip && \
-    unzip opencv.zip &&     mv opencv-${OPENCV_VERSION} opencv &&     rm opencv.zip
-
 ARG OPENCV_CONTRIB_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSION}.zip -O opencv_contrib.zip &&     unzip opencv_contrib.zip &&     mv opencv_contrib-${OPENCV_CONTRIB_VERSION} opencv_contrib &&     rm opencv_contrib.zip
-
 ARG CUDA_ARCH=8.6
-RUN mkdir -p /app/opencv/build && \
-    cd /app/opencv/build && \
-    cmake \
-    -D CMAKE_BUILD_TYPE=RELEASE \
-    -D CMAKE_INSTALL_PREFIX=/usr/local \
-    -D WITH_CUDA=ON \
-    -D CUDA_ARCH_BIN="${CUDA_ARCH}" \
-    -D CUDA_ARCH_PTX="" \
-    -D WITH_CUDNN=ON \
-    -D OPENCV_DNN_CUDA=ON \
-    -D ENABLE_FAST_MATH=1 \
-    -D CUDA_FAST_MATH=1 \
-    -D WITH_OPENGL=ON \
-    -D WITH_V4L=ON \
-    -D WITH_QT=OFF \
-    -D WITH_TBB=ON \
-    -D BUILD_opencv_python3=ON \
-    -D BUILD_opencv_python2=OFF \
-    -D PYTHON_EXECUTABLE=$(which python3.13) \
-    -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
-    -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
-    -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
-    -D INSTALL_PYTHON_EXAMPLES=OFF \
-    -D BUILD_EXAMPLES=OFF \
-    -D OPENCV_ENABLE_NONFREE=ON \
-    -D OPENCV_EXTRA_MODULES_PATH=/app/opencv_contrib/modules \
-    .. && \
-    make -j$(nproc) && \
-    make install && \
+
+RUN /tmp/scripts/build_opencv.sh \
+    --opencv-version ${OPENCV_VERSION} \
+    --contrib-version ${OPENCV_CONTRIB_VERSION} \
+    --cuda \
+    --cuda-arch ${CUDA_ARCH} && \
     apt-get purge -y --auto-remove \
     build-essential cmake git pkg-config wget unzip curl \
     software-properties-common gnupg \
@@ -114,9 +85,7 @@ RUN mkdir -p /app/opencv/build && \
     libavformat-dev libswscale-dev libv4l-dev \
     libxvidcore-dev libx264-dev libgtk-3-dev && \
     apt-get clean && \
-    ldconfig && \
-    rm -rf /app/opencv && \
-    rm -rf /app/opencv_contrib && \
+    rm -rf /tmp/scripts && \
     rm -rf /var/lib/apt/lists/*
 
 # --- GPU Runtime Stage ---
@@ -186,41 +155,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Copy scripts with execute permissions and run the centralized OpenCL builder setup.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/setup_opencl_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION} && \
-    rm -rf /tmp/scripts
+RUN /tmp/scripts/setup_opencl_builder.sh ${SETUPTOOLS_VERSION} ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
 ARG OPENCV_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv/archive/${OPENCV_VERSION}.zip -O opencv.zip && \
-    unzip opencv.zip &&     mv opencv-${OPENCV_VERSION} opencv &&     rm opencv.zip
-
 ARG OPENCV_CONTRIB_VERSION=4.11.0
-RUN wget https://github.com/opencv/opencv_contrib/archive/${OPENCV_CONTRIB_VERSION}.zip -O opencv_contrib.zip &&     unzip opencv_contrib.zip &&     mv opencv_contrib-${OPENCV_CONTRIB_VERSION} opencv_contrib &&     rm opencv_contrib.zip
 
-RUN mkdir -p /app/opencv/build && \
-    cd /app/opencv/build && \
-    cmake \
-    -D CMAKE_BUILD_TYPE=RELEASE \
-    -D CMAKE_INSTALL_PREFIX=/usr/local \
-    -D WITH_OPENCL=ON \
-    -D WITH_CUDA=OFF \
-    -D WITH_OPENGL=ON \
-    -D WITH_V4L=ON \
-    -D WITH_QT=OFF \
-    -D WITH_TBB=ON \
-    -D BUILD_opencv_python3=ON \
-    -D BUILD_opencv_python2=OFF \
-    -D PYTHON_EXECUTABLE=$(which python3.13) \
-    -D PYTHON3_LIBRARY=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR') + '/' + sysconfig.get_config_var('LDLIBRARY'))") \
-    -D PYTHON3_INCLUDE_DIR=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['include'])") \
-    -D OPENCV_PYTHON3_INSTALL_PATH=$(python3.13 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
-    -D INSTALL_PYTHON_EXAMPLES=OFF \
-    -D BUILD_EXAMPLES=OFF \
-    -D OPENCV_ENABLE_NONFREE=ON \
-    -D OPENCV_EXTRA_MODULES_PATH=/app/opencv_contrib/modules \
-    .. && \
-    make -j$(nproc) && \
-    make install && \
+RUN /tmp/scripts/build_opencv.sh \
+    --opencv-version ${OPENCV_VERSION} \
+    --contrib-version ${OPENCV_CONTRIB_VERSION} \
+    --opencl && \
     apt-get purge -y --auto-remove \
     build-essential cmake git pkg-config wget unzip curl \
     software-properties-common gnupg \
@@ -228,9 +172,7 @@ RUN mkdir -p /app/opencv/build && \
     libavformat-dev libswscale-dev libv4l-dev \
     libxvidcore-dev libx264-dev libgtk-3-dev && \
     apt-get clean && \
-    ldconfig && \
-    rm -rf /app/opencv && \
-    rm -rf /app/opencv_contrib && \
+    rm -rf /tmp/scripts && \
     rm -rf /var/lib/apt/lists/*
 
 # --- OpenCL Runtime Stage ---
@@ -256,38 +198,36 @@ COPY --from=opencl_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig
 
 # Copy CPU-specific requirements (OpenCL uses standard pip packages usually)
-# We can reuse requirements-cpu.txt or requirements.txt depending on if we need specific GPU libs.
-# Since OpenCL is generic, we'll stick to the standard/cpu requirements but we need to make sure
-# we don't install opencv-python-headless if we are providing our own cv2.
-# Actually, requirements.txt might have opencv-python pinned.
-# Let's check requirements-cpu.txt content first.
-# Assuming requirements-cpu.txt has opencv-python-headless, we should avoid installing it.
-# But for now, let's copy requirements-cpu.txt and install it, but we might need to exclude opencv.
 COPY requirements-cpu.txt .
 # Exclude opencv-python* from requirements and install the rest
-RUN grep -v "^opencv-python" requirements-cpu.txt > /tmp/reqs.txt && \
-    python3 -m pip install --no-cache-dir -r /tmp/reqs.txt setuptools==${SETUPTOOLS_VERSION} && \
-    rm /tmp/reqs.txt
+RUN grep -v "^opencv-python" requirements-cpu.txt | python3 -m pip install --no-cache-dir -r /dev/stdin setuptools==${SETUPTOOLS_VERSION}
 
 # Copy the application code.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
 
 
-# --- Test Stage ---
-# This stage is for running the unit and integration test suite.
-FROM cpu AS cpu-test
+# --- Test Base Stage ---
+# This stage contains common test setup.
+FROM cpu AS test-base
 
 RUN mkdir -p /app/.pytest_cache && \
     chown -R nobody:nogroup /app/.pytest_cache
 
 # Install development dependencies required for testing.
 COPY requirements-dev.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements-dev.txt
+# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
+# Note: We use /dev/stdin to avoid creating a temporary file.
+RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-cache-dir -r /dev/stdin
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY .env.tests ./.env.tests
+
+
+# --- Test Stage ---
+# This stage is for running the unit and integration test suite.
+FROM test-base AS cpu-test
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
@@ -297,17 +237,12 @@ CMD ["pytest"]
 # This stage is for running the unit and integration test suite on a GPU.
 FROM gpu AS gpu-test
 
-RUN mkdir -p /app/.pytest_cache && \
-    chown -R nobody:nogroup /app/.pytest_cache
-
-# Install development dependencies required for testing.
-COPY requirements-dev.txt .
-# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install --no-cache-dir -r /tmp/reqs.txt && rm /tmp/reqs.txt
-
-# Copy test suite and configuration AFTER installing dependencies for better caching
-COPY tests/ ./tests/
-COPY .env.tests ./.env.tests
+# Reuse setup from test-base
+COPY --from=test-base /app/.pytest_cache /app/.pytest_cache
+COPY --from=test-base /usr/local/lib/python3.13/dist-packages /usr/local/lib/python3.13/dist-packages
+COPY --from=test-base /usr/local/bin/pytest /usr/local/bin/pytest
+COPY --from=test-base /app/tests /app/tests
+COPY --from=test-base /app/.env.tests /app/.env.tests
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
@@ -317,17 +252,12 @@ CMD ["pytest"]
 # This stage is for running the unit and integration test suite with OpenCL.
 FROM opencl AS opencl-test
 
-RUN mkdir -p /app/.pytest_cache && \
-    chown -R nobody:nogroup /app/.pytest_cache
-
-# Install development dependencies required for testing.
-COPY requirements-dev.txt .
-# Exclude opencv-python from dev requirements and pipe the rest directly into pip.
-RUN grep -v "^opencv-python" requirements-dev.txt > /tmp/reqs.txt && python3 -m pip install --no-cache-dir -r /tmp/reqs.txt && rm /tmp/reqs.txt
-
-# Copy test suite and configuration AFTER installing dependencies for better caching
-COPY tests/ ./tests/
-COPY .env.tests ./.env.tests
+# Reuse setup from test-base
+COPY --from=test-base /app/.pytest_cache /app/.pytest_cache
+COPY --from=test-base /usr/local/lib/python3.13/dist-packages /usr/local/lib/python3.13/dist-packages
+COPY --from=test-base /usr/local/bin/pytest /usr/local/bin/pytest
+COPY --from=test-base /app/tests /app/tests
+COPY --from=test-base /app/.env.tests /app/.env.tests
 
 # Set the default command for this stage to run pytest.
 CMD ["pytest"]
