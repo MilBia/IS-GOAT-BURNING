@@ -1,0 +1,28 @@
+#!/bin/bash
+set -e
+
+# This script installs Python 3.13 and other specified packages by leveraging
+# the shared functions in common.sh.
+
+# 1. Source the shared functions using a robust method to find the script's directory.
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+source "${SCRIPT_DIR}/common.sh"
+
+# 2. Install PPA prerequisites.
+install_base_dependencies_and_ppa
+
+# 3. Install Python and all other packages passed as arguments.
+echo "Installing Python and specified packages: $@"
+apt-get install -y --no-install-recommends "$@"
+
+# 4. Finalize the Python installation.
+finalize_python_setup "python3.13"
+
+# 5. Clean up apt caches. Build-time dependencies like software-properties-common
+#    are intentionally not purged here. Purging them on Ubuntu 22.04 has been
+#    found to break the build by removing essential packages (like the system's
+#    default python3), which are required by subsequent Docker layers.
+echo "Cleaning up apt caches..."
+apt-get purge -y --auto-remove gnupg
+apt-get clean
+rm -rf /var/lib/apt/lists/*
