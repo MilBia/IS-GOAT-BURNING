@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import SecretStr
+from pydantic import field_validator
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -123,6 +124,14 @@ class VideoSettings(BaseModel):
     flush_throttle_frame_interval: int = Field(default=10)
     flush_throttle_seconds: float = Field(default=0.01)
     flush_throttle_enabled: bool = Field(default=False)
+
+    @field_validator("flush_throttle_frame_interval")
+    @classmethod
+    def check_interval_positive(cls, v: int) -> int:
+        """Ensures that the throttle interval is a positive integer."""
+        if v <= 0:
+            raise ValueError("flush_throttle_frame_interval must be a positive integer")
+        return v
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:

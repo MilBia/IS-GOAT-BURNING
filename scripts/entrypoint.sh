@@ -42,16 +42,16 @@ if [ -e "$RENDER_DEVICE" ]; then
     echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
     
     # Check if a group with this GID already exists
-    if ! getent group "$RENDER_GID" > /dev/null; then
+    if ! getent group "$RENDER_GID" > /dev/null 2>&1; then
         echo "Creating group 'render_host' with GID $RENDER_GID"
-        groupadd -g "$RENDER_GID" render_host
+        groupadd -g "$RENDER_GID" render_host || { echo "Error: Failed to create group 'render_host' with GID $RENDER_GID" >&2; exit 1; }
     fi
     
     # Get the group name associated with the GID (whether it existed or we just created it)
     RENDER_GROUP=$(getent group "$RENDER_GID" | cut -d: -f1)
     
     echo "Adding 'nobody' to group '$RENDER_GROUP' ($RENDER_GID)"
-    usermod -a -G "$RENDER_GROUP" nobody
+    usermod -a -G "$RENDER_GROUP" nobody || { echo "Error: Failed to add 'nobody' to group '$RENDER_GROUP'" >&2; exit 1; }
 fi
 
 # Execute the command passed to this script (the Dockerfile's CMD)
