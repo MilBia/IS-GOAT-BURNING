@@ -27,7 +27,7 @@ chown -R nobody:nogroup /app/.cache
 #    This is required for OpenCL and GPU access when running as a non-root user.
 #    We use '|| true' to prevent build failures if the groups don't exist.
 echo "Adding nobody to video and render groups..."
-usermod -a -G video nobody || echo "Warning: Failed to add nobody to video group"
-usermod -a -G render nobody || echo "Warning: Failed to add nobody to render group"
+usermod -a -G video nobody || echo "Warning: Failed to add nobody to video group" >&2
+usermod -a -G render nobody || echo "Warning: Failed to add nobody to render group" >&2
 
 echo "Runtime environment setup complete."
