@@ -42,15 +42,13 @@ if [ -c "$RENDER_DEVICE" ]; then
     RENDER_GID=$(stat -c '%g' "$RENDER_DEVICE")
     echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
 
-    # Check if a group with this GID already exists
-    EXISTING_GROUP_ENTRY=$(getent group "$RENDER_GID")
-    if [ -z "$EXISTING_GROUP_ENTRY" ]; then
-        echo "Creating group 'render_host' with GID $RENDER_GID"
-        groupadd -g "$RENDER_GID" render_host || { echo "Error: Failed to create group 'render_host' with GID $RENDER_GID" >&2; exit 1; }
+    RENDER_GROUP=$(getent group "$RENDER_GID" | cut -d: -f1)
+
+    # If no group exists for that GID, create one.
+    if [ -z "$RENDER_GROUP" ]; then
         RENDER_GROUP="render_host"
-    else
-        # Extract the group name from the getent output
-        RENDER_GROUP=$(echo "$EXISTING_GROUP_ENTRY" | cut -d: -f1)
+        echo "Creating group '$RENDER_GROUP' with GID $RENDER_GID"
+        groupadd -g "$RENDER_GID" "$RENDER_GROUP" || { echo "Error: Failed to create group '$RENDER_GROUP' with GID $RENDER_GID" >&2; exit 1; }
     fi
 
     echo "Adding 'nobody' to group '$RENDER_GROUP' ($RENDER_GID)"
