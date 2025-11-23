@@ -188,9 +188,9 @@ ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ocl-icd-libopencl1 \
     clinfo \
+    $( [ "$TARGETARCH" = "amd64" ] && echo "intel-opencl-icd" ) \
     mesa-opencl-icd \
-    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 \
-    $( [ "$TARGETARCH" = "amd64" ] && echo "intel-opencl-icd" ) && \
+    libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage.
