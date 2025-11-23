@@ -23,4 +23,11 @@ mkdir -p /app/.cache
 echo "Setting ownership for cache directory..."
 chown -R nobody:nogroup /app/.cache
 
+# 4. Add the 'nobody' user to the 'video' and 'render' groups.
+#    This is required for OpenCL and GPU access when running as a non-root user.
+#    We use '|| true' to prevent build failures if the groups don't exist.
+echo "Adding nobody to video and render groups..."
+usermod -a -G video nobody || echo "Warning: Failed to add nobody to video group"
+usermod -a -G render nobody || echo "Warning: Failed to add nobody to render group"
+
 echo "Runtime environment setup complete."
