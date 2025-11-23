@@ -128,7 +128,17 @@ class VideoSettings(BaseModel):
     @field_validator("flush_throttle_frame_interval")
     @classmethod
     def check_interval_positive(cls, v: int) -> int:
-        """Ensures that the throttle interval is a positive integer."""
+        """Ensures that the throttle interval is a positive integer.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is not a positive integer.
+        """
         if v <= 0:
             raise ValueError("flush_throttle_frame_interval must be a positive integer")
         return v
