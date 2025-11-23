@@ -35,7 +35,8 @@ chown nobody:nogroup "$VIDEO_DIR"
 # The /dev/dri/renderD128 device is mounted from the host, so it retains the host's Group ID (GID).
 # This GID might not match the 'render' group GID inside the container.
 # We must detect the device's GID at runtime and ensure the 'nobody' user is part of that group.
-RENDER_DEVICE="/dev/dri/renderD128"
+# The device path can be overridden by the RENDER_DEVICE environment variable.
+RENDER_DEVICE="${RENDER_DEVICE:-/dev/dri/renderD128}"
 if [ -e "$RENDER_DEVICE" ]; then
     RENDER_GID=$(stat -c '%g' "$RENDER_DEVICE")
     echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
