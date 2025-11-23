@@ -81,9 +81,6 @@ class AsyncVideoChunkSaver:
     MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
-    FLUSH_NUM_THREADS: ClassVar[int] = 1
-    FLUSH_THROTTLE_FRAME_INTERVAL: ClassVar[int] = 10
-    FLUSH_THROTTLE_SECONDS: ClassVar[float] = 0.01
 
     # --- Internal State ---
     frame_queue: asyncio.Queue[np.ndarray | None] = field(init=False, default_factory=asyncio.Queue)
@@ -280,7 +277,7 @@ class AsyncVideoChunkSaver:
         # Reduce CPU contention by restricting OpenCV to a single thread for this operation.
         # This helps prevent the system from freezing on resource-constrained devices (e.g., RPi).
         original_num_threads = cv2.getNumThreads()
-        cv2.setNumThreads(self.FLUSH_NUM_THREADS)
+        cv2.setNumThreads(settings.video.flush_num_threads)
 
         try:
             # Decode the first frame to get the video dimensions
@@ -312,8 +309,8 @@ class AsyncVideoChunkSaver:
                         logger.warning(f"Could not decode frame index {i} from memory buffer. Skipping.")
 
                     # Throttle the loop to prevent CPU/IO starvation
-                    if i % self.FLUSH_THROTTLE_FRAME_INTERVAL == 0:
-                        time.sleep(self.FLUSH_THROTTLE_SECONDS)
+                    if i % settings.video.flush_throttle_frame_interval == 0:
+                        time.sleep(settings.video.flush_throttle_seconds)
             finally:
                 writer.release()
                 logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")

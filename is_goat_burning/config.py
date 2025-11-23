@@ -111,6 +111,9 @@ class VideoSettings(BaseModel):
     buffer_mode: Literal["disk", "memory"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
     record_during_fire: bool = Field(default=False)
+    flush_num_threads: int = Field(default=1)
+    flush_throttle_frame_interval: int = Field(default=10)
+    flush_throttle_seconds: float = Field(default=0.01)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
