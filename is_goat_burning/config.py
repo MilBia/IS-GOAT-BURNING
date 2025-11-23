@@ -103,7 +103,9 @@ class VideoSettings(BaseModel):
         record_during_fire: If True, recording will continue for the entire
             duration of the fire event.
         flush_num_threads: The number of threads to use when flushing the
-            memory buffer to disk. Lower values reduce CPU contention.
+            memory buffer to disk. Lower values reduce CPU contention. A
+            value of 0 will let OpenCV determine the number of threads
+            automatically.
         flush_throttle_frame_interval: The number of frames to process before
             sleeping during a memory buffer flush.
         flush_throttle_seconds: The duration in seconds to sleep during the

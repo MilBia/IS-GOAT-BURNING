@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 # Ensure the recordings directory exists and has the correct permissions.
 VIDEO_DIR="${VIDEO_OUTPUT_DIRECTORY:-/app/recordings}"
