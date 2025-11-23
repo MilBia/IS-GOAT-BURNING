@@ -31,9 +31,33 @@ esac
 mkdir -p "$VIDEO_DIR" || { echo "Error: Failed to create directory '$VIDEO_DIR'. It might be a file or you may not have permissions." >&2; exit 1; }
 chown nobody:nogroup "$VIDEO_DIR"
 
+# Dynamic permission fix for OpenCL/GPU access:
+# The /dev/dri/renderD128 device is mounted from the host, so it retains the host's Group ID (GID).
+# This GID might not match the 'render' group GID inside the container.
+# We must detect the device's GID at runtime and ensure the 'nobody' user is part of that group.
+RENDER_DEVICE="/dev/dri/renderD128"
+if [ -e "$RENDER_DEVICE" ]; then
+    RENDER_GID=$(stat -c '%g' "$RENDER_DEVICE")
+    echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
+    
+    # Check if a group with this GID already exists
+    if ! getent group "$RENDER_GID" > /dev/null; then
+        echo "Creating group 'render_host' with GID $RENDER_GID"
+        groupadd -g "$RENDER_GID" render_host
+    fi
+    
+    # Get the group name associated with the GID (whether it existed or we just created it)
+    RENDER_GROUP=$(getent group "$RENDER_GID" | cut -d: -f1)
+    
+    echo "Adding 'nobody' to group '$RENDER_GROUP' ($RENDER_GID)"
+    usermod -a -G "$RENDER_GROUP" nobody
+fi
+
 # Execute the command passed to this script (the Dockerfile's CMD)
 # as the nobody user. `exec` replaces the shell process with the new process,
 # ensuring that signals are passed correctly.
 #
 # We use `gosu` here, which is a lightweight `sudo` alternative perfect for containers.
-exec gosu nobody:nogroup "$@"
+# We use 'nobody' instead of 'nobody:nogroup' to ensure that supplementary groups
+# (like 'video' and 'render', added in setup_runtime.sh) are correctly applied.
+exec gosu nobody "$@"
