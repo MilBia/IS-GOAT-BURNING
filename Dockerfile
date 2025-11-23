@@ -185,10 +185,15 @@ ARG SETUPTOOLS_VERSION
 ARG TARGETARCH
 
 # Install OpenCL runtime libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    intel_pkg="" && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+    intel_pkg="intel-opencl-icd"; \
+    fi && \
+    apt-get install -y --no-install-recommends \
     ocl-icd-libopencl1 \
     clinfo \
-    $( [ "$TARGETARCH" = "amd64" ] && echo "intel-opencl-icd" ) \
+    $intel_pkg \
     mesa-opencl-icd \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 && \
     rm -rf /var/lib/apt/lists/*
