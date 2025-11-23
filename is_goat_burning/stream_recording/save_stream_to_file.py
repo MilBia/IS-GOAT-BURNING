@@ -309,7 +309,7 @@ class AsyncVideoChunkSaver:
                         logger.warning(f"Could not decode frame index {i} from memory buffer. Skipping.")
 
                     # Throttle the loop to prevent CPU/IO starvation
-                    if i % settings.video.flush_throttle_frame_interval == 0:
+                    if settings.video.flush_throttle_enabled and i % settings.video.flush_throttle_frame_interval == 0:
                         time.sleep(settings.video.flush_throttle_seconds)
             finally:
                 writer.release()

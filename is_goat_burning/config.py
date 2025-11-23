@@ -101,6 +101,14 @@ class VideoSettings(BaseModel):
             hold in RAM when using "memory" buffer mode.
         record_during_fire: If True, recording will continue for the entire
             duration of the fire event.
+        flush_num_threads: The number of threads to use when flushing the
+            memory buffer to disk. Lower values reduce CPU contention.
+        flush_throttle_frame_interval: The number of frames to process before
+            sleeping during a memory buffer flush.
+        flush_throttle_seconds: The duration in seconds to sleep during the
+            memory buffer flush throttle.
+        flush_throttle_enabled: If True, enables throttling during memory buffer
+            flush to reduce CPU/IO contention.
     """
 
     save_video_chunks: bool = Field(default=False)
@@ -114,6 +122,7 @@ class VideoSettings(BaseModel):
     flush_num_threads: int = Field(default=1)
     flush_throttle_frame_interval: int = Field(default=10)
     flush_throttle_seconds: float = Field(default=0.01)
+    flush_throttle_enabled: bool = Field(default=False)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:
