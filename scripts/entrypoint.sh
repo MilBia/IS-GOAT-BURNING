@@ -40,7 +40,7 @@ RENDER_DEVICE="${RENDER_DEVICE:-/dev/dri/renderD128}"
 if [ -c "$RENDER_DEVICE" ]; then
     RENDER_GID=$(stat -c '%g' "$RENDER_DEVICE")
     echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
-    
+
     # Check if a group with this GID already exists
     EXISTING_GROUP_ENTRY=$(getent group "$RENDER_GID")
     if [ -z "$EXISTING_GROUP_ENTRY" ]; then
@@ -51,7 +51,7 @@ if [ -c "$RENDER_DEVICE" ]; then
         # Extract the group name from the getent output
         RENDER_GROUP=$(echo "$EXISTING_GROUP_ENTRY" | cut -d: -f1)
     fi
-    
+
     echo "Adding 'nobody' to group '$RENDER_GROUP' ($RENDER_GID)"
     usermod -a -G "$RENDER_GROUP" nobody || { echo "Error: Failed to add 'nobody' to group '$RENDER_GROUP'" >&2; exit 1; }
 fi

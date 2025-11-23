@@ -125,6 +125,42 @@ class VideoSettings(BaseModel):
     flush_throttle_seconds: float = Field(default=0.01)
     flush_throttle_enabled: bool = Field(default=False)
 
+    @field_validator("flush_num_threads")
+    @classmethod
+    def check_threads_non_negative(cls, v: int) -> int:
+        """Ensures that the number of threads is a non-negative integer.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is negative.
+        """
+        if v < 0:
+            raise ValueError("flush_num_threads must be a non-negative integer")
+        return v
+
+    @field_validator("flush_throttle_seconds")
+    @classmethod
+    def check_seconds_non_negative(cls, v: float) -> float:
+        """Ensures that the throttle duration is a non-negative float.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is negative.
+        """
+        if v < 0.0:
+            raise ValueError("flush_throttle_seconds must be a non-negative float")
+        return v
+
     @field_validator("flush_throttle_frame_interval")
     @classmethod
     def check_interval_positive(cls, v: int) -> int:
