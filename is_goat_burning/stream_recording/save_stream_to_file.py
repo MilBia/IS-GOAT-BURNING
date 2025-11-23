@@ -274,36 +274,49 @@ class AsyncVideoChunkSaver:
             logger.warning("Memory buffer is empty, cannot flush to disk.")
             return
 
-        # Decode the first frame to get the video dimensions
-        first_frame_array = np.frombuffer(frames[0], dtype=np.uint8)
-        first_frame = cv2.imdecode(first_frame_array, cv2.IMREAD_COLOR)
-        if first_frame is None:
-            logger.error("Could not decode first frame from memory buffer. Aborting flush.")
-            return
+        # Reduce CPU contention by restricting OpenCV to a single thread for this operation.
+        # This helps prevent the system from freezing on resource-constrained devices (e.g., RPi).
+        original_num_threads = cv2.getNumThreads()
+        cv2.setNumThreads(1)
 
-        height, width, _ = first_frame.shape
-        frame_size = (width, height)
-        fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
-        writer = cv2.VideoWriter(path, fourcc, self.fps, frame_size)
-        if not writer.isOpened():
-            logger.error(f"Failed to open video writer for path: {path}")
-            return
-
-        logger.info(f"Flushing {len(frames)} compressed frames from memory to {os.path.basename(path)}...")
         try:
-            # Write the already decoded first frame
-            writer.write(first_frame)
-            # Decode and write the rest of the frames.
-            for i, encoded_frame in enumerate(itertools.islice(frames, 1, None), start=1):
-                frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
-                frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-                if frame is not None:
-                    writer.write(frame)
-                else:
-                    logger.warning(f"Could not decode frame index {i} from memory buffer. Skipping.")
+            # Decode the first frame to get the video dimensions
+            first_frame_array = np.frombuffer(frames[0], dtype=np.uint8)
+            first_frame = cv2.imdecode(first_frame_array, cv2.IMREAD_COLOR)
+            if first_frame is None:
+                logger.error("Could not decode first frame from memory buffer. Aborting flush.")
+                return
+
+            height, width, _ = first_frame.shape
+            frame_size = (width, height)
+            fourcc = cv2.VideoWriter_fourcc(*self.VIDEO_CODEC)
+            writer = cv2.VideoWriter(path, fourcc, self.fps, frame_size)
+            if not writer.isOpened():
+                logger.error(f"Failed to open video writer for path: {path}")
+                return
+
+            logger.info(f"Flushing {len(frames)} compressed frames from memory to {os.path.basename(path)}...")
+            try:
+                # Write the already decoded first frame
+                writer.write(first_frame)
+                # Decode and write the rest of the frames.
+                for i, encoded_frame in enumerate(itertools.islice(frames, 1, None), start=1):
+                    frame_array = np.frombuffer(encoded_frame, dtype=np.uint8)
+                    frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        writer.write(frame)
+                    else:
+                        logger.warning(f"Could not decode frame index {i} from memory buffer. Skipping.")
+
+                    # Throttle the loop to prevent CPU/IO starvation
+                    if i % 10 == 0:
+                        time.sleep(0.01)
+            finally:
+                writer.release()
+                logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
         finally:
-            writer.release()
-            logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
+            # Restore the original number of threads
+            cv2.setNumThreads(original_num_threads)
 
     @staticmethod
     def _move_file_blocking(chunk_path: str, event_dir: str) -> None:
