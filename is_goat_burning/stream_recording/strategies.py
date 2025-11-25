@@ -224,8 +224,11 @@ class MemoryBufferStrategy(BufferStrategy):
 
     async def _flush_and_archive_memory_buffer(self, event_dir: str) -> None:
         """Flushes the in-memory buffer of compressed frames to a file in the event directory."""
-        frames_to_flush = self.memory_buffer.copy()
-        self.memory_buffer.clear()
+        frames_to_flush = self.memory_buffer
+        # Create a new deque for incoming frames, effectively clearing the buffer
+        # without copying the data.
+        buffer_size = self.memory_buffer.maxlen
+        self.memory_buffer = deque(maxlen=buffer_size)
         logger.info(f"Captured {len(frames_to_flush)} compressed pre-fire frames from memory.")
 
         if not frames_to_flush:

@@ -19,6 +19,7 @@ from functools import partial
 import itertools
 import os
 import shutil
+import subprocess
 import time
 from typing import Any
 from typing import ClassVar
@@ -263,6 +264,66 @@ class AsyncVideoChunkSaver:
         if self.enabled:
             self.strategy.add_frame(frame)
 
+    def _flush_buffer_to_disk_ffmpeg(self, frames: deque[bytes], path: str) -> None:
+        """Flushes a deque of JPEG bytes to a video file using ffmpeg.
+
+        This method pipes the raw JPEG data directly to ffmpeg, avoiding the
+        need to decode and re-encode frames in Python. This is significantly
+        faster and uses less memory than the OpenCV approach.
+
+        Args:
+            frames: A deque of JPEG-compressed video frames (as bytes).
+            path: The full path of the output video file.
+        """
+        if not frames:
+            return
+
+        # ffmpeg command to read MJPEG from stdin and copy it to the container.
+        # -y: Overwrite output file
+        # -f image2pipe: Input format is a pipe of images
+        # -vcodec mjpeg: Input codec is MJPEG
+        # -r: Frame rate
+        # -i -: Read from stdin
+        # -c copy: Copy the stream without re-encoding
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-r",
+            str(self.fps),
+            "-i",
+            "-",
+            "-c",
+            "copy",
+            path,
+        ]
+
+        try:
+            logger.info(f"Flushing {len(frames)} frames to {os.path.basename(path)} using ffmpeg...")
+            process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+            # Write frames to stdin
+            for frame_bytes in frames:
+                try:
+                    process.stdin.write(frame_bytes)
+                except BrokenPipeError:
+                    logger.error("ffmpeg stdin pipe broken during flush.")
+                    break
+
+            # Close stdin to signal EOF
+            stdout, stderr = process.communicate()
+
+            if process.returncode != 0:
+                logger.error(f"ffmpeg failed with return code {process.returncode}: {stderr.decode()}")
+            else:
+                logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
+
+        except OSError as e:
+            logger.error(f"Failed to execute ffmpeg: {e}")
+
     def _flush_buffer_to_disk_blocking(self, frames: deque[bytes], path: str) -> None:
         """Writes a deque of compressed frames to a single video file.
 
@@ -274,6 +335,14 @@ class AsyncVideoChunkSaver:
             logger.warning("Memory buffer is empty, cannot flush to disk.")
             return
 
+        # Try to use ffmpeg for a zero-copy flush first
+        try:
+            self._flush_buffer_to_disk_ffmpeg(frames, path)
+            return
+        except Exception as e:
+            logger.warning(f"ffmpeg flush failed, falling back to OpenCV: {e}")
+
+        # Fallback to OpenCV implementation
         # Reduce CPU contention by restricting OpenCV to a single thread for this operation.
         # This helps prevent the system from freezing on resource-constrained devices (e.g., RPi).
         original_num_threads = cv2.getNumThreads()
