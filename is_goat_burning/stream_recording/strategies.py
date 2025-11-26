@@ -98,14 +98,21 @@ class DiskBufferStrategy(BufferStrategy):
             # Wait for the task to finish processing the queue.
             await self._main_task
 
+    JPEG_ENCODING_FORMAT: ClassVar[str] = ".jpg"
+
     def add_frame(self, frame: np.ndarray) -> None:
-        """Puts a frame onto the asynchronous queue to be written to disk.
+        """Puts a compressed frame onto the asynchronous queue to be written to disk.
 
         Args:
             frame: The video frame to be queued.
         """
+        success, encoded_image = cv2.imencode(self.JPEG_ENCODING_FORMAT, frame)
+        if not success:
+            logger.warning("Failed to encode frame for queueing.")
+            return
+
         try:
-            self.context.frame_queue.put_nowait(frame)
+            self.context.frame_queue.put_nowait(encoded_image.tobytes())
         except asyncio.QueueFull:
             logger.warning("Frame queue is full, dropping a frame.")
 
@@ -164,7 +171,21 @@ class DiskBufferStrategy(BufferStrategy):
                     )
                     if frame is None:  # Sentinel for graceful stop
                         break
-                    await loop.run_in_executor(None, self.context._write_frame_blocking, frame)
+
+                    frames = [frame]
+                    # Try to fetch more frames to process in a batch
+                    while not self.context.frame_queue.empty() and len(frames) < 30:
+                        try:
+                            next_frame = self.context.frame_queue.get_nowait()
+                            if next_frame is None:
+                                # Process collected frames before stopping
+                                await loop.run_in_executor(None, self.context._write_frames_blocking, frames)
+                                return
+                            frames.append(next_frame)
+                        except asyncio.QueueEmpty:
+                            break
+
+                    await loop.run_in_executor(None, self.context._write_frames_blocking, frames)
                 except TimeoutError:
                     continue
                 except asyncio.CancelledError:
@@ -216,9 +237,14 @@ class MemoryBufferStrategy(BufferStrategy):
             self.memory_buffer.append(encoded_image.tobytes())
 
     def _queue_frame(self, frame: np.ndarray) -> None:
-        """Queues a raw frame for disk writing, used during post-fire recording."""
+        """Queues a compressed frame for disk writing, used during post-fire recording."""
+        success, encoded_image = cv2.imencode(self.JPEG_ENCODING_FORMAT, frame)
+        if not success:
+            logger.warning("Failed to encode frame for queueing.")
+            return
+
         try:
-            self.context.frame_queue.put_nowait(frame)
+            self.context.frame_queue.put_nowait(encoded_image.tobytes())
         except asyncio.QueueFull:
             logger.warning("Frame queue is full, dropping a frame.")
 

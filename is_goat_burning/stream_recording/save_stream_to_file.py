@@ -84,7 +84,7 @@ class AsyncVideoChunkSaver:
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
 
     # --- Internal State ---
-    frame_queue: asyncio.Queue[np.ndarray | None] = field(init=False, default_factory=asyncio.Queue)
+    frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(init=False, default_factory=asyncio.Queue)
     archive_queue: asyncio.Queue[tuple[str, str] | None] = field(init=False, default_factory=asyncio.Queue)
     writer: cv2.VideoWriter | None = field(init=False, default=None, repr=False)
     chunk_start_time: float = field(init=False, default=0.0)
@@ -225,11 +225,11 @@ class AsyncVideoChunkSaver:
         logger.info(f"Started new video chunk: {os.path.basename(self.current_video_path)}")
         return previous_chunk_path
 
-    def _write_frame_blocking(self, frame: np.ndarray, target_dir: str | None = None) -> str | None:
+    def _write_frame_blocking(self, frame_data: np.ndarray | bytes, target_dir: str | None = None) -> str | None:
         """Writes a single frame, starting a new chunk if necessary.
 
         Args:
-            frame: The video frame (as a NumPy array) to be written.
+            frame_data: The video frame (as a NumPy array or JPEG bytes) to be written.
             target_dir: The target directory for new chunks, if one needs to be started.
 
         Returns:
@@ -237,6 +237,18 @@ class AsyncVideoChunkSaver:
         """
         closed_chunk_path: str | None = None
         is_new_chunk_needed = self.writer is None or (time.time() - self.chunk_start_time) >= self.chunk_length_seconds
+
+        frame = None
+        if isinstance(frame_data, bytes):
+            # Decode JPEG bytes to numpy array
+            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
+            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+        else:
+            frame = frame_data
+
+        if frame is None:
+            logger.error("Failed to decode frame or invalid frame data.")
+            return None
 
         if is_new_chunk_needed:
             height, width, _ = frame.shape
@@ -327,9 +339,10 @@ class AsyncVideoChunkSaver:
             process.wait()
 
             if process.returncode != 0:
-                logger.error(f"ffmpeg failed with return code {process.returncode}: {'; '.join(stderr_lines)}")
-            else:
-                logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
+                error_message = f"ffmpeg failed with return code {process.returncode}: {'; '.join(stderr_lines)}"
+                logger.error(error_message)
+                raise OSError(error_message)
+            logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
 
         except OSError as e:
             logger.error(f"Failed to execute ffmpeg: {e}")
@@ -483,6 +496,16 @@ class AsyncVideoChunkSaver:
                     logger.error("Max retries exceeded waiting for frame. Aborting event.")
                     return
 
+    def _write_frames_blocking(self, frames: list[np.ndarray | bytes], target_dir: str | None = None) -> None:
+        """Writes a batch of frames to disk.
+
+        Args:
+            frames: A list of video frames (as NumPy arrays or JPEG bytes) to be written.
+            target_dir: The target directory for new chunks, if one needs to be started.
+        """
+        for frame in frames:
+            self._write_frame_blocking(frame, target_dir)
+
     async def _record_during_fire_loop(self, event_dir: str) -> None:
         """Records video chunks until the 'fire extinguished' signal is received.
 
@@ -493,11 +516,27 @@ class AsyncVideoChunkSaver:
         loop = asyncio.get_running_loop()
         while not self.signal_handler.is_fire_extinguished():
             try:
+                # Wait for the first frame
                 frame = await asyncio.wait_for(self.frame_queue.get(), timeout=self.FRAME_QUEUE_POLL_TIMEOUT)
                 if frame is None:
                     logger.warning("Shutdown signaled during primary fire recording.")
                     return
-                await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
+
+                frames = [frame]
+                # Try to fetch more frames to process in a batch
+                while not self.frame_queue.empty() and len(frames) < 30:
+                    try:
+                        next_frame = self.frame_queue.get_nowait()
+                        if next_frame is None:
+                            logger.warning("Shutdown signaled during primary fire recording (in batch).")
+                            # Process collected frames before exiting
+                            await loop.run_in_executor(None, self._write_frames_blocking, frames, event_dir)
+                            return
+                        frames.append(next_frame)
+                    except asyncio.QueueEmpty:
+                        break
+
+                await loop.run_in_executor(None, self._write_frames_blocking, frames, event_dir)
             except TimeoutError:
                 continue
         logger.info("Fire extinguished signal received. Saving final post-fire chunks.")
@@ -523,14 +562,49 @@ class AsyncVideoChunkSaver:
                 if frame is None:
                     logger.warning("Shutdown signaled during post-fire recording. Finalizing early.")
                     break
-                await loop.run_in_executor(None, self._write_frame_blocking, frame, event_dir)
-                frames_recorded += 1
+
+                frames = [frame]
+                # Try to fetch more frames to process in a batch
+                while (
+                    not self.frame_queue.empty()
+                    and len(frames) < 30
+                    and (frames_recorded + len(frames)) < total_frames_to_record
+                ):
+                    try:
+                        next_frame = self.frame_queue.get_nowait()
+                        if next_frame is None:
+                            logger.warning("Shutdown signaled during post-fire recording (in batch). Finalizing early.")
+                            await loop.run_in_executor(None, self._write_frames_blocking, frames, event_dir)
+                            return
+                        frames.append(next_frame)
+                    except asyncio.QueueEmpty:
+                        break
+
+                await loop.run_in_executor(None, self._write_frames_blocking, frames, event_dir)
+                frames_recorded += len(frames)
             except TimeoutError:
                 logger.warning(
                     f"Stream ended during post-fire recording. "
                     f"Saved {frames_recorded}/{total_frames_to_record} frames before timeout."
                 )
                 break
+
+    def _write_raw_frame_blocking(self, frame_data: np.ndarray | bytes) -> None:
+        """Writes a raw frame (bytes or array) to the current writer, decoding if necessary."""
+        if self.writer is None:
+            return
+
+        frame = None
+        if isinstance(frame_data, bytes):
+            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
+            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+        else:
+            frame = frame_data
+
+        if frame is not None:
+            self.writer.write(frame)
+        else:
+            logger.error("Failed to decode frame in _write_raw_frame_blocking.")
 
     async def _flush_remaining_frames(self) -> None:
         """Drains the frame queue and writes any remaining frames to the current writer."""
@@ -546,7 +620,7 @@ class AsyncVideoChunkSaver:
                     if frame is not None:
                         # Writing is blocking, so run in executor. The target_dir doesn't
                         # matter here as we are not starting a new chunk.
-                        await loop.run_in_executor(None, self.writer.write, frame)
+                        await loop.run_in_executor(None, self._write_raw_frame_blocking, frame)
                 except asyncio.QueueEmpty:
                     break
             logger.info("Finished flushing remaining frames.")

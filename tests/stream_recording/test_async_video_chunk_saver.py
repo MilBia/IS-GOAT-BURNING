@@ -169,9 +169,10 @@ async def test_memory_strategy_fire_event_flushes_and_switches_mode(
 
     # Verify that add_frame now queues instead of buffering
     frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    mocker.patch("cv2.imencode", return_value=(True, np.array([1, 2, 3], dtype=np.uint8)))
     memory_strategy.add_frame(frame)
     assert len(memory_strategy.memory_buffer) == 0
-    memory_strategy.context.frame_queue.put_nowait.assert_called_once_with(frame)
+    memory_strategy.context.frame_queue.put_nowait.assert_called_once_with(b"\x01\x02\x03")
 
 
 def test_memory_strategy_reset_restores_initial_state(memory_strategy: MemoryBufferStrategy) -> None:
