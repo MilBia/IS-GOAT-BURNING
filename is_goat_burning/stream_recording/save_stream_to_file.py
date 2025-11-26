@@ -314,10 +314,20 @@ class AsyncVideoChunkSaver:
                     break
 
             # Close stdin to signal EOF
-            stdout, stderr = process.communicate()
+            process.stdin.close()
+
+            # Read stderr line by line to avoid buffering large amounts of data in memory
+            stderr_lines = []
+            while True:
+                line = process.stderr.readline()
+                if not line:
+                    break
+                stderr_lines.append(line.decode().strip())
+
+            process.wait()
 
             if process.returncode != 0:
-                logger.error(f"ffmpeg failed with return code {process.returncode}: {stderr.decode()}")
+                logger.error(f"ffmpeg failed with return code {process.returncode}: {'; '.join(stderr_lines)}")
             else:
                 logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
 

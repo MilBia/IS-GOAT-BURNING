@@ -46,7 +46,7 @@ if [ -c "$RENDER_DEVICE" ]; then
 
     # If no group exists for that GID, create one.
     if [ -z "$RENDER_GROUP" ]; then
-        RENDER_GROUP="render_host"
+        RENDER_GROUP="render_host_${RENDER_GID}"
         echo "Creating group '$RENDER_GROUP' with GID $RENDER_GID"
         groupadd -g "$RENDER_GID" "$RENDER_GROUP" || { echo "Error: Failed to create group '$RENDER_GROUP' with GID $RENDER_GID" >&2; exit 1; }
     fi
