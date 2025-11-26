@@ -174,7 +174,7 @@ class DiskBufferStrategy(BufferStrategy):
 
                     frames = [frame]
                     # Try to fetch more frames to process in a batch
-                    while not self.context.frame_queue.empty() and len(frames) < 30:
+                    while not self.context.frame_queue.empty() and len(frames) < self.context.FRAME_WRITE_BATCH_SIZE:
                         try:
                             next_frame = self.context.frame_queue.get_nowait()
                             if next_frame is None:

@@ -61,6 +61,7 @@ def mock_saver_context() -> MagicMock:
     saver_context._handle_fire_event_async = AsyncMock()
     saver_context._fire_handling_lock = asyncio.Lock()
     saver_context.FRAME_QUEUE_POLL_TIMEOUT = 0.01
+    saver_context.FRAME_WRITE_BATCH_SIZE = 30
     return saver_context
 
 

@@ -82,6 +82,7 @@ class AsyncVideoChunkSaver:
     MAX_TIMEOUT_RETRIES: ClassVar[int] = 3
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
+    FRAME_WRITE_BATCH_SIZE: ClassVar[int] = 30
 
     # --- Internal State ---
     frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(init=False, default_factory=asyncio.Queue)
@@ -225,6 +226,14 @@ class AsyncVideoChunkSaver:
         logger.info(f"Started new video chunk: {os.path.basename(self.current_video_path)}")
         return previous_chunk_path
 
+    def _decode_frame(self, frame_data: np.ndarray | bytes) -> np.ndarray | None:
+        """Decodes a frame from bytes or returns it as is if already an array."""
+        if isinstance(frame_data, bytes):
+            # Decode JPEG bytes to numpy array
+            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
+            return cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+        return frame_data
+
     def _write_frame_blocking(self, frame_data: np.ndarray | bytes, target_dir: str | None = None) -> str | None:
         """Writes a single frame, starting a new chunk if necessary.
 
@@ -238,13 +247,7 @@ class AsyncVideoChunkSaver:
         closed_chunk_path: str | None = None
         is_new_chunk_needed = self.writer is None or (time.time() - self.chunk_start_time) >= self.chunk_length_seconds
 
-        frame = None
-        if isinstance(frame_data, bytes):
-            # Decode JPEG bytes to numpy array
-            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
-            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-        else:
-            frame = frame_data
+        frame = self._decode_frame(frame_data)
 
         if frame is None:
             logger.error("Failed to decode frame or invalid frame data.")
@@ -524,7 +527,7 @@ class AsyncVideoChunkSaver:
 
                 frames = [frame]
                 # Try to fetch more frames to process in a batch
-                while not self.frame_queue.empty() and len(frames) < 30:
+                while not self.frame_queue.empty() and len(frames) < self.FRAME_WRITE_BATCH_SIZE:
                     try:
                         next_frame = self.frame_queue.get_nowait()
                         if next_frame is None:
@@ -567,7 +570,7 @@ class AsyncVideoChunkSaver:
                 # Try to fetch more frames to process in a batch
                 while (
                     not self.frame_queue.empty()
-                    and len(frames) < 30
+                    and len(frames) < self.FRAME_WRITE_BATCH_SIZE
                     and (frames_recorded + len(frames)) < total_frames_to_record
                 ):
                     try:
@@ -594,12 +597,7 @@ class AsyncVideoChunkSaver:
         if self.writer is None:
             return
 
-        frame = None
-        if isinstance(frame_data, bytes):
-            frame_array = np.frombuffer(frame_data, dtype=np.uint8)
-            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-        else:
-            frame = frame_data
+        frame = self._decode_frame(frame_data)
 
         if frame is not None:
             self.writer.write(frame)
