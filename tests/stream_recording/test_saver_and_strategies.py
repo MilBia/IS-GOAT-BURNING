@@ -230,49 +230,27 @@ async def test_record_during_fire_loop_continues_until_extinguished_signal(
 ) -> None:
     mock_write_batch = mocker.patch.object(AsyncVideoChunkSaver, "_write_frames_blocking")
     frames_before_extinguish = 3
-    total_frames_added = 5
-    # We need to ensure the loop runs enough times to consume frames.
-    # The loop condition is checked at start.
-    # If we batch, one iteration might consume multiple frames.
-    # We need `is_fire_extinguished` to return False enough times.
-    # But wait, `is_fire_extinguished` is checked *before* fetching from queue.
-    # If we fetch a batch, we process it, then check again.
 
-    # If we put all frames at once, the first iteration might pick up all 5 frames if batch size allows.
-    # But we want to simulate stopping after 3 frames.
-    # This is tricky with batching because we drain the queue.
-    # We should probably simulate the queue filling up slowly or `is_fire_extinguished` changing state.
+    # Simulate the fire being extinguished after the loop has run 3 times
+    mock_is_extinguished = mocker.patch.object(
+        SignalHandler, "is_fire_extinguished", side_effect=([False] * frames_before_extinguish) + [True]
+    )
 
-    # Let's just assert that we write *at least* frames_before_extinguish.
-    # Actually, if the fire is extinguished, we stop.
-    # If we have 5 frames in queue, and fire is active, we might process all 5 in one batch if the loop runs once.
-    # The test intent is: "record while fire is active".
-    # If fire extinguishes, we stop.
+    # To test the loop condition accurately, we control frame consumption.
+    # We mock `get` to provide one frame per call, and `get_nowait` to be empty to prevent batching.
+    # This forces one iteration of the `while` loop per frame.
+    mocker.patch.object(saver.frame_queue, "get", AsyncMock(side_effect=[mock_frame] * frames_before_extinguish))
+    mocker.patch.object(saver.frame_queue, "get_nowait", side_effect=asyncio.QueueEmpty)
+    mocker.patch.object(saver.frame_queue, "empty", return_value=True)
 
-    # Let's make `is_fire_extinguished` return True immediately after the first check to simulate "extinguished immediately".
-    # Then we expect 0 frames? No.
-
-    # Let's keep the original logic: return False 3 times, then True.
-    mocker.patch.object(SignalHandler, "is_fire_extinguished", side_effect=([False] * frames_before_extinguish) + [True])
-    for _ in range(total_frames_added):
-        await saver.frame_queue.put(mock_frame)
-
+    # Run the loop. It will iterate 3 times, consuming one frame each time.
+    # On the 4th iteration, `is_fire_extinguished` will be True, and the loop will exit.
     await saver._record_during_fire_loop("event_dir")
 
-    # With batching, we might consume more frames per iteration.
-    # If batch size is 30, and we have 5 frames, and `is_fire_extinguished` is False,
-    # we will consume all 5 frames in the first iteration!
-    # Then next iteration `is_fire_extinguished` is False (2nd call), queue is empty -> TimeoutError (if we wait).
-    # But `get` waits.
-
-    # This test relies on 1-to-1 mapping of loop iterations to frames.
-    # With batching, this assumption breaks.
-    # We should verify that we write frames until `is_fire_extinguished` becomes True.
-    # But since `get` blocks, we can't easily control "time" vs "queue".
-
-    # Let's just verify that `_write_frames_blocking` was called.
-    assert mock_write_batch.called
-    assert saver.frame_queue.qsize() < total_frames_added  # We consumed some frames
+    # Assert that frames were written in batches (even if batches of 1)
+    total_written = sum(len(call.args[0]) for call in mock_write_batch.call_args_list)
+    assert total_written == frames_before_extinguish
+    assert mock_is_extinguished.call_count == frames_before_extinguish + 1
 
 
 def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: AsyncVideoChunkSaver) -> None:

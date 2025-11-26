@@ -83,6 +83,7 @@ class AsyncVideoChunkSaver:
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
     FRAME_WRITE_BATCH_SIZE: ClassVar[int] = 30
+    STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
 
     # --- Internal State ---
     frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(init=False, default_factory=asyncio.Queue)
@@ -332,17 +333,19 @@ class AsyncVideoChunkSaver:
             process.stdin.close()
 
             # Read stderr line by line to avoid buffering large amounts of data in memory
-            stderr_lines = []
+            stderr_last_lines = deque(maxlen=self.STDERR_LAST_LINES_TO_KEEP)  # Keep only the last N lines for the error message
             while True:
                 line = process.stderr.readline()
                 if not line:
                     break
-                stderr_lines.append(line.decode().strip())
+                decoded_line = line.decode().strip()
+                logger.debug(f"ffmpeg stderr: {decoded_line}")  # Log each line for debugging
+                stderr_last_lines.append(decoded_line)
 
             process.wait()
 
             if process.returncode != 0:
-                error_message = f"ffmpeg failed with return code {process.returncode}: {'; '.join(stderr_lines)}"
+                error_message = f"ffmpeg failed with return code {process.returncode}: {'; '.join(stderr_last_lines)}"
                 logger.error(error_message)
                 raise OSError(error_message)
             logger.info(f"Finished flushing buffer to {os.path.basename(path)}.")
