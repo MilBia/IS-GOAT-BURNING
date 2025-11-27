@@ -362,6 +362,7 @@ class AsyncVideoChunkSaver:
 
         except OSError as e:
             logger.error(f"Failed to execute ffmpeg: {e}")
+            raise
 
     def _flush_buffer_to_disk_blocking(self, frames: deque[bytes], path: str) -> None:
         """Writes a deque of compressed frames to a single video file.
