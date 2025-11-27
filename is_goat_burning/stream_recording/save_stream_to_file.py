@@ -348,7 +348,7 @@ class AsyncVideoChunkSaver:
                 line = process.stderr.readline()
                 if not line:
                     break
-                decoded_line = line.decode().strip()
+                decoded_line = line.decode(errors="ignore").strip()
                 logger.debug(f"ffmpeg stderr: {decoded_line}")  # Log each line for debugging
                 stderr_last_lines.append(decoded_line)
 
