@@ -70,16 +70,13 @@ def mock_saver_context() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_disk_strategy_continuously_writes_frames(
-    mock_saver_context: MagicMock, mock_frame: np.ndarray, mocker: MockerFixture
-) -> None:
-    mocker.patch("cv2.imencode", return_value=(True, np.array([1, 2, 3], dtype=np.uint8)))
+async def test_disk_strategy_continuously_writes_frames(mock_saver_context: MagicMock, mock_frame: np.ndarray) -> None:
     strategy = DiskBufferStrategy(context=mock_saver_context)
     strategy.add_frame(mock_frame)
     await mock_saver_context.frame_queue.put(None)  # Sentinel to stop the loop
     await strategy._run_main_loop()
-    # The strategy now puts bytes into the queue and writes in batch
-    mock_saver_context._write_frames_blocking.assert_called_once_with([b"\x01\x02\x03"])
+    # The strategy now puts raw frames into the queue and writes in batch
+    mock_saver_context._write_frames_blocking.assert_called_once_with([mock_frame])
 
 
 @pytest.mark.asyncio

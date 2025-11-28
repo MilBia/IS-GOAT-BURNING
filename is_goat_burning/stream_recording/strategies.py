@@ -98,21 +98,14 @@ class DiskBufferStrategy(BufferStrategy):
             # Wait for the task to finish processing the queue.
             await self._main_task
 
-    JPEG_ENCODING_FORMAT: ClassVar[str] = ".jpg"
-
     def add_frame(self, frame: np.ndarray) -> None:
-        """Puts a compressed frame onto the asynchronous queue to be written to disk.
+        """Puts a raw frame onto the asynchronous queue to be written to disk.
 
         Args:
             frame: The video frame to be queued.
         """
-        success, encoded_image = cv2.imencode(self.JPEG_ENCODING_FORMAT, frame)
-        if not success:
-            logger.warning("Failed to encode frame for queueing.")
-            return
-
         try:
-            self.context.frame_queue.put_nowait(encoded_image.tobytes())
+            self.context.frame_queue.put_nowait(frame)
         except asyncio.QueueFull:
             logger.warning("Frame queue is full, dropping a frame.")
 

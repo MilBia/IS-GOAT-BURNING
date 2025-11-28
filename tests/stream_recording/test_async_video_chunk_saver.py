@@ -244,8 +244,8 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
     # --- Assertions ---
     mock_create_dir.assert_awaited_once()
 
-    # We expect at least two calls: one for pre-fire, one for post-fire
-    assert mock_ffmpeg_flush.call_count >= 2
+    # We expect 3 calls: one for the pre-fire buffer, and two for the post-fire chunks.
+    assert mock_ffmpeg_flush.call_count == 3
 
     # Assert pre-fire flush (the MemoryStrategy calls _flush_buffer_to_disk_blocking, which calls _flush_buffer_to_disk_ffmpeg)
     pre_fire_call = mock_ffmpeg_flush.call_args_list[0]
