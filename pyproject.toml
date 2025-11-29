@@ -7,9 +7,9 @@ authors = [
 ]
 dependencies = [
     "numpy==2.3.3",
-    "yt-dlp==2025.9.26",
-    "aiohttp==3.12.15",
-    "pydantic-settings==2.11.0",
+    "yt-dlp==2025.11.12",
+    "aiohttp==3.13.2",
+    "pydantic-settings==2.12.0",
 ]
 requires-python = ">=3.11"
 readme = "README.md"
