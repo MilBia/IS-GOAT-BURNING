@@ -20,6 +20,24 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 
+def _clean_message_str(v: str) -> str:
+    """Cleans a message string by stripping quotes and unescaping newlines.
+
+    Args:
+        v: The message string to clean.
+
+    Returns:
+        The cleaned message string.
+    """
+    if v:
+        # Strip surrounding quotes
+        if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
+            v = v[1:-1]
+        # Unescape newlines
+        v = v.replace("\\n", "\n")
+    return v
+
+
 class EmailSettings(BaseModel):
     """Configuration specific to email notifications.
 
@@ -53,14 +71,15 @@ class EmailSettings(BaseModel):
     @field_validator("message")
     @classmethod
     def clean_message(cls, v: str) -> str:
-        """Cleans the message string by stripping quotes and unescaping newlines."""
-        if v:
-            # Strip surrounding quotes
-            if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
-                v = v[1:-1]
-            # Unescape newlines
-            v = v.replace("\\n", "\n")
-        return v
+        """Validates and cleans the message string.
+
+        Args:
+            v: The message string to validate.
+
+        Returns:
+            The cleaned message string.
+        """
+        return _clean_message_str(v)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> EmailSettings:
@@ -91,14 +110,15 @@ class DiscordSettings(BaseModel):
     @field_validator("message")
     @classmethod
     def clean_message(cls, v: str) -> str:
-        """Cleans the message string by stripping quotes and unescaping newlines."""
-        if v:
-            # Strip surrounding quotes
-            if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
-                v = v[1:-1]
-            # Unescape newlines
-            v = v.replace("\\n", "\n")
-        return v
+        """Validates and cleans the message string.
+
+        Args:
+            v: The message string to validate.
+
+        Returns:
+            The cleaned message string.
+        """
+        return _clean_message_str(v)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
