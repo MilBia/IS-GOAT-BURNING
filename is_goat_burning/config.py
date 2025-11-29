@@ -33,7 +33,7 @@ def _clean_message_str(v: str) -> str:
     """
     if v:
         # Strip surrounding quotes
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in {"\"", "'"}:
             v = v[1:-1]
         # Unescape newlines
         v = v.replace("\\n", "\n")
