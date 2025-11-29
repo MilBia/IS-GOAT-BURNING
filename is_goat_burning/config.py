@@ -8,9 +8,11 @@ validators to ensure that the configuration is consistent and complete.
 from __future__ import annotations
 
 import os
+from typing import Annotated
 from typing import ClassVar
 from typing import Literal
 
+from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import SecretStr
@@ -36,6 +38,9 @@ def _clean_message_str(v: str) -> str:
         # Unescape newlines
         v = v.replace("\\n", "\n")
     return v
+
+
+CleanedMessage = Annotated[str, AfterValidator(_clean_message_str)]
 
 
 class EmailSettings(BaseModel):
@@ -66,20 +71,7 @@ class EmailSettings(BaseModel):
     email_host: str | None = Field(default=None)
     email_port: int | None = Field(default=None)
     subject: str = Field(default="GOAT ON FIRE!")
-    message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
-
-    @field_validator("message")
-    @classmethod
-    def clean_message(cls, v: str) -> str:
-        """Validates and cleans the message string.
-
-        Args:
-            v: The message string to validate.
-
-        Returns:
-            The cleaned message string.
-        """
-        return _clean_message_str(v)
+    message: CleanedMessage = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
     @model_validator(mode="after")
     def check_required_fields(self) -> EmailSettings:
@@ -105,20 +97,7 @@ class DiscordSettings(BaseModel):
 
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
-    message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
-
-    @field_validator("message")
-    @classmethod
-    def clean_message(cls, v: str) -> str:
-        """Validates and cleans the message string.
-
-        Args:
-            v: The message string to validate.
-
-        Returns:
-            The cleaned message string.
-        """
-        return _clean_message_str(v)
+    message: CleanedMessage = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
