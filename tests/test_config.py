@@ -82,3 +82,24 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     monkeypatch.delenv("STREAM_INACTIVITY_TIMEOUT")
     importlib.reload(config)
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{DEFAULT_INACTIVITY_TIMEOUT * MICROSECONDS_PER_SECOND}"
+
+
+@pytest.mark.parametrize(
+    "input_str, expected_str",
+    [
+        ('"hello\\nworld"', "hello\nworld"),
+        ("'hello\\nworld'", "hello\nworld"),
+        ("no quotes\\n", "no quotes\n"),
+        ('"unmatched quote', '"unmatched quote'),
+        ('""', ""),
+        ("''", ""),
+        ('"\\n"', "\n"),
+        ("just a string", "just a string"),
+        ("", ""),
+    ],
+)
+def test_message_cleaning(input_str: str, expected_str: str) -> None:
+    """Verifies that message strings are cleaned correctly."""
+    # Using DiscordSettings as an example to test the validator
+    settings = DiscordSettings(message=input_str)
+    assert settings.message == expected_str

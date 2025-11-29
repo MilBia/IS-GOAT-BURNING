@@ -32,6 +32,7 @@ def _clean_message_str(v: str) -> str:
         The cleaned message string.
     """
     if v:
+        v = v.strip()
         # Strip surrounding quotes
         if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
             v = v[1:-1]
