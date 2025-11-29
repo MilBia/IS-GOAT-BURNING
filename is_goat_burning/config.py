@@ -50,6 +50,18 @@ class EmailSettings(BaseModel):
     subject: str = Field(default="GOAT ON FIRE!")
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
 
+    @field_validator("message")
+    @classmethod
+    def clean_message(cls, v: str) -> str:
+        """Cleans the message string by stripping quotes and unescaping newlines."""
+        if v:
+            # Strip surrounding quotes
+            if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
+                v = v[1:-1]
+            # Unescape newlines
+            v = v.replace("\\n", "\n")
+        return v
+
     @model_validator(mode="after")
     def check_required_fields(self) -> EmailSettings:
         """Validates that required fields are set if emails are enabled."""
@@ -75,6 +87,18 @@ class DiscordSettings(BaseModel):
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
     message: str = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
+
+    @field_validator("message")
+    @classmethod
+    def clean_message(cls, v: str) -> str:
+        """Cleans the message string by stripping quotes and unescaping newlines."""
+        if v:
+            # Strip surrounding quotes
+            if len(v) >= 2 and ((v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'"))):
+                v = v[1:-1]
+            # Unescape newlines
+            v = v.replace("\\n", "\n")
+        return v
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
