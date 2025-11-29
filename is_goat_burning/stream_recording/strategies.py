@@ -99,7 +99,7 @@ class DiskBufferStrategy(BufferStrategy):
             await self._main_task
 
     def add_frame(self, frame: np.ndarray) -> None:
-        """Puts a frame onto the asynchronous queue to be written to disk.
+        """Puts a raw frame onto the asynchronous queue to be written to disk.
 
         Args:
             frame: The video frame to be queued.
@@ -164,7 +164,21 @@ class DiskBufferStrategy(BufferStrategy):
                     )
                     if frame is None:  # Sentinel for graceful stop
                         break
-                    await loop.run_in_executor(None, self.context._write_frame_blocking, frame)
+
+                    frames = [frame]
+                    # Try to fetch more frames to process in a batch
+                    while not self.context.frame_queue.empty() and len(frames) < self.context.FRAME_WRITE_BATCH_SIZE:
+                        try:
+                            next_frame = self.context.frame_queue.get_nowait()
+                            if next_frame is None:
+                                # Process collected frames before stopping
+                                await loop.run_in_executor(None, self.context._write_frames_blocking, frames)
+                                return
+                            frames.append(next_frame)
+                        except asyncio.QueueEmpty:
+                            break
+
+                    await loop.run_in_executor(None, self.context._write_frames_blocking, frames)
                 except TimeoutError:
                     continue
                 except asyncio.CancelledError:
@@ -216,16 +230,24 @@ class MemoryBufferStrategy(BufferStrategy):
             self.memory_buffer.append(encoded_image.tobytes())
 
     def _queue_frame(self, frame: np.ndarray) -> None:
-        """Queues a raw frame for disk writing, used during post-fire recording."""
+        """Queues a compressed frame for disk writing, used during post-fire recording."""
+        success, encoded_image = cv2.imencode(self.JPEG_ENCODING_FORMAT, frame)
+        if not success:
+            logger.warning("Failed to encode frame for queueing.")
+            return
+
         try:
-            self.context.frame_queue.put_nowait(frame)
+            self.context.frame_queue.put_nowait(encoded_image.tobytes())
         except asyncio.QueueFull:
             logger.warning("Frame queue is full, dropping a frame.")
 
     async def _flush_and_archive_memory_buffer(self, event_dir: str) -> None:
         """Flushes the in-memory buffer of compressed frames to a file in the event directory."""
-        frames_to_flush = self.memory_buffer.copy()
-        self.memory_buffer.clear()
+        frames_to_flush = self.memory_buffer
+        # Create a new deque for incoming frames, effectively clearing the buffer
+        # without copying the data.
+        buffer_size = self.memory_buffer.maxlen
+        self.memory_buffer = deque(maxlen=buffer_size)
         logger.info(f"Captured {len(frames_to_flush)} compressed pre-fire frames from memory.")
 
         if not frames_to_flush:

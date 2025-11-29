@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import SecretStr
+from pydantic import field_validator
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -101,6 +102,16 @@ class VideoSettings(BaseModel):
             hold in RAM when using "memory" buffer mode.
         record_during_fire: If True, recording will continue for the entire
             duration of the fire event.
+        flush_num_threads: The number of threads to use when flushing the
+            memory buffer to disk. Lower values reduce CPU contention. A
+            value of 0 will let OpenCV determine the number of threads
+            automatically.
+        flush_throttle_frame_interval: The number of frames to process before
+            sleeping during a memory buffer flush.
+        flush_throttle_seconds: The duration in seconds to sleep during the
+            memory buffer flush throttle.
+        flush_throttle_enabled: If True, enables throttling during memory buffer
+            flush to reduce CPU/IO contention.
     """
 
     save_video_chunks: bool = Field(default=False)
@@ -111,6 +122,64 @@ class VideoSettings(BaseModel):
     buffer_mode: Literal["disk", "memory"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
     record_during_fire: bool = Field(default=False)
+    flush_num_threads: int = Field(default=1)
+    flush_throttle_frame_interval: int = Field(default=10)
+    flush_throttle_seconds: float = Field(default=0.01)
+    flush_throttle_enabled: bool = Field(default=False)
+
+    @field_validator("flush_num_threads")
+    @classmethod
+    def check_threads_non_negative(cls, v: int) -> int:
+        """Ensures that the number of threads is a non-negative integer.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is negative.
+        """
+        if v < 0:
+            raise ValueError("flush_num_threads must be a non-negative integer")
+        return v
+
+    @field_validator("flush_throttle_seconds")
+    @classmethod
+    def check_seconds_non_negative(cls, v: float) -> float:
+        """Ensures that the throttle duration is a non-negative float.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is negative.
+        """
+        if v < 0.0:
+            raise ValueError("flush_throttle_seconds must be a non-negative float")
+        return v
+
+    @field_validator("flush_throttle_frame_interval")
+    @classmethod
+    def check_interval_positive(cls, v: int) -> int:
+        """Ensures that the throttle interval is a positive integer.
+
+        Args:
+            v: The value to validate.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the value is not a positive integer.
+        """
+        if v <= 0:
+            raise ValueError("flush_throttle_frame_interval must be a positive integer")
+        return v
 
     @model_validator(mode="after")
     def check_required_fields(self) -> VideoSettings:

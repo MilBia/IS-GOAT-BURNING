@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 # Ensure the recordings directory exists and has the correct permissions.
 VIDEO_DIR="${VIDEO_OUTPUT_DIRECTORY:-/app/recordings}"
@@ -31,9 +32,34 @@ esac
 mkdir -p "$VIDEO_DIR" || { echo "Error: Failed to create directory '$VIDEO_DIR'. It might be a file or you may not have permissions." >&2; exit 1; }
 chown nobody:nogroup "$VIDEO_DIR"
 
+# Dynamic permission fix for OpenCL/GPU access:
+# The /dev/dri/renderD128 device is mounted from the host, so it retains the host's Group ID (GID).
+# This GID might not match the 'render' group GID inside the container.
+# We must detect the device's GID at runtime and ensure the 'nobody' user is part of that group.
+# The device path can be overridden by the RENDER_DEVICE environment variable.
+RENDER_DEVICE="${RENDER_DEVICE:-/dev/dri/renderD128}"
+if [ -c "$RENDER_DEVICE" ]; then
+    RENDER_GID=$(stat -c '%g' "$RENDER_DEVICE")
+    echo "Detected render device $RENDER_DEVICE with GID $RENDER_GID"
+
+    RENDER_GROUP=$(getent group "$RENDER_GID" | cut -d: -f1)
+
+    # If no group exists for that GID, create one.
+    if [ -z "$RENDER_GROUP" ]; then
+        RENDER_GROUP="render_host_${RENDER_GID}"
+        echo "Creating group '$RENDER_GROUP' with GID $RENDER_GID"
+        groupadd -g "$RENDER_GID" "$RENDER_GROUP" || { echo "Error: Failed to create group '$RENDER_GROUP' with GID $RENDER_GID" >&2; exit 1; }
+    fi
+
+    echo "Adding 'nobody' to group '$RENDER_GROUP' ($RENDER_GID)"
+    usermod -a -G "$RENDER_GROUP" nobody || { echo "Error: Failed to add 'nobody' to group '$RENDER_GROUP'" >&2; exit 1; }
+fi
+
 # Execute the command passed to this script (the Dockerfile's CMD)
 # as the nobody user. `exec` replaces the shell process with the new process,
 # ensuring that signals are passed correctly.
 #
 # We use `gosu` here, which is a lightweight `sudo` alternative perfect for containers.
-exec gosu nobody:nogroup "$@"
+# We use 'nobody' instead of 'nobody:nogroup' to ensure that supplementary groups
+# (like 'video' and 'render', added in setup_runtime.sh) are correctly applied.
+exec gosu nobody "$@"

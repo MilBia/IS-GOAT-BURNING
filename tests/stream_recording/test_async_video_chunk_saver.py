@@ -169,9 +169,10 @@ async def test_memory_strategy_fire_event_flushes_and_switches_mode(
 
     # Verify that add_frame now queues instead of buffering
     frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    mocker.patch("cv2.imencode", return_value=(True, np.array([1, 2, 3], dtype=np.uint8)))
     memory_strategy.add_frame(frame)
     assert len(memory_strategy.memory_buffer) == 0
-    memory_strategy.context.frame_queue.put_nowait.assert_called_once_with(frame)
+    memory_strategy.context.frame_queue.put_nowait.assert_called_once_with(b"\x01\x02\x03")
 
 
 def test_memory_strategy_reset_restores_initial_state(memory_strategy: MemoryBufferStrategy) -> None:
@@ -202,7 +203,7 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
     mock_settings.video.buffer_mode = "memory"
     mock_settings.video.chunks_to_keep_after_fire = FINAL_CHUNKS_TO_KEEP
     mock_settings.video.record_during_fire = False
-    mock_settings.video.chunk_length_seconds = 1  # Make calculation easy
+    mock_settings.video.chunk_length_seconds = 1
     mocker.patch(
         "is_goat_burning.stream_recording.strategies.settings",
         **{"video.memory_buffer_seconds": 10, "video.fps": 1.0},
@@ -212,16 +213,18 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
         enabled=True, output_dir=".", chunk_length_seconds=1, max_chunks=1, chunks_to_keep_after_fire=2, fps=1
     )
 
-    mock_flush = mocker.patch(
-        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_blocking"
+    # This single mock captures all disk-writing activity, both pre- and post-fire
+    mock_ffmpeg_flush = mocker.patch(
+        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_ffmpeg"
     )
-    mock_write = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._write_frame_blocking")
     mock_create_dir = mocker.patch(
         "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._create_event_directory",
         new_callable=mocker.AsyncMock,
         return_value="mock_event_dir",
     )
     mocker.patch.object(saver.archive_queue, "put_nowait")
+    # Mock imencode since we pass numpy arrays to the saver in the pre-fire phase
+    mocker.patch("cv2.imencode", return_value=(True, np.frombuffer(b"encoded_frame", dtype=np.uint8)))
 
     # --- Simulation ---
     # 1. Pre-fire: Add frames to memory buffer
@@ -230,10 +233,9 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
         saver(frame)
     assert len(saver.strategy.memory_buffer) == 5
 
-    # 2. Fire Event: Populate queue with more frames than needed to test termination
-    frames_to_record = saver.chunks_to_keep_after_fire * saver.chunk_length_seconds * int(saver.fps)
-    # Put more frames in the queue than we expect to write
-    post_fire_frames = [np.ones((1, 1, 3), dtype=np.uint8) for _ in range(frames_to_record + 5)]
+    # 2. Fire Event: Populate queue for post-fire recording
+    frames_to_record = saver.chunks_to_keep_after_fire * saver.chunk_length_seconds * int(saver.fps)  # 2
+    post_fire_frames = [b"post_fire_frame" for _ in range(frames_to_record + 5)]
     for frame in post_fire_frames:
         await saver.frame_queue.put(frame)
 
@@ -241,11 +243,14 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
 
     # --- Assertions ---
     mock_create_dir.assert_awaited_once()
-    mock_flush.assert_called_once()
-    flushed_frames_arg = mock_flush.call_args[0][0]
-    assert len(flushed_frames_arg) == 5
 
-    # 3. Assert that the correct number of post-fire frames were written
-    assert mock_write.call_count == frames_to_record
-    expected_calls = [call(frame, "mock_event_dir") for frame in post_fire_frames[:frames_to_record]]
-    mock_write.assert_has_calls(expected_calls)
+    # We expect 3 calls: one for the pre-fire buffer, and two for the post-fire chunks.
+    assert mock_ffmpeg_flush.call_count == 3
+
+    # Assert pre-fire flush (the MemoryStrategy calls _flush_buffer_to_disk_blocking, which calls _flush_buffer_to_disk_ffmpeg)
+    pre_fire_call = mock_ffmpeg_flush.call_args_list[0]
+    assert len(pre_fire_call.args[0]) == 5  # 5 pre-fire frames
+
+    # Assert post-fire flush(es)
+    total_post_fire_frames = sum(len(call.args[0]) for call in mock_ffmpeg_flush.call_args_list[1:])
+    assert total_post_fire_frames == frames_to_record

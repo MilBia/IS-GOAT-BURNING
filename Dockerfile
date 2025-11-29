@@ -22,7 +22,7 @@ WORKDIR /app
 # Copy scripts with execute permissions, install Python, set up the runtime,
 # and clean up all in a single layer to optimize image size.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu && \
+RUN /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu ffmpeg && \
     /tmp/scripts/setup_runtime.sh && \
     rm -rf /tmp/scripts
 

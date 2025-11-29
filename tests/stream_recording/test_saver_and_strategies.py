@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
-from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 from is_goat_burning.stream_recording.strategies import DiskBufferStrategy
 from is_goat_burning.stream_recording.strategies import MemoryBufferStrategy
@@ -61,6 +60,7 @@ def mock_saver_context() -> MagicMock:
     saver_context._handle_fire_event_async = AsyncMock()
     saver_context._fire_handling_lock = asyncio.Lock()
     saver_context.FRAME_QUEUE_POLL_TIMEOUT = 0.01
+    saver_context.FRAME_WRITE_BATCH_SIZE = 30
     return saver_context
 
 
@@ -75,7 +75,8 @@ async def test_disk_strategy_continuously_writes_frames(mock_saver_context: Magi
     strategy.add_frame(mock_frame)
     await mock_saver_context.frame_queue.put(None)  # Sentinel to stop the loop
     await strategy._run_main_loop()
-    mock_saver_context._write_frame_blocking.assert_called_once_with(mock_frame)
+    # The strategy now puts raw frames into the queue and writes in batch
+    mock_saver_context._write_frames_blocking.assert_called_once_with([mock_frame])
 
 
 @pytest.mark.asyncio
@@ -162,14 +163,20 @@ async def test_memory_strategy_flushes_buffer_to_disk_on_fire_event(
 
 @pytest.mark.asyncio
 async def test_memory_strategy_switches_to_queueing_after_fire(
-    memory_strategy: MemoryBufferStrategy, mock_frame: np.ndarray
+    memory_strategy: MemoryBufferStrategy, mocker: MockerFixture
 ) -> None:
     memory_strategy._is_post_fire_recording = True
-    assert memory_strategy.context.frame_queue.qsize() == 0
-    memory_strategy.add_frame(mock_frame)
+    # Verify that add_frame now queues instead of buffering
+    frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    mocker.patch(
+        "cv2.imencode",
+        return_value=(True, np.array([1, 2, 3], dtype=np.uint8)),
+    )
+    # Mock put_nowait to assert its call
+    memory_strategy.context.frame_queue.put_nowait = MagicMock()
+    memory_strategy.add_frame(frame)
     assert len(memory_strategy.memory_buffer) == 0
-    assert memory_strategy.context.frame_queue.qsize() == 1
-    assert await memory_strategy.context.frame_queue.get() is mock_frame
+    memory_strategy.context.frame_queue.put_nowait.assert_called_once_with(b"\x01\x02\x03")
 
 
 # ==============================================================================
@@ -192,35 +199,70 @@ def saver(mocker: MockerFixture, mock_settings_base: MagicMock) -> AsyncVideoChu
 
 
 @pytest.mark.asyncio
-async def test_post_fire_loop_records_for_configured_duration(
+async def test_save_post_fire_chunks_records_final_duration(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
-    mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
-    expected_frames = 20
-    extra_frames_in_queue = 5
-    for _ in range(expected_frames + extra_frames_in_queue):
+    """Tests that post-fire recording saves the correctly configured duration using the ffmpeg strategy."""
+    # Arrange
+    mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings.video.record_during_fire", False)
+    # chunks_to_keep_after_fire=2, chunk_length_seconds=1, fps=10 -> 20 frames total
+    expected_frames = TEST_CHUNKS_TO_KEEP * TEST_CHUNK_LENGTH_S * TEST_FPS
+    extra_frames = 5
+
+    mock_ffmpeg_flush = mocker.patch(
+        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_ffmpeg"
+    )
+
+    # Pre-fill the queue
+    for _ in range(expected_frames + extra_frames):
         await saver.frame_queue.put(mock_frame)
-    await saver._record_final_chunks_loop("event_dir")
-    assert mock_write.call_count == expected_frames
-    assert saver.frame_queue.qsize() == extra_frames_in_queue
+    await saver.frame_queue.put(None)  # Add sentinel to prevent waiting forever if logic is flawed
+
+    # Act
+    await saver._save_post_fire_chunks_async("event_dir")
+
+    # Assert
+    assert mock_ffmpeg_flush.call_count > 0
+    total_written = sum(len(call.args[0]) for call in mock_ffmpeg_flush.call_args_list)
+    assert total_written == expected_frames
 
 
 @pytest.mark.asyncio
-async def test_record_during_fire_loop_continues_until_extinguished_signal(
+async def test_save_post_fire_chunks_records_during_fire_until_signal(
     saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
 ) -> None:
-    mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
-    frames_before_extinguish = 3
-    total_frames_added = 5
-    mock_is_extinguished = mocker.patch.object(
-        SignalHandler, "is_fire_extinguished", side_effect=([False] * frames_before_extinguish) + [True]
+    """Tests that 'record_during_fire' mode records until the extinguish signal using the ffmpeg strategy."""
+    # Arrange
+    mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings.video.record_during_fire", True)
+    mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings.video.chunks_to_keep_after_fire", 0)
+
+    mock_ffmpeg_flush = mocker.patch(
+        "is_goat_burning.stream_recording.save_stream_to_file.AsyncVideoChunkSaver._flush_buffer_to_disk_ffmpeg"
     )
-    for _ in range(total_frames_added):
-        await saver.frame_queue.put(mock_frame)
-    await saver._record_during_fire_loop("event_dir")
-    assert mock_write.call_count == frames_before_extinguish
-    assert mock_is_extinguished.call_count == frames_before_extinguish + 1
-    assert saver.frame_queue.qsize() == total_frames_added - frames_before_extinguish
+
+    frames_before_extinguish = 15  # Should create one full chunk and one partial
+    frames_per_chunk = TEST_CHUNK_LENGTH_S * TEST_FPS  # 10
+
+    # Mock the signal to return False a few times, then True
+    mocker.patch.object(saver.signal_handler, "is_fire_extinguished", side_effect=([False] * frames_before_extinguish) + [True])
+
+    # Mock the queue to feed frames and then stop
+    queue_effects = ([mock_frame] * frames_before_extinguish) + [asyncio.TimeoutError]
+    mocker.patch.object(saver.frame_queue, "get", AsyncMock(side_effect=queue_effects))
+
+    # Act
+    await saver._save_post_fire_chunks_async("event_dir")
+
+    # Assert
+    # One full chunk of 10, one partial of 5
+    assert mock_ffmpeg_flush.call_count == 2
+
+    total_written = sum(len(call.args[0]) for call in mock_ffmpeg_flush.call_args_list)
+    assert total_written == frames_before_extinguish
+
+    # Check that the chunks were correct
+    assert len(mock_ffmpeg_flush.call_args_list[0].args[0]) == frames_per_chunk
+    assert len(mock_ffmpeg_flush.call_args_list[1].args[0]) == frames_before_extinguish - frames_per_chunk
 
 
 def test_enforce_chunk_limit_deletes_oldest_files(mocker: MockerFixture, saver: AsyncVideoChunkSaver) -> None:
@@ -258,20 +300,6 @@ def test_write_frame_blocking_rotates_chunk_after_timeout(
     mock_time.return_value = 1006.0
     saver._write_frame_blocking(mock_frame)
     assert mock_video_writer.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_post_fire_loop_handles_stream_ending_early(
-    saver: AsyncVideoChunkSaver, mock_frame: np.ndarray, mocker: MockerFixture
-) -> None:
-    mock_write = mocker.patch.object(AsyncVideoChunkSaver, "_write_frame_blocking")
-    for _ in range(5):
-        await saver.frame_queue.put(mock_frame)
-    try:
-        await saver._record_final_chunks_loop("event_dir")
-    except Exception as e:
-        pytest.fail(f"Loop raised an unexpected exception: {e}")
-    assert mock_write.call_count == 5
 
 
 @pytest.mark.asyncio
