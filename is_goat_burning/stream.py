@@ -158,7 +158,7 @@ class VideoStreamer:
         """
         loop = asyncio.get_running_loop()
         # Run the blocking VideoCapture call in an executor
-        cap = await loop.run_in_executor(None, cv2.VideoCapture, url)
+        cap = await loop.run_in_executor(None, cv2.VideoCapture, url, cv2.CAP_FFMPEG)
 
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video stream at {url}")

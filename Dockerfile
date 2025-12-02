@@ -6,6 +6,7 @@ ARG NUMPY_VERSION=2.3.3
 # --- Base Stage ---
 # Use a specific Ubuntu version and install Python for consistency.
 FROM ubuntu:22.04 AS base
+COPY --from=denoland/deno:bin-2.5.6 /deno /usr/local/bin/deno
 
 # Set environment variables for Python and PIP.
 ENV PYTHONDONTWRITEBYTECODE=1 \
