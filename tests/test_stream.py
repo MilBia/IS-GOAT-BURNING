@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 from unittest.mock import call
 
+import cv2
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -172,7 +173,7 @@ async def test_create_video_streamer_succeeds_with_valid_url(
     assert isinstance(streamer, VideoStreamer)
     assert streamer.framerate == TEST_FPS
     assert streamer.frame_shape == (TEST_WIDTH, TEST_HEIGHT)
-    mock_cv2_video_capture.assert_called_once_with(TEST_STREAM_URL)
+    mock_cv2_video_capture.assert_called_once_with(TEST_STREAM_URL, cv2.CAP_FFMPEG)
     mock_video_saver.start.assert_called_once()
 
 
