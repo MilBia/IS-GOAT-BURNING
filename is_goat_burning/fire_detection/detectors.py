@@ -193,7 +193,12 @@ class OpenCLFireDetector(CPUFireDetector):
 
 
 def create_fire_detector(
-    margin: int, lower: np.ndarray, upper: np.ndarray, use_open_cl: bool | None = None, use_cuda: bool | None = None
+    margin: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    use_open_cl: bool | None = None,
+    use_cuda: bool | None = None,
+    strategy: str | None = None,
 ) -> FireDetector:
     """Factory function to create the appropriate fire detector.
 
@@ -209,10 +214,19 @@ def create_fire_detector(
                      the global `settings.open_cl`.
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
+        strategy: The detection strategy to use ("classic" or "gemini").
+                  If None, uses `settings.detection_strategy`.
 
     Returns:
         An instance of a class that conforms to the FireDetector protocol.
     """
+    selected_strategy = strategy if strategy is not None else settings.detection_strategy
+
+    if selected_strategy == "gemini":
+        from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
+
+        return GeminiFireDetector()
+
     should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
     should_use_cuda = settings.cuda if use_cuda is None else use_cuda
 

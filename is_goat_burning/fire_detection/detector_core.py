@@ -105,6 +105,7 @@ class StreamFireDetector:
             margin=fire_pixel_margin,
             lower=lower,
             upper=upper,
+            strategy=settings.detection_strategy,
         )
         return instance
 
