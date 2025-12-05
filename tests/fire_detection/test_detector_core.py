@@ -38,6 +38,8 @@ def detector(mock_settings: MagicMock) -> StreamFireDetector:  # noqa: ARG001
         checks_per_second=1.0,
     )
     detector.signal_handler = MagicMock()
+    detector.fire_detector = MagicMock()
+    detector.fire_detector.detect = AsyncMock(return_value=(False, np.zeros((10, 10, 3))))
     return detector
 
 

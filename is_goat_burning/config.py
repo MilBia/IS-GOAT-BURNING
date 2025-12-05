@@ -213,6 +213,27 @@ class VideoSettings(BaseModel):
         return self
 
 
+class GeminiSettings(BaseModel):
+    """Configuration specific to Gemini fire detection.
+
+    Attributes:
+        api_key: The Google Gemini API key.
+        model: The model to use (e.g., "gemini-2.5-flash").
+        prompt: The prompt to send to the model.
+    """
+
+    api_key: SecretStr | None = Field(default=None)
+    model: str = Field(default="gemini-2.5-flash")
+    prompt: str = Field(default="Analyze this image and determine if there is a visible fire. Ignore purely digital overlays.")
+
+    @model_validator(mode="after")
+    def check_required_fields(self) -> GeminiSettings:
+        """Validates that API key is set if Gemini strategy is used."""
+        # Note: We can't easily check the global strategy here without circular imports or context.
+        # So we'll rely on the detector factory to check for the key.
+        return self
+
+
 class Settings(BaseSettings):
     """The main application settings model.
 
@@ -226,6 +247,7 @@ class Settings(BaseSettings):
     )
 
     source: str = Field(validation_alias="SOURCE")
+    detection_strategy: Literal["classic", "gemini"] = Field(default="classic", validation_alias="DETECTION_STRATEGY")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
@@ -243,6 +265,7 @@ class Settings(BaseSettings):
     email: EmailSettings = Field(default_factory=EmailSettings)
     discord: DiscordSettings = Field(default_factory=DiscordSettings)
     video: VideoSettings = Field(default_factory=VideoSettings)
+    gemini: GeminiSettings = Field(default_factory=GeminiSettings)
 
 
 # A single, validated instance to be used across the application.

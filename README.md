@@ -86,6 +86,12 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
+| **Detection Strategy** | | |
+| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV) or `gemini` (AI). | `"classic"` |
+| `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
+| `GEMINI__MODEL` | Gemini model to use. | `"gemini-2.5-flash"` |
+| `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |
+| | | |
 | **Debouncing** | | |
 | `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |
 | `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`| Seconds a fire must be continuously absent before the 'extinguished' state is registered. | `5.0` |

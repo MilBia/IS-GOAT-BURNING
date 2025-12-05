@@ -11,6 +11,7 @@ A factory function `create_fire_detector` is provided to select the appropriate
 detector based on the application's configuration.
 """
 
+import asyncio
 from typing import Protocol
 
 import cv2
@@ -26,7 +27,7 @@ GAUSSIAN_BLUR_SIGMA_X = 0
 class FireDetector(Protocol):
     """A protocol defining the interface for all fire detector classes."""
 
-    def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a video frame for the presence of fire.
 
         Args:
@@ -72,9 +73,9 @@ class CPUFireDetector:
         no_red = cv2.countNonZero(mask)
         return no_red > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
 
-    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a standard NumPy ndarray frame for fire."""
-        return self._detect_logic(frame)
+        return await asyncio.to_thread(self._detect_logic, frame)
 
 
 class CUDAFireDetector:
@@ -139,8 +140,12 @@ class CUDAFireDetector:
         upper_channel_mask = cv2.cuda.compare(channel, upper_channel_gpu, cv2.CMP_LE)
         return cv2.cuda.bitwise_and(lower_channel_mask, upper_channel_mask)
 
-    def detect(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a cv2.cuda.GpuMat frame for fire using CUDA operations."""
+        return await asyncio.to_thread(self._detect_logic, frame)
+
+    def _detect_logic(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
+        """Synchronous core logic for CUDA detection."""
         blur = self.gaussian_filter.apply(frame)
         hsv = cv2.cuda.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
@@ -183,17 +188,32 @@ class OpenCLFireDetector(CPUFireDetector):
     (like an integrated or discrete GPU) if available.
     """
 
-    def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
         """Analyzes a cv2.UMat frame for fire.
 
         The result is downloaded to a standard NumPy array before being returned.
         """
-        fire, annotated_frame = self._detect_logic(frame)
-        return fire, annotated_frame.get()
+        # Note: OpenCL operations in OpenCV are generally asynchronous on the device,
+        # but the Python calls can still block. We offload to executor for consistency.
+        # However, passing UMat to another thread might be tricky depending on context.
+        # For now, we assume it's safe or that the overhead is acceptable.
+        # Actually, UMat context is thread-local in some cases.
+        # To be safe and simple, we'll wrap the logic.
+
+        def _run() -> tuple[bool, np.ndarray]:
+            fire, annotated_frame = self._detect_logic(frame)
+            return fire, annotated_frame.get()
+
+        return await asyncio.to_thread(_run)
 
 
 def create_fire_detector(
-    margin: int, lower: np.ndarray, upper: np.ndarray, use_open_cl: bool | None = None, use_cuda: bool | None = None
+    margin: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    use_open_cl: bool | None = None,
+    use_cuda: bool | None = None,
+    strategy: str | None = None,
 ) -> FireDetector:
     """Factory function to create the appropriate fire detector.
 
@@ -209,10 +229,19 @@ def create_fire_detector(
                      the global `settings.open_cl`.
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
+        strategy: The detection strategy to use ("classic" or "gemini").
+                  If None, uses `settings.detection_strategy`.
 
     Returns:
         An instance of a class that conforms to the FireDetector protocol.
     """
+    selected_strategy = strategy if strategy is not None else settings.detection_strategy
+
+    if selected_strategy == "gemini":
+        from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
+
+        return GeminiFireDetector()
+
     should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
     should_use_cuda = settings.cuda if use_cuda is None else use_cuda
 
