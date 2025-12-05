@@ -47,7 +47,7 @@ class GeminiFireDetector:
             raise ValueError("Failed to encode frame to JPEG.")
         return buffer.tobytes()
 
-    def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using the Gemini API.
 
         Args:
@@ -61,7 +61,7 @@ class GeminiFireDetector:
         try:
             image_bytes = self._preprocess_frame(frame)
 
-            response: GenerateContentResponse = self.client.models.generate_content(
+            response: GenerateContentResponse = await self.client.aio.models.generate_content(
                 model=self.model_name,
                 contents=[
                     self.prompt,
@@ -87,6 +87,9 @@ class GeminiFireDetector:
             logger.warning("Gemini response did not contain a valid parsed result.")
             return False, frame
 
+        except (genai.errors.ClientError, ValueError) as e:
+            logger.warning(f"Gemini API client error: {e}")
+            return False, frame
         except Exception:
-            logger.exception("Error during Gemini fire detection.")
+            logger.exception("Unexpected error during Gemini fire detection.")
             return False, frame

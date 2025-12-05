@@ -8,7 +8,6 @@ selected detector implementation (CPU, CUDA, or OpenCL) to check for fire.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 import time
@@ -186,9 +185,8 @@ class StreamFireDetector:
             )
 
         try:
-            loop = asyncio.get_running_loop()
             async for frame in self._frame_generator():
-                fire_in_frame, annotated_frame = await loop.run_in_executor(None, self.fire_detector.detect, frame)
+                fire_in_frame, annotated_frame = await self.fire_detector.detect(frame)
                 await self._handle_fire_detection(fire_in_frame)
 
                 if self.video_output:

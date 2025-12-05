@@ -85,7 +85,6 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | `CUDA` | Enable CUDA for NVIDIA GPU acceleration. | `false` |
 | `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
-| `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
 | **Detection Strategy** | | |
 | `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV) or `gemini` (AI). | `"classic"` |
