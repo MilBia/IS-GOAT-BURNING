@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import cv2
@@ -31,7 +32,11 @@ class GeminiFireDetector:
     """Detects fire using the Google Gemini API."""
 
     def __init__(self) -> None:
-        """Initializes the Gemini fire detector."""
+        """Initializes the GeminiFireDetector.
+
+        Raises:
+            ValueError: If the GEMINI__API_KEY is not set in the configuration.
+        """
         if not settings.gemini.api_key:
             raise ValueError("GEMINI__API_KEY must be set when using the 'gemini' detection strategy.")
 
@@ -40,7 +45,17 @@ class GeminiFireDetector:
         self.prompt = settings.gemini.prompt
 
     def _preprocess_frame(self, frame: np.ndarray) -> bytes:
-        """Converts an OpenCV frame to a JPEG byte string."""
+        """Converts an OpenCV frame to a JPEG byte string.
+
+        Args:
+            frame: The OpenCV image (numpy array) to convert.
+
+        Returns:
+            A byte string of the image encoded as a JPEG.
+
+        Raises:
+            ValueError: If the frame fails to encode to JPEG.
+        """
         # Encode frame to JPEG
         success, buffer = cv2.imencode(".jpg", frame)
         if not success:
@@ -59,7 +74,8 @@ class GeminiFireDetector:
             - The original frame (annotation is not yet implemented).
         """
         try:
-            image_bytes = self._preprocess_frame(frame)
+            loop = asyncio.get_running_loop()
+            image_bytes = await loop.run_in_executor(None, self._preprocess_frame, frame)
 
             response: GenerateContentResponse = await self.client.aio.models.generate_content(
                 model=self.model_name,
