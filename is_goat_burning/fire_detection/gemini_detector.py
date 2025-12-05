@@ -74,8 +74,7 @@ class GeminiFireDetector:
             - The original frame (annotation is not yet implemented).
         """
         try:
-            loop = asyncio.get_running_loop()
-            image_bytes = await loop.run_in_executor(None, self._preprocess_frame, frame)
+            image_bytes = await asyncio.to_thread(self._preprocess_frame, frame)
 
             response: GenerateContentResponse = await self.client.aio.models.generate_content(
                 model=self.model_name,

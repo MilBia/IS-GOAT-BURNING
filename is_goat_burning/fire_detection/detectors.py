@@ -75,8 +75,7 @@ class CPUFireDetector:
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a standard NumPy ndarray frame for fire."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._detect_logic, frame)
+        return await asyncio.to_thread(self._detect_logic, frame)
 
 
 class CUDAFireDetector:
@@ -143,8 +142,7 @@ class CUDAFireDetector:
 
     async def detect(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a cv2.cuda.GpuMat frame for fire using CUDA operations."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._detect_logic, frame)
+        return await asyncio.to_thread(self._detect_logic, frame)
 
     def _detect_logic(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Synchronous core logic for CUDA detection."""
@@ -195,7 +193,6 @@ class OpenCLFireDetector(CPUFireDetector):
 
         The result is downloaded to a standard NumPy array before being returned.
         """
-        loop = asyncio.get_running_loop()
         # Note: OpenCL operations in OpenCV are generally asynchronous on the device,
         # but the Python calls can still block. We offload to executor for consistency.
         # However, passing UMat to another thread might be tricky depending on context.
@@ -203,11 +200,11 @@ class OpenCLFireDetector(CPUFireDetector):
         # Actually, UMat context is thread-local in some cases.
         # To be safe and simple, we'll wrap the logic.
 
-        def _run():
+        def _run() -> tuple[bool, np.ndarray]:
             fire, annotated_frame = self._detect_logic(frame)
             return fire, annotated_frame.get()
 
-        return await loop.run_in_executor(None, _run)
+        return await asyncio.to_thread(_run)
 
 
 def create_fire_detector(
