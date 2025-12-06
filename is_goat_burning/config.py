@@ -247,7 +247,7 @@ class Settings(BaseSettings):
     )
 
     source: str = Field(validation_alias="SOURCE")
-    detection_strategy: Literal["classic", "gemini"] = Field(default="classic", validation_alias="DETECTION_STRATEGY")
+    detection_strategy: Literal["classic", "gemini", "hybrid"] = Field(default="classic", validation_alias="DETECTION_STRATEGY")
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
