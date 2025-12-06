@@ -110,3 +110,152 @@ def test_create_fire_detector_factory_returns_opencl_when_requested(mock_setting
     """Verifies the factory returns an OpenCLFireDetector when requested."""
     detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV, use_open_cl=True, use_cuda=False)
     assert isinstance(detector, OpenCLFireDetector)
+
+
+# --- Motion Verification Tests ---
+
+# Constants for motion tests
+MOTION_THRESHOLD = 25
+PIXEL_INTENSITY_CHANGE = 50  # Must be > MOTION_THRESHOLD to be detected as motion
+
+
+def create_varied_fire_image(
+    color_hsv: tuple[int, int, int],
+    size: tuple[int, int] = (100, 100),
+    value_offset: int = 0,
+) -> np.ndarray:
+    """Creates a fire-colored BGR image with optional value offset for motion simulation."""
+    h, w = size
+    hsv_image = np.zeros((h, w, 3), dtype=np.uint8)
+    h_val, s_val, v_val = color_hsv
+    # Apply offset to value channel, clamping to valid range
+    v_val_adjusted = max(0, min(255, v_val + value_offset))
+    hsv_image[:] = (h_val, s_val, v_val_adjusted)
+    return cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
+
+
+@pytest.mark.asyncio
+async def test_cpu_detector_filters_static_false_positive() -> None:
+    """Tests that static orange frames are filtered after the first frame.
+
+    This simulates a static false positive like an orange wall lit by sunset.
+    Frame 1: Fire detected (first frame, motion assumed valid).
+    Frame 2+: No fire detected (identical frames = no motion).
+    """
+    detector = CPUFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+
+    static_fire_image = create_test_image(FIRE_COLOR_HSV)
+
+    # Frame 1: First frame, should detect fire (motion assumed)
+    is_fire, _ = await detector.detect(static_fire_image)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    # Frame 2: Identical frame, should NOT detect fire (no motion)
+    is_fire, _ = await detector.detect(static_fire_image)
+    assert is_fire is False, "Frame 2: Should filter static false positive"
+
+    # Frame 3: Still identical, should NOT detect fire
+    is_fire, _ = await detector.detect(static_fire_image)
+    assert is_fire is False, "Frame 3: Should continue filtering static false positive"
+
+
+@pytest.mark.asyncio
+async def test_cpu_detector_detects_dynamic_fire() -> None:
+    """Tests that dynamic fire-like frames with motion are detected.
+
+    Real fire flickers and changes intensity rapidly. This simulates
+    that by varying the brightness (V channel) between frames.
+    """
+    detector = CPUFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+
+    # Create a sequence of frames with varying intensity (simulating fire flicker)
+    frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
+    frame2 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
+    frame3 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=-PIXEL_INTENSITY_CHANGE)
+
+    # Frame 1: First frame, should detect fire (motion assumed)
+    is_fire, _ = await detector.detect(frame1)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    # Frame 2: Different intensity, should detect fire (motion detected)
+    is_fire, _ = await detector.detect(frame2)
+    assert is_fire is True, "Frame 2: Should detect dynamic fire"
+
+    # Frame 3: Different intensity again, should detect fire
+    is_fire, _ = await detector.detect(frame3)
+    assert is_fire is True, "Frame 3: Should continue detecting dynamic fire"
+
+
+@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found")
+@pytest.mark.asyncio
+async def test_cuda_detector_filters_static_false_positive() -> None:
+    """Tests that static orange frames are filtered by CUDA detector after frame 1."""
+    detector = CUDAFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    gpu_frame = cv2.cuda.GpuMat()
+
+    static_fire_image = create_test_image(FIRE_COLOR_HSV)
+    gpu_frame.upload(static_fire_image)
+
+    # Frame 1: First frame, should detect fire
+    is_fire, _ = await detector.detect(gpu_frame)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    # Frame 2: Identical frame, should NOT detect fire
+    is_fire, _ = await detector.detect(gpu_frame)
+    assert is_fire is False, "Frame 2: Should filter static false positive"
+
+
+@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found")
+@pytest.mark.asyncio
+async def test_cuda_detector_detects_dynamic_fire() -> None:
+    """Tests that dynamic fire-like frames with motion are detected by CUDA detector."""
+    detector = CUDAFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    gpu_frame = cv2.cuda.GpuMat()
+
+    frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
+    frame2 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
+
+    gpu_frame.upload(frame1)
+    is_fire, _ = await detector.detect(gpu_frame)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    gpu_frame.upload(frame2)
+    is_fire, _ = await detector.detect(gpu_frame)
+    assert is_fire is True, "Frame 2: Should detect dynamic fire"
+
+
+@pytest.mark.skipif(not cv2.ocl.haveOpenCL(), reason="OpenCL is not available/enabled in this OpenCV build")
+@pytest.mark.asyncio
+async def test_opencl_detector_filters_static_false_positive() -> None:
+    """Tests that static orange frames are filtered by OpenCL detector after frame 1."""
+    detector = OpenCLFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+
+    static_fire_image = create_test_image(FIRE_COLOR_HSV)
+
+    # Frame 1: First frame, should detect fire
+    umat_frame = cv2.UMat(static_fire_image)
+    is_fire, _ = await detector.detect(umat_frame)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    # Frame 2: Identical frame, should NOT detect fire
+    umat_frame = cv2.UMat(static_fire_image)
+    is_fire, _ = await detector.detect(umat_frame)
+    assert is_fire is False, "Frame 2: Should filter static false positive"
+
+
+@pytest.mark.skipif(not cv2.ocl.haveOpenCL(), reason="OpenCL is not available/enabled in this OpenCV build")
+@pytest.mark.asyncio
+async def test_opencl_detector_detects_dynamic_fire() -> None:
+    """Tests that dynamic fire-like frames with motion are detected by OpenCL detector."""
+    detector = OpenCLFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+
+    frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
+    frame2 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
+
+    umat_frame = cv2.UMat(frame1)
+    is_fire, _ = await detector.detect(umat_frame)
+    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+
+    umat_frame = cv2.UMat(frame2)
+    is_fire, _ = await detector.detect(umat_frame)
+    assert is_fire is True, "Frame 2: Should detect dynamic fire"

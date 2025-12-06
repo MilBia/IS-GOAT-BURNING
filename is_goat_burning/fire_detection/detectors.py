@@ -50,9 +50,23 @@ class FireDetector(Protocol):
 
 
 class CPUFireDetector:
-    """Detects fire using standard CPU-based OpenCV functions."""
+    """Detects fire using standard CPU-based OpenCV functions with motion verification.
 
-    def __init__(self, margin: int, lower: np.ndarray, upper: np.ndarray) -> None:
+    This detector uses a two-step approach:
+    1. HSV color-based fire detection (orange/red colors)
+    2. Temporal motion verification via frame differencing
+
+    Static objects (e.g., walls lit by sunset) are filtered out after the first frame
+    because they don't exhibit the dynamic flickering characteristic of real fire.
+    """
+
+    def __init__(
+        self,
+        margin: int,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        motion_threshold: int = 25,
+    ) -> None:
         """Initializes the CPU fire detector.
 
         Args:
@@ -60,13 +74,26 @@ class CPUFireDetector:
                     to trigger a positive fire detection.
             lower: The lower bound of the HSV color range for fire.
             upper: The upper bound of the HSV color range for fire.
+            motion_threshold: The pixel intensity change threshold for motion
+                              detection (0-255). Higher = less sensitive.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
+        self.motion_threshold = motion_threshold
+        self._previous_frame: np.ndarray | None = None
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
-        """Core fire detection logic shared by CPU and OpenCL detectors.
+        """Core fire detection logic with temporal motion verification.
+
+        The algorithm:
+        1. Apply Gaussian blur and convert to HSV for color masking.
+        2. Create a color mask for fire-like colors.
+        3. Create a motion mask by comparing with the previous frame.
+        4. Combine masks: fire = color match AND motion detected.
+        5. Store current grayscale frame for next iteration.
+
+        On the first frame, motion is assumed valid to establish a baseline.
 
         Args:
             frame: The input frame (np.ndarray or cv2.UMat).
@@ -74,11 +101,51 @@ class CPUFireDetector:
         Returns:
             A tuple containing the fire detection result and the masked frame.
         """
+        # Step 1: Blur and convert to HSV for color detection
         blur = cv2.GaussianBlur(frame, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower, self.upper)
-        no_red = cv2.countNonZero(mask)
-        return no_red > self.margin, cv2.bitwise_and(frame, frame, mask=mask)
+        color_mask = cv2.inRange(hsv, self.lower, self.upper)
+
+        # Step 2: Convert current frame to grayscale for motion detection
+        current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Step 3: Create motion mask (or assume motion on first frame)
+        is_umat = isinstance(frame, cv2.UMat)
+
+        if self._previous_frame is None:
+            # First frame: assume all motion is valid to establish baseline
+            # For UMat frames, we create the motion mask directly as UMat to match color_mask type
+            if is_umat:
+                # Get shape from the numpy version of current_gray
+                gray_np = current_gray.get()
+                motion_mask_np = np.ones(gray_np.shape, dtype=np.uint8) * 255
+                motion_mask = cv2.UMat(motion_mask_np)
+            else:
+                motion_mask = np.ones_like(current_gray, dtype=np.uint8) * 255
+        else:
+            # Compute absolute difference between frames
+            # For UMat, convert previous frame back to UMat for comparison
+            if is_umat:
+                prev_umat = cv2.UMat(self._previous_frame)
+                frame_diff = cv2.absdiff(current_gray, prev_umat)
+            else:
+                frame_diff = cv2.absdiff(current_gray, self._previous_frame)
+            # Threshold to create binary motion mask
+            _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, 255, cv2.THRESH_BINARY)
+
+        # Step 4: Store current grayscale for next frame comparison
+        # Always store as numpy for consistent storage
+        if is_umat:
+            self._previous_frame = current_gray.get()
+        else:
+            self._previous_frame = current_gray.copy()
+
+        # Step 5: Combine color and motion masks
+        final_mask = cv2.bitwise_and(color_mask, motion_mask)
+
+        # Count pixels matching both color AND motion criteria
+        no_red = cv2.countNonZero(final_mask)
+        return no_red > self.margin, cv2.bitwise_and(frame, frame, mask=final_mask)
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a standard NumPy ndarray frame for fire."""
@@ -86,9 +153,23 @@ class CPUFireDetector:
 
 
 class CUDAFireDetector:
-    """Detects fire using CUDA-accelerated OpenCV functions for NVIDIA GPUs."""
+    """Detects fire using CUDA-accelerated OpenCV functions with motion verification.
 
-    def __init__(self, margin: int, lower: np.ndarray, upper: np.ndarray) -> None:
+    This detector uses a two-step approach:
+    1. HSV color-based fire detection using CUDA operations
+    2. Temporal motion verification via frame differencing on GPU
+
+    Static objects are filtered out after the first frame because they don't
+    exhibit the dynamic flickering characteristic of real fire.
+    """
+
+    def __init__(
+        self,
+        margin: int,
+        lower: np.ndarray,
+        upper: np.ndarray,
+        motion_threshold: int = 25,
+    ) -> None:
         """Initializes the CUDA fire detector.
 
         Args:
@@ -96,10 +177,13 @@ class CUDAFireDetector:
                     to trigger a positive fire detection.
             lower: The lower bound of the HSV color range for fire.
             upper: The upper bound of the HSV color range for fire.
+            motion_threshold: The pixel intensity change threshold for motion
+                              detection (0-255). Higher = less sensitive.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
+        self.motion_threshold = motion_threshold
         self.base_bound_set: bool = False
         self.lower_channel: list[cv2.cuda.GpuMat] = []
         self.upper_channel: list[cv2.cuda.GpuMat] = []
@@ -107,6 +191,7 @@ class CUDAFireDetector:
             cv2.CV_8UC3, cv2.CV_8UC3, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X
         )
         self._last_frame_size: tuple[int, int] | None = None
+        self._previous_frame_gpu: cv2.cuda.GpuMat | None = None
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
         """Pre-allocates GpuMat masks for the HSV color range bounds.
@@ -152,7 +237,7 @@ class CUDAFireDetector:
         return await asyncio.to_thread(self._detect_logic, frame)
 
     def _detect_logic(self, frame: cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
-        """Synchronous core logic for CUDA detection."""
+        """Synchronous core logic for CUDA detection with motion verification."""
         blur = self.gaussian_filter.apply(frame)
         hsv = cv2.cuda.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
@@ -174,9 +259,28 @@ class CUDAFireDetector:
         # --- Process Value Channel ---
         in_range_v = self._create_channel_mask(v, self.lower_channel[2], self.upper_channel[2])
 
-        # Combine the individual channel masks
-        final_mask_gpu = cv2.cuda.bitwise_and(in_range_h, in_range_s)
-        final_mask_gpu = cv2.cuda.bitwise_and(final_mask_gpu, in_range_v)
+        # Combine the individual channel masks for color detection
+        color_mask_gpu = cv2.cuda.bitwise_and(in_range_h, in_range_s)
+        color_mask_gpu = cv2.cuda.bitwise_and(color_mask_gpu, in_range_v)
+
+        # --- Motion Detection ---
+        current_gray_gpu = cv2.cuda.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if self._previous_frame_gpu is None:
+            # First frame: assume all motion is valid to establish baseline
+            motion_mask_gpu = cv2.cuda.GpuMat(current_gray_gpu.size(), cv2.CV_8UC1)
+            motion_mask_gpu.setTo(255)
+        else:
+            # Compute absolute difference between frames
+            frame_diff_gpu = cv2.cuda.absdiff(current_gray_gpu, self._previous_frame_gpu)
+            # Threshold to create binary motion mask
+            _, motion_mask_gpu = cv2.cuda.threshold(frame_diff_gpu, self.motion_threshold, 255, cv2.THRESH_BINARY)
+
+        # Store current grayscale for next frame comparison
+        self._previous_frame_gpu = current_gray_gpu.clone()
+
+        # Combine color and motion masks
+        final_mask_gpu = cv2.cuda.bitwise_and(color_mask_gpu, motion_mask_gpu)
 
         no_red = cv2.cuda.countNonZero(final_mask_gpu)
 
@@ -286,6 +390,7 @@ def _create_local_detector(
     upper: np.ndarray,
     use_open_cl: bool | None = None,
     use_cuda: bool | None = None,
+    motion_threshold: int | None = None,
 ) -> CPUFireDetector | CUDAFireDetector | OpenCLFireDetector:
     """Creates a local CV-based fire detector based on hardware settings.
 
@@ -297,18 +402,21 @@ def _create_local_detector(
                      the global `settings.open_cl`.
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
+        motion_threshold: The pixel intensity change threshold for motion
+                          detection. If None, uses `settings.motion_detection_threshold`.
 
     Returns:
         A CPU, CUDA, or OpenCL fire detector instance.
     """
     should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
     should_use_cuda = settings.cuda if use_cuda is None else use_cuda
+    threshold = settings.motion_detection_threshold if motion_threshold is None else motion_threshold
 
     if should_use_cuda:
-        return CUDAFireDetector(margin, lower, upper)
+        return CUDAFireDetector(margin, lower, upper, threshold)
     if should_use_open_cl:
-        return OpenCLFireDetector(margin, lower, upper)
-    return CPUFireDetector(margin, lower, upper)
+        return OpenCLFireDetector(margin, lower, upper, threshold)
+    return CPUFireDetector(margin, lower, upper, threshold)
 
 
 def create_fire_detector(
