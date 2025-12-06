@@ -11,11 +11,17 @@ A factory function `create_fire_detector` is provided to select the appropriate
 detector based on the application's configuration.
 """
 
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 from typing import Protocol
 
 import cv2
 import numpy as np
+
+if TYPE_CHECKING:
+    from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
 from is_goat_burning.config import settings
 
@@ -207,6 +213,63 @@ class OpenCLFireDetector(CPUFireDetector):
         return await asyncio.to_thread(_run)
 
 
+class HybridFireDetector:
+    """Two-stage fire detector: CV gatekeeper + Gemini verifier.
+
+    This detector uses a lightweight local CV detector (e.g., CPUFireDetector)
+    as a fast first pass. If the local detector finds potential fire, it then
+    uses the GeminiFireDetector for high-accuracy verification. This approach
+    minimizes API costs while reducing false positives.
+    """
+
+    def __init__(
+        self,
+        local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector,
+        gemini_detector: GeminiFireDetector,
+    ) -> None:
+        """Initializes the HybridFireDetector.
+
+        Args:
+            local_detector: A local CV-based detector for the fast first pass.
+            gemini_detector: The Gemini API detector for verification.
+        """
+        self.local_detector = local_detector
+        self.gemini_detector = gemini_detector
+        self._logger = __import__("is_goat_burning.logger", fromlist=["get_logger"]).get_logger("HybridFireDetector")
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        """Analyzes a frame for fire using two-stage detection.
+
+        Stage 1 (Gatekeeper): Uses the local CV detector for a fast check.
+        If no fire is detected, returns immediately without calling the API.
+
+        Stage 2 (Verifier): If local detection is positive, calls the Gemini
+        API to verify the detection and filter false positives.
+
+        Args:
+            frame: The input video frame (BGR numpy array).
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if fire was confirmed by both detectors.
+            - The annotated frame from the local detector.
+        """
+        # Stage 1: Fast local check (gatekeeper)
+        local_result, annotated_frame = await self.local_detector.detect(frame)
+
+        if not local_result:
+            # No fire detected locally - return immediately without API call
+            return False, annotated_frame
+
+        # Stage 2: Gemini verification
+        gemini_result, _ = await self.gemini_detector.detect(frame)
+
+        if not gemini_result:
+            self._logger.info("CV detector found fire but Gemini rejected it - false positive filtered.")
+
+        return gemini_result, annotated_frame
+
+
 def create_fire_detector(
     margin: int,
     lower: np.ndarray,
@@ -229,7 +292,7 @@ def create_fire_detector(
                      the global `settings.open_cl`.
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
-        strategy: The detection strategy to use ("classic" or "gemini").
+        strategy: The detection strategy to use ("classic", "gemini", or "hybrid").
                   If None, uses `settings.detection_strategy`.
 
     Returns:
@@ -241,6 +304,23 @@ def create_fire_detector(
         from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
         return GeminiFireDetector()
+
+    if selected_strategy == "hybrid":
+        from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
+
+        # Create the local detector based on hardware settings
+        should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
+        should_use_cuda = settings.cuda if use_cuda is None else use_cuda
+
+        if should_use_cuda:
+            local_detector = CUDAFireDetector(margin, lower, upper)
+        elif should_use_open_cl:
+            local_detector = OpenCLFireDetector(margin, lower, upper)
+        else:
+            local_detector = CPUFireDetector(margin, lower, upper)
+
+        gemini_detector = GeminiFireDetector()
+        return HybridFireDetector(local_detector, gemini_detector)
 
     should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
     should_use_cuda = settings.cuda if use_cuda is None else use_cuda
