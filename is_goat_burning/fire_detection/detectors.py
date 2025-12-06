@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
 from is_goat_burning.config import settings
+from is_goat_burning.logger import get_logger
 
 # --- Constants ---
 GAUSSIAN_BLUR_KERNEL_SIZE = (21, 21)
@@ -235,7 +236,7 @@ class HybridFireDetector:
         """
         self.local_detector = local_detector
         self.gemini_detector = gemini_detector
-        self._logger = __import__("is_goat_burning.logger", fromlist=["get_logger"]).get_logger("HybridFireDetector")
+        self._logger = get_logger("HybridFireDetector")
 
     async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
@@ -340,14 +341,13 @@ def create_fire_detector(
     """
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
-    if selected_strategy == "gemini":
+    if selected_strategy in ("gemini", "hybrid"):
         from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
-        return GeminiFireDetector()
+        if selected_strategy == "gemini":
+            return GeminiFireDetector()
 
-    if selected_strategy == "hybrid":
-        from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
-
+        # hybrid strategy
         local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
         gemini_detector = GeminiFireDetector()
         return HybridFireDetector(local_detector, gemini_detector)
