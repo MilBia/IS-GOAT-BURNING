@@ -237,7 +237,7 @@ class HybridFireDetector:
         self.gemini_detector = gemini_detector
         self._logger = __import__("is_goat_burning.logger", fromlist=["get_logger"]).get_logger("HybridFireDetector")
 
-    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
 
         Stage 1 (Gatekeeper): Uses the local CV detector for a fast check.
@@ -247,7 +247,7 @@ class HybridFireDetector:
         API to verify the detection and filter false positives.
 
         Args:
-            frame: The input video frame (BGR numpy array).
+            frame: The input video frame (BGR numpy array, UMat, or GpuMat).
 
         Returns:
             A tuple containing:
@@ -262,12 +262,52 @@ class HybridFireDetector:
             return False, annotated_frame
 
         # Stage 2: Gemini verification
-        gemini_result, _ = await self.gemini_detector.detect(frame)
+        # Convert frame to numpy array for Gemini detector (it requires np.ndarray)
+        numpy_frame: np.ndarray
+        if isinstance(frame, cv2.cuda.GpuMat):
+            numpy_frame = frame.download()
+        elif isinstance(frame, cv2.UMat):
+            numpy_frame = frame.get()
+        else:
+            numpy_frame = frame
+
+        gemini_result, _ = await self.gemini_detector.detect(numpy_frame)
 
         if not gemini_result:
             self._logger.info("CV detector found fire but Gemini rejected it - false positive filtered.")
 
         return gemini_result, annotated_frame
+
+
+def _create_local_detector(
+    margin: int,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    use_open_cl: bool | None = None,
+    use_cuda: bool | None = None,
+) -> CPUFireDetector | CUDAFireDetector | OpenCLFireDetector:
+    """Creates a local CV-based fire detector based on hardware settings.
+
+    Args:
+        margin: The fire detection threshold (pixel count).
+        lower: The lower HSV color bound.
+        upper: The upper HSV color bound.
+        use_open_cl: Explicitly request the OpenCL detector. If None, uses
+                     the global `settings.open_cl`.
+        use_cuda: Explicitly request the CUDA detector. If None, uses
+                  the global `settings.cuda`.
+
+    Returns:
+        A CPU, CUDA, or OpenCL fire detector instance.
+    """
+    should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
+    should_use_cuda = settings.cuda if use_cuda is None else use_cuda
+
+    if should_use_cuda:
+        return CUDAFireDetector(margin, lower, upper)
+    if should_use_open_cl:
+        return OpenCLFireDetector(margin, lower, upper)
+    return CPUFireDetector(margin, lower, upper)
 
 
 def create_fire_detector(
@@ -308,25 +348,8 @@ def create_fire_detector(
     if selected_strategy == "hybrid":
         from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
-        # Create the local detector based on hardware settings
-        should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
-        should_use_cuda = settings.cuda if use_cuda is None else use_cuda
-
-        if should_use_cuda:
-            local_detector = CUDAFireDetector(margin, lower, upper)
-        elif should_use_open_cl:
-            local_detector = OpenCLFireDetector(margin, lower, upper)
-        else:
-            local_detector = CPUFireDetector(margin, lower, upper)
-
+        local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
         gemini_detector = GeminiFireDetector()
         return HybridFireDetector(local_detector, gemini_detector)
 
-    should_use_open_cl = settings.open_cl if use_open_cl is None else use_open_cl
-    should_use_cuda = settings.cuda if use_cuda is None else use_cuda
-
-    if should_use_cuda:
-        return CUDAFireDetector(margin, lower, upper)
-    if should_use_open_cl:
-        return OpenCLFireDetector(margin, lower, upper)
-    return CPUFireDetector(margin, lower, upper)
+    return _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
