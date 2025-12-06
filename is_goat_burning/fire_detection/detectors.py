@@ -344,12 +344,14 @@ def create_fire_detector(
     if selected_strategy in ("gemini", "hybrid"):
         from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
-        if selected_strategy == "gemini":
-            return GeminiFireDetector()
+    if selected_strategy == "gemini":
+        return GeminiFireDetector()
 
-        # hybrid strategy
-        local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
+    # For both "classic" and "hybrid", we need a local detector.
+    local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
+
+    if selected_strategy == "hybrid":
         gemini_detector = GeminiFireDetector()
         return HybridFireDetector(local_detector, gemini_detector)
-
-    return _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
+    # "classic" strategy
+    return local_detector
