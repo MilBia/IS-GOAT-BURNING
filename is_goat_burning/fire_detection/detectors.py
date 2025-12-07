@@ -82,6 +82,7 @@ class CPUFireDetector:
         self.upper = upper
         self.motion_threshold = motion_threshold
         self._previous_frame: np.ndarray | cv2.UMat | None = None
+        self._logger = get_logger(self.__class__.__name__)
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         """Core fire detection logic with temporal motion verification.
@@ -114,6 +115,7 @@ class CPUFireDetector:
 
         if self._previous_frame is None:
             # First frame: assume all motion is valid to establish baseline
+            self._logger.debug("Motion detection initialized (first frame)")
             if is_umat:
                 # For UMat, create the motion mask on-device using the same shape as color_mask
                 motion_mask = cv2.UMat(np.full(color_mask.get().shape, 255, dtype=np.uint8))
@@ -136,7 +138,9 @@ class CPUFireDetector:
 
         # Count pixels matching both color AND motion criteria
         no_red = cv2.countNonZero(final_mask)
-        return no_red > self.margin, cv2.bitwise_and(frame, frame, mask=final_mask)
+        is_fire = no_red > self.margin
+        self._logger.debug("Detection result: pixels=%d, margin=%d, fire=%s", no_red, self.margin, is_fire)
+        return is_fire, cv2.bitwise_and(frame, frame, mask=final_mask)
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a standard NumPy ndarray frame for fire."""
@@ -183,6 +187,7 @@ class CUDAFireDetector:
         )
         self._last_frame_size: tuple[int, int] | None = None
         self._previous_frame_gpu: cv2.cuda.GpuMat | None = None
+        self._logger = get_logger(self.__class__.__name__)
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
         """Pre-allocates GpuMat masks for the HSV color range bounds.
