@@ -81,7 +81,7 @@ class CPUFireDetector:
         self.lower = lower
         self.upper = upper
         self.motion_threshold = motion_threshold
-        self._previous_frame: np.ndarray | None = None
+        self._previous_frame: np.ndarray | cv2.UMat | None = None
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         """Core fire detection logic with temporal motion verification.
@@ -114,29 +114,20 @@ class CPUFireDetector:
 
         if self._previous_frame is None:
             # First frame: assume all motion is valid to establish baseline
-            # For UMat frames, we create the motion mask directly as UMat to match color_mask type
             if is_umat:
-                # Get shape from the numpy version of current_gray
-                gray_np = current_gray.get()
-                motion_mask_np = np.ones(gray_np.shape, dtype=np.uint8) * 255
-                motion_mask = cv2.UMat(motion_mask_np)
+                # For UMat, create the motion mask on-device using the same shape as color_mask
+                motion_mask = cv2.UMat(np.full(color_mask.get().shape, 255, dtype=np.uint8))
             else:
                 motion_mask = np.ones_like(current_gray, dtype=np.uint8) * 255
         else:
-            # Compute absolute difference between frames
-            # For UMat, convert previous frame back to UMat for comparison
-            if is_umat:
-                prev_umat = cv2.UMat(self._previous_frame)
-                frame_diff = cv2.absdiff(current_gray, prev_umat)
-            else:
-                frame_diff = cv2.absdiff(current_gray, self._previous_frame)
+            # Compute absolute difference between frames (works for both UMat and np.ndarray)
+            frame_diff = cv2.absdiff(current_gray, self._previous_frame)
             # Threshold to create binary motion mask
             _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, 255, cv2.THRESH_BINARY)
 
-        # Step 4: Store current grayscale for next frame comparison
-        # Always store as numpy for consistent storage
+        # Step 4: Store current grayscale for next frame comparison, keeping it on-device for UMat
         if is_umat:
-            self._previous_frame = current_gray.get()
+            self._previous_frame = current_gray
         else:
             self._previous_frame = current_gray.copy()
 

@@ -117,6 +117,7 @@ def test_create_fire_detector_factory_returns_opencl_when_requested(mock_setting
 # Constants for motion tests
 MOTION_THRESHOLD = 25
 PIXEL_INTENSITY_CHANGE = 50  # Must be > MOTION_THRESHOLD to be detected as motion
+TEST_MARGIN = 100  # Fire detection threshold for tests
 
 
 def create_varied_fire_image(
@@ -142,7 +143,7 @@ async def test_cpu_detector_filters_static_false_positive() -> None:
     Frame 1: Fire detected (first frame, motion assumed valid).
     Frame 2+: No fire detected (identical frames = no motion).
     """
-    detector = CPUFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = CPUFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
 
     static_fire_image = create_test_image(FIRE_COLOR_HSV)
 
@@ -166,7 +167,7 @@ async def test_cpu_detector_detects_dynamic_fire() -> None:
     Real fire flickers and changes intensity rapidly. This simulates
     that by varying the brightness (V channel) between frames.
     """
-    detector = CPUFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = CPUFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
 
     # Create a sequence of frames with varying intensity (simulating fire flicker)
     frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
@@ -190,7 +191,7 @@ async def test_cpu_detector_detects_dynamic_fire() -> None:
 @pytest.mark.asyncio
 async def test_cuda_detector_filters_static_false_positive() -> None:
     """Tests that static orange frames are filtered by CUDA detector after frame 1."""
-    detector = CUDAFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = CUDAFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
     gpu_frame = cv2.cuda.GpuMat()
 
     static_fire_image = create_test_image(FIRE_COLOR_HSV)
@@ -209,7 +210,7 @@ async def test_cuda_detector_filters_static_false_positive() -> None:
 @pytest.mark.asyncio
 async def test_cuda_detector_detects_dynamic_fire() -> None:
     """Tests that dynamic fire-like frames with motion are detected by CUDA detector."""
-    detector = CUDAFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = CUDAFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
     gpu_frame = cv2.cuda.GpuMat()
 
     frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
@@ -228,7 +229,7 @@ async def test_cuda_detector_detects_dynamic_fire() -> None:
 @pytest.mark.asyncio
 async def test_opencl_detector_filters_static_false_positive() -> None:
     """Tests that static orange frames are filtered by OpenCL detector after frame 1."""
-    detector = OpenCLFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = OpenCLFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
 
     static_fire_image = create_test_image(FIRE_COLOR_HSV)
 
@@ -247,7 +248,7 @@ async def test_opencl_detector_filters_static_false_positive() -> None:
 @pytest.mark.asyncio
 async def test_opencl_detector_detects_dynamic_fire() -> None:
     """Tests that dynamic fire-like frames with motion are detected by OpenCL detector."""
-    detector = OpenCLFireDetector(margin=100, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+    detector = OpenCLFireDetector(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
 
     frame1 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=0)
     frame2 = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
