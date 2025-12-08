@@ -29,6 +29,8 @@ from is_goat_burning.logger import get_logger
 # --- Constants ---
 GAUSSIAN_BLUR_KERNEL_SIZE = (21, 21)
 GAUSSIAN_BLUR_SIGMA_X = 0
+DEFAULT_MOTION_THRESHOLD = 25
+MAX_PIXEL_VALUE = 255
 
 
 class FireDetector(Protocol):
@@ -65,7 +67,7 @@ class CPUFireDetector:
         margin: int,
         lower: np.ndarray,
         upper: np.ndarray,
-        motion_threshold: int = 25,
+        motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
     ) -> None:
         """Initializes the CPU fire detector.
 
@@ -118,14 +120,16 @@ class CPUFireDetector:
             self._logger.debug("Motion detection initialized (first frame)")
             if is_umat:
                 # For UMat, create the motion mask on-device using the same shape as color_mask
-                motion_mask = cv2.UMat(np.full(color_mask.get().shape, 255, dtype=np.uint8))
+                # Note: UMat doesn't support scalar initialization like GpuMat, so we use .get()
+                # This only happens once on the first frame.
+                motion_mask = cv2.UMat(np.full(color_mask.get().shape, MAX_PIXEL_VALUE, dtype=np.uint8))
             else:
-                motion_mask = np.ones_like(current_gray, dtype=np.uint8) * 255
+                motion_mask = np.ones_like(current_gray, dtype=np.uint8) * MAX_PIXEL_VALUE
         else:
             # Compute absolute difference between frames (works for both UMat and np.ndarray)
             frame_diff = cv2.absdiff(current_gray, self._previous_frame)
             # Threshold to create binary motion mask
-            _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, 255, cv2.THRESH_BINARY)
+            _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
 
         # Step 4: Store current grayscale for next frame comparison, keeping it on-device for UMat
         if is_umat:
@@ -163,7 +167,7 @@ class CUDAFireDetector:
         margin: int,
         lower: np.ndarray,
         upper: np.ndarray,
-        motion_threshold: int = 25,
+        motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
     ) -> None:
         """Initializes the CUDA fire detector.
 
@@ -265,12 +269,12 @@ class CUDAFireDetector:
         if self._previous_frame_gpu is None:
             # First frame: assume all motion is valid to establish baseline
             motion_mask_gpu = cv2.cuda.GpuMat(current_gray_gpu.size(), cv2.CV_8UC1)
-            motion_mask_gpu.setTo(255)
+            motion_mask_gpu.setTo(MAX_PIXEL_VALUE)
         else:
             # Compute absolute difference between frames
             frame_diff_gpu = cv2.cuda.absdiff(current_gray_gpu, self._previous_frame_gpu)
             # Threshold to create binary motion mask
-            _, motion_mask_gpu = cv2.cuda.threshold(frame_diff_gpu, self.motion_threshold, 255, cv2.THRESH_BINARY)
+            _, motion_mask_gpu = cv2.cuda.threshold(frame_diff_gpu, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
 
         # Store current grayscale for next frame comparison
         self._previous_frame_gpu = current_gray_gpu.clone()

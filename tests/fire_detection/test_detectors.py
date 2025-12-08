@@ -118,6 +118,8 @@ def test_create_fire_detector_factory_returns_opencl_when_requested(mock_setting
 MOTION_THRESHOLD = 25
 PIXEL_INTENSITY_CHANGE = 50  # Must be > MOTION_THRESHOLD to be detected as motion
 TEST_MARGIN = 100  # Fire detection threshold for tests
+MIN_PIXEL_VALUE = 0
+MAX_PIXEL_VALUE = 255
 
 
 def create_varied_fire_image(
@@ -130,7 +132,7 @@ def create_varied_fire_image(
     hsv_image = np.zeros((h, w, 3), dtype=np.uint8)
     h_val, s_val, v_val = color_hsv
     # Apply offset to value channel, clamping to valid range
-    v_val_adjusted = max(0, min(255, v_val + value_offset))
+    v_val_adjusted = max(MIN_PIXEL_VALUE, min(MAX_PIXEL_VALUE, v_val + value_offset))
     hsv_image[:] = (h_val, s_val, v_val_adjusted)
     return cv2.cvtColor(hsv_image, cv2.COLOR_HSV2BGR)
 
