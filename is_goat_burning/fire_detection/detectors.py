@@ -119,10 +119,10 @@ class CPUFireDetector:
             # First frame: assume all motion is valid to establish baseline
             self._logger.debug("Motion detection initialized (first frame)")
             if is_umat:
-                # For UMat, create the motion mask on-device using the same shape as color_mask
-                # Note: UMat doesn't support scalar initialization like GpuMat, so we use .get()
-                # This only happens once on the first frame.
-                motion_mask = cv2.UMat(np.full(color_mask.get().shape, MAX_PIXEL_VALUE, dtype=np.uint8))
+                # For UMat, create the motion mask directly on-device.
+                # We use cv2.bitwise_or(color_mask, ~color_mask) which results in all 255s,
+                # avoiding any device-to-host transfers.
+                motion_mask = cv2.bitwise_or(color_mask, cv2.bitwise_not(color_mask))
             else:
                 motion_mask = np.ones_like(current_gray, dtype=np.uint8) * MAX_PIXEL_VALUE
         else:
