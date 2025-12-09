@@ -120,9 +120,9 @@ class CPUFireDetector:
             self._logger.debug("Motion detection initialized (first frame)")
             if is_umat:
                 # For UMat, create the motion mask directly on-device.
-                # We use cv2.bitwise_or(color_mask, ~color_mask) which results in all 255s,
+                # We use cv2.compare(color_mask, color_mask, cv2.CMP_EQ) which results in all 255s,
                 # avoiding any device-to-host transfers.
-                motion_mask = cv2.bitwise_or(color_mask, cv2.bitwise_not(color_mask))
+                motion_mask = cv2.compare(color_mask, color_mask, cv2.CMP_EQ)
             else:
                 motion_mask = np.ones_like(current_gray, dtype=np.uint8) * MAX_PIXEL_VALUE
         else:
@@ -277,7 +277,8 @@ class CUDAFireDetector:
             _, motion_mask_gpu = cv2.cuda.threshold(frame_diff_gpu, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
 
         # Store current grayscale for next frame comparison
-        self._previous_frame_gpu = current_gray_gpu.clone()
+        # GpuMat is reference counted, so simple assignment is sufficient (no need for clone)
+        self._previous_frame_gpu = current_gray_gpu
 
         # Combine color and motion masks
         final_mask_gpu = cv2.cuda.bitwise_and(color_mask_gpu, motion_mask_gpu)
