@@ -246,3 +246,47 @@ async def test_detector_detects_dynamic_fire(detector_class, to_device_func) -> 
     frame3 = to_device_func(frame3_np)
     is_fire, _ = await detector.detect(frame3)
     assert is_fire is True, "Frame 3: Should continue detecting dynamic fire"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detector_class, to_device_func",
+    [
+        (CPUFireDetector, to_cpu),
+        pytest.param(
+            CUDAFireDetector,
+            to_cuda,
+            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found"),
+        ),
+        pytest.param(
+            OpenCLFireDetector,
+            to_opencl,
+            marks=pytest.mark.skipif(not cv2.ocl.haveOpenCL(), reason="OpenCL is not available/enabled"),
+        ),
+    ],
+)
+async def test_detector_handles_resolution_change(detector_class, to_device_func) -> None:
+    """Tests that detectors handle resolution changes gracefully by resetting motion baseline."""
+    detector = detector_class(margin=TEST_MARGIN, lower=LOWER_HSV, upper=UPPER_HSV, motion_threshold=MOTION_THRESHOLD)
+
+    # Frame 1: Size 100x100
+    frame1_np = create_varied_fire_image(FIRE_COLOR_HSV, size=(100, 100))
+    frame1 = to_device_func(frame1_np)
+    is_fire, _ = await detector.detect(frame1)
+    assert is_fire is True, "Frame 1 (100x100): Should detect fire on first frame"
+
+    # Frame 2: Size 100x100 (Identical) -> Should be filtered
+    frame2 = to_device_func(frame1_np)
+    is_fire, _ = await detector.detect(frame2)
+    assert is_fire is False, "Frame 2 (100x100): Should filter static false positive"
+
+    # Frame 3: Size 150x150 (Resolution Change) -> Should reset and detect fire (treated as first frame)
+    frame3_np = create_varied_fire_image(FIRE_COLOR_HSV, size=(150, 150))
+    frame3 = to_device_func(frame3_np)
+    is_fire, _ = await detector.detect(frame3)
+    assert is_fire is True, "Frame 3 (150x150): Should detect fire after resolution change (reset)"
+
+    # Frame 4: Size 150x150 (Identical to Frame 3) -> Should be filtered
+    frame4 = to_device_func(frame3_np)
+    is_fire, _ = await detector.detect(frame4)
+    assert is_fire is False, "Frame 4 (150x150): Should filter static false positive after reset"

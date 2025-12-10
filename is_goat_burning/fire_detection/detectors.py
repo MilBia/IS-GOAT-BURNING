@@ -115,9 +115,21 @@ class CPUFireDetector:
         # Step 3: Create motion mask (or assume motion on first frame)
         is_umat = isinstance(frame, cv2.UMat)
 
+        if self._previous_frame is not None:
+            # Compute absolute difference between frames (works for both UMat and np.ndarray)
+            try:
+                frame_diff = cv2.absdiff(current_gray, self._previous_frame)
+                # Threshold to create binary motion mask
+                _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
+            except cv2.error:
+                # Handle resolution change or other incompatibilities
+                self._logger.warning("Resolution change detected or frame mismatch, resetting motion baseline")
+                self._previous_frame = None
+
+        # Check again in case we reset due to error above
         if self._previous_frame is None:
-            # First frame: assume all motion is valid to establish baseline
-            self._logger.debug("Motion detection initialized (first frame)")
+            # First frame (or reset): assume all motion is valid to establish baseline
+            self._logger.debug("Motion detection initialized (first frame or reset)")
             if is_umat:
                 # For UMat, create the motion mask directly on-device.
                 # We use cv2.compare(color_mask, color_mask, cv2.CMP_EQ) which results in all 255s,
@@ -125,11 +137,6 @@ class CPUFireDetector:
                 motion_mask = cv2.compare(color_mask, color_mask, cv2.CMP_EQ)
             else:
                 motion_mask = np.ones_like(current_gray, dtype=np.uint8) * MAX_PIXEL_VALUE
-        else:
-            # Compute absolute difference between frames (works for both UMat and np.ndarray)
-            frame_diff = cv2.absdiff(current_gray, self._previous_frame)
-            # Threshold to create binary motion mask
-            _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
 
         # Step 4: Store current grayscale for next frame comparison, keeping it on-device for UMat
         if is_umat:
@@ -265,6 +272,11 @@ class CUDAFireDetector:
 
         # --- Motion Detection ---
         current_gray_gpu = cv2.cuda.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Check for resolution change
+        if self._previous_frame_gpu is not None and self._previous_frame_gpu.size() != current_gray_gpu.size():
+            self._logger.warning("Resolution change detected (CUDA), resetting motion baseline")
+            self._previous_frame_gpu = None
 
         if self._previous_frame_gpu is None:
             # First frame: assume all motion is valid to establish baseline
