@@ -62,6 +62,8 @@ class CPUFireDetector:
     because they don't exhibit the dynamic flickering characteristic of real fire.
     """
 
+    _logger = get_logger("CPUFireDetector")
+
     def __init__(
         self,
         margin: int,
@@ -84,7 +86,6 @@ class CPUFireDetector:
         self.upper = upper
         self.motion_threshold = motion_threshold
         self._previous_frame: np.ndarray | cv2.UMat | None = None
-        self._logger = get_logger(self.__class__.__name__)
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         """Core fire detection logic with temporal motion verification.
@@ -176,6 +177,8 @@ class CUDAFireDetector:
     exhibit the dynamic flickering characteristic of real fire.
     """
 
+    _logger = get_logger("CUDAFireDetector")
+
     def __init__(
         self,
         margin: int,
@@ -205,7 +208,6 @@ class CUDAFireDetector:
         )
         self._last_frame_size: tuple[int, int] | None = None
         self._previous_frame_gpu: cv2.cuda.GpuMat | None = None
-        self._logger = get_logger(self.__class__.__name__)
 
     def _create_lower_upper_masks(self, channel: cv2.cuda.GpuMat) -> None:
         """Pre-allocates GpuMat masks for the HSV color range bounds.
@@ -318,6 +320,8 @@ class OpenCLFireDetector(CPUFireDetector):
     allowing OpenCV to dispatch operations to an OpenCL-compatible device
     (like an integrated or discrete GPU) if available.
     """
+
+    _logger = get_logger("OpenCLFireDetector")
 
     async def detect(self, frame: cv2.UMat) -> tuple[bool, np.ndarray]:
         """Analyzes a cv2.UMat frame for fire.
