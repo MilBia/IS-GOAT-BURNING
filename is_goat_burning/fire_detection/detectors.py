@@ -115,6 +115,11 @@ class CPUFireDetector:
         # Step 3: Create motion mask (or assume motion on first frame)
         is_umat = isinstance(frame, cv2.UMat)
 
+        if self._previous_frame is not None and not is_umat and self._previous_frame.shape != current_gray.shape:
+            # Explicit resolution check for NumPy arrays (CPU) to improve clarity
+            self._logger.warning("Resolution change detected (CPU), resetting motion baseline")
+            self._previous_frame = None
+
         if self._previous_frame is not None:
             # Compute absolute difference between frames (works for both UMat and np.ndarray)
             try:
@@ -122,8 +127,9 @@ class CPUFireDetector:
                 # Threshold to create binary motion mask
                 _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
             except cv2.error:
-                # Handle resolution change or other incompatibilities
-                self._logger.warning("Resolution change detected or frame mismatch, resetting motion baseline")
+                # Handle resolution change for UMat (where .shape isn't available without .get())
+                # or other incompatibilities
+                self._logger.warning("Resolution change detected or frame mismatch (OpenCL), resetting motion baseline")
                 self._previous_frame = None
 
         # Check again in case we reset due to error above
