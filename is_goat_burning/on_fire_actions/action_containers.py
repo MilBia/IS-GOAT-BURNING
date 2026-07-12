@@ -131,4 +131,6 @@ class FireEventAction:
             try:
                 await self._task
             except asyncio.CancelledError:
+                if not self._task.cancelled():
+                    raise
                 logger.debug("Fire event action task successfully cancelled.")

@@ -6,7 +6,6 @@ from dataclasses import field
 import os
 from urllib.parse import urlparse
 
-from aiohttp import ClientResponse
 from aiohttp import ClientSession
 from aiohttp import ClientTimeout
 from aiohttp import FormData
@@ -18,6 +17,10 @@ logger = get_logger("DiscordVideoSender")
 # Discord webhooks reject uploads above ~25 MB. A slightly lower ceiling is used
 # to leave headroom for the multipart envelope and avoid borderline rejections.
 DISCORD_FILE_LIMIT = 24 * 1024 * 1024
+# Discord truncates message content beyond this many characters.
+DISCORD_CHARACTER_LIMIT = 2000
+# Timeout for the small fallback JSON message sent when a file is oversized.
+FALLBACK_TIMEOUT_SECONDS = 3.0
 
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
@@ -58,7 +61,7 @@ class SendVideoToDiscord:
         with open(file_path, "rb") as file:
             return file.read()
 
-    async def _post_file(self, session: ClientSession, url: str, data: bytes, filename: str) -> ClientResponse:
+    async def _post_file(self, session: ClientSession, url: str, data: bytes, filename: str) -> None:
         """Uploads the video file to a single Discord webhook URL.
 
         Args:
@@ -67,9 +70,6 @@ class SendVideoToDiscord:
             data: The raw bytes of the video file.
             filename: The filename to present to Discord.
 
-        Returns:
-            The `aiohttp.ClientResponse` object from the request.
-
         Raises:
             aiohttp.ClientError: If a non-2xx status code is received.
         """
@@ -77,9 +77,8 @@ class SendVideoToDiscord:
         form.add_field("file", data, filename=filename, content_type="video/mp4")
         async with session.post(url=url, data=form, timeout=ClientTimeout(total=self.upload_timeout_seconds)) as response:
             response.raise_for_status()
-            return response
 
-    async def _post_json(self, session: ClientSession, url: str, content: str) -> ClientResponse:
+    async def _post_json(self, session: ClientSession, url: str, content: str) -> None:
         """Sends a fallback JSON message to a single Discord webhook URL.
 
         Args:
@@ -87,20 +86,16 @@ class SendVideoToDiscord:
             url: The specific webhook URL to send the message to.
             content: The message content.
 
-        Returns:
-            The `aiohttp.ClientResponse` object from the request.
-
         Raises:
             aiohttp.ClientError: If a non-2xx status code is received.
         """
         async with session.post(
             url=url,
-            json={"content": content[:2000]},  # Discord has a 2000 character limit
+            json={"content": content[:DISCORD_CHARACTER_LIMIT]},
             headers={"User-Agent": "Python/3", "Content-Type": "application/json"},
-            timeout=ClientTimeout(total=3),
+            timeout=ClientTimeout(total=FALLBACK_TIMEOUT_SECONDS),
         ) as response:
             response.raise_for_status()
-            return response
 
     def _log_results(self, results: list[object], verb: str) -> None:
         """Logs the outcome of the per-webhook requests.
