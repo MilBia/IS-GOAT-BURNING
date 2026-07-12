@@ -108,7 +108,7 @@ class StreamFireDetector:
         )
         return instance
 
-    async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
+    async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
         """An async generator that yields frames, potentially throttled."""
         assert self.stream is not None
         frame_counter: float = 0.0

@@ -120,7 +120,7 @@ async def test_hybrid_case_c_local_true_gemini_true(
 
 
 @pytest.fixture
-def mock_settings_hybrid() -> Generator[MagicMock, None, None]:
+def mock_settings_hybrid() -> Generator[MagicMock]:
     """Mocks settings to use hybrid strategy with a fake API key."""
     with patch("is_goat_burning.fire_detection.detectors.settings") as mock:
         mock.detection_strategy = "hybrid"
@@ -130,7 +130,7 @@ def mock_settings_hybrid() -> Generator[MagicMock, None, None]:
 
 
 @pytest.fixture
-def mock_genai_client() -> Generator[MagicMock, None, None]:
+def mock_genai_client() -> Generator[MagicMock]:
     """Mocks the google.genai.Client."""
     with patch("is_goat_burning.fire_detection.gemini_detector.genai.Client") as mock:
         mock.return_value.aio.models.generate_content = AsyncMock()

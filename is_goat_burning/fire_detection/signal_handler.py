@@ -1,5 +1,7 @@
 """Handles application-wide signals for graceful shutdown and custom events."""
 
+from __future__ import annotations
+
 import asyncio
 import signal
 
@@ -24,9 +26,9 @@ class SignalHandler:
             be cancelled upon receiving a termination signal.
     """
 
-    _instance: "SignalHandler | None" = None
+    _instance: SignalHandler | None = None
 
-    def __new__(cls: type["SignalHandler"]) -> "SignalHandler":
+    def __new__(cls: type[SignalHandler]) -> SignalHandler:
         """Creates a new instance of the class if one does not already exist."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
