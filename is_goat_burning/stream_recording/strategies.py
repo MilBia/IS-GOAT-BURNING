@@ -260,6 +260,8 @@ class MemoryBufferStrategy(BufferStrategy):
 
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.context._flush_buffer_to_disk_blocking, frames_to_flush, file_path)
+        # The pre-fire buffer has been written; publish it for event-driven actions.
+        self.context._publish_chunk_path(file_path)
 
     async def handle_fire_event(self, event_dir: str) -> None:
         """Handles the fire event for 'memory' buffering mode.

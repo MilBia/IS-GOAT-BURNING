@@ -10,9 +10,11 @@ from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
+from is_goat_burning.on_fire_actions import FireEventAction
 from is_goat_burning.on_fire_actions import OnceAction
 from is_goat_burning.on_fire_actions import SendEmail
 from is_goat_burning.on_fire_actions import SendToDiscord
+from is_goat_burning.on_fire_actions import SendVideoToDiscord
 
 logger = get_logger("Application")
 
@@ -28,8 +30,12 @@ class Application:
     Attributes:
         signal_handler (SignalHandler): The application-wide signal handler.
         action_queue (asyncio.Queue[str]): A queue for communicating events.
+        video_event_queue (asyncio.Queue[str]): A queue carrying the paths of
+            saved video chunks to event-driven actions.
         on_fire_action_handler (OnceAction | None): The handler that executes
             notification actions.
+        video_event_action (FireEventAction | None): The persistent handler that
+            forwards saved video chunk paths to its wrapped action.
         action_manager_task (asyncio.Task | None): The task managing the event
             queue and triggering actions.
     """
@@ -38,7 +44,9 @@ class Application:
         """Initializes the Application instance."""
         self.signal_handler = SignalHandler()
         self.action_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.video_event_queue: asyncio.Queue[str] = asyncio.Queue()
         self.on_fire_action_handler: OnceAction | None = None
+        self.video_event_action: FireEventAction | None = None
         self.action_manager_task: asyncio.Task | None = None
         self._setup_actions()
 
@@ -72,6 +80,22 @@ class Application:
             )
         self.on_fire_action_handler = OnceAction(actions)
 
+        if settings.discord.use_discord and settings.discord.send_video_chunks:
+            self.video_event_action = FireEventAction(
+                event_queue=self.video_event_queue,
+                action=(
+                    SendVideoToDiscord,
+                    {
+                        "webhooks": settings.discord.hooks,
+                    },
+                ),
+            )
+
+    @property
+    def _video_chunks_enabled(self) -> bool:
+        """Whether saved video chunks should be forwarded to an event action."""
+        return self.video_event_action is not None
+
     async def _action_manager(self) -> None:
         """Manages the action queue, triggering handlers for received events."""
         while True:
@@ -97,6 +121,8 @@ class Application:
     async def run(self) -> None:
         """Starts and manages the main application tasks with a retry loop."""
         self.action_manager_task = asyncio.create_task(self._action_manager())
+        if self.video_event_action:
+            self.video_event_action.start()
 
         while self.signal_handler.is_running():
             detector = None
@@ -108,6 +134,7 @@ class Application:
                     video_output=settings.video_output,
                     on_fire_action=self._queue_fire_event,
                     checks_per_second=settings.checks_per_second,
+                    event_queue=self.video_event_queue if self._video_chunks_enabled else None,
                 )
                 async with asyncio.TaskGroup() as tg:
                     detector_task = tg.create_task(detector())
@@ -136,6 +163,9 @@ class Application:
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""
         logger.info("Initiating graceful shutdown.")
+        if self.video_event_action:
+            await self.video_event_action.stop()
+
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():
             self.action_manager_task.cancel()

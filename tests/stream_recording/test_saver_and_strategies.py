@@ -159,6 +159,8 @@ async def test_memory_strategy_flushes_buffer_to_disk_on_fire_event(
     assert len(flushed_frames_arg) == 2
     assert list(flushed_frames_arg) == [b"frame1", b"frame2"]
     assert len(memory_strategy.memory_buffer) == 0
+    # The freshly written pre-fire chunk should be published for event-driven actions.
+    memory_strategy.context._publish_chunk_path.assert_called_once_with(memory_strategy.context.current_video_path)
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
     - **Memory Mode (Default):** Keeps a pre-fire buffer in RAM for minimal disk I/O, flushing video to disk only when a fire is detected. This mode is optimized for performance and reduced wear on storage devices.
     - **Disk Mode:** Continuously saves video chunks to disk, ideal for systems with limited RAM.
 - **Continuous Fire Recording:** Optionally record video for the entire duration of a fire event, plus a configured time after it is extinguished.
+- **Video Chunks to Discord:** Optionally upload each saved video chunk (pre-fire buffer and post-fire chunks) to your Discord webhook(s) as they are archived, with a text fallback for files that exceed Discord's upload limit.
 - **Dockerized Deployment:** Easily deployable with Docker, ensuring consistent performance across different environments.
 - **CUDA Acceleration (Optional):** Supports CUDA for significantly faster processing on NVIDIA GPUs.
 
@@ -107,6 +108,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | **Discord Settings** | | |
 | `DISCORD__USE_DISCORD` | Set to `true` to enable Discord notifications. | `false` |
 | `DISCORD__HOOKS` | Comma-separated list of Discord webhook URLs. | `""` |
+| `DISCORD__SEND_VIDEO_CHUNKS` | Set to `true` to upload saved video chunks to Discord as they are archived around a fire event. Requires `VIDEO__SAVE_VIDEO_CHUNKS=true`. | `false` |
 | | | |
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
@@ -131,6 +133,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 -   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
     -   `memory` (default): Holds a buffer of recent, compressed video frames in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and video resolution/framerate.
     -   `disk`: Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
+-   **Sending Video Chunks to Discord (`DISCORD__SEND_VIDEO_CHUNKS`):** When enabled (alongside `DISCORD__USE_DISCORD=true` and `VIDEO__SAVE_VIDEO_CHUNKS=true`), each video chunk archived around a fire event—starting with the pre-fire buffer and continuing with the post-fire chunks—is uploaded to the configured Discord webhook(s) as it is written. This gives you an instant, playable clip of the moments around the event. Discord webhooks reject uploads larger than ~25 MB; any chunk at or above the ~24 MB limit is not uploaded, and a fallback text message pointing to the chunk's local path is sent instead (`Goat on fire! A video chunk was saved but is too large to upload to Discord. You can find it at: <path>`). To keep individual chunks small enough to upload, lower `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` and/or `VIDEO__MEMORY_BUFFER_SECONDS`.
 
 ## HOW TO RUN
 

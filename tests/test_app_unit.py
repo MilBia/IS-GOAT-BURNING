@@ -11,14 +11,17 @@ from unittest.mock import patch
 from is_goat_burning.app import Application
 from is_goat_burning.on_fire_actions import SendEmail
 from is_goat_burning.on_fire_actions import SendToDiscord
+from is_goat_burning.on_fire_actions import SendVideoToDiscord
 
 
-def create_mock_settings(use_emails: bool = False, use_discord: bool = False) -> MagicMock:
+def create_mock_settings(use_emails: bool = False, use_discord: bool = False, send_video_chunks: bool = False) -> MagicMock:
     """Creates a MagicMock to simulate the Settings object for testing.
 
     Args:
         use_emails: If True, the mock will be configured to enable emails.
         use_discord: If True, the mock will be configured to enable Discord.
+        send_video_chunks: If True, the mock will be configured to enable
+            sending saved video chunks to Discord.
 
     Returns:
         A MagicMock instance configured to simulate the global settings object.
@@ -35,6 +38,7 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False) ->
     mock_settings.discord.use_discord = use_discord
     mock_settings.discord.message = "discord_message"
     mock_settings.discord.hooks = ["hook1"]
+    mock_settings.discord.send_video_chunks = send_video_chunks
     return mock_settings
 
 
@@ -91,3 +95,51 @@ def test_setup_actions_instantiates_no_actions_when_disabled(mock_once_action: M
         Application()
 
     mock_once_action.assert_called_once_with([])
+
+
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_wires_video_event_action_when_enabled(mock_once_action: MagicMock) -> None:  # noqa: ARG001
+    """Verifies a FireEventAction is wired when Discord video chunks are enabled."""
+    mock_settings = create_mock_settings(use_discord=True, send_video_chunks=True)
+    with (
+        patch("is_goat_burning.app.FireEventAction") as mock_fire_event_action,
+        patch("is_goat_burning.app.settings", mock_settings),
+    ):
+        app = Application()
+
+    mock_fire_event_action.assert_called_once()
+    kwargs = mock_fire_event_action.call_args.kwargs
+    assert kwargs["event_queue"] is app.video_event_queue
+    action_class, action_kwargs = kwargs["action"]
+    assert action_class is SendVideoToDiscord
+    assert action_kwargs["webhooks"] == ["hook1"]
+    assert app._video_chunks_enabled is True
+
+
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_skips_video_event_action_when_discord_disabled(mock_once_action: MagicMock) -> None:  # noqa: ARG001
+    """Verifies no FireEventAction is wired when Discord itself is disabled."""
+    mock_settings = create_mock_settings(use_discord=False, send_video_chunks=True)
+    with (
+        patch("is_goat_burning.app.FireEventAction") as mock_fire_event_action,
+        patch("is_goat_burning.app.settings", mock_settings),
+    ):
+        app = Application()
+
+    mock_fire_event_action.assert_not_called()
+    assert app.video_event_action is None
+    assert app._video_chunks_enabled is False
+
+
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_skips_video_event_action_when_chunks_disabled(mock_once_action: MagicMock) -> None:  # noqa: ARG001
+    """Verifies no FireEventAction is wired when video chunk sending is disabled."""
+    mock_settings = create_mock_settings(use_discord=True, send_video_chunks=False)
+    with (
+        patch("is_goat_burning.app.FireEventAction") as mock_fire_event_action,
+        patch("is_goat_burning.app.settings", mock_settings),
+    ):
+        app = Application()
+
+    mock_fire_event_action.assert_not_called()
+    assert app.video_event_action is None

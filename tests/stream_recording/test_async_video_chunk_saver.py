@@ -1,5 +1,7 @@
 """Unit tests for the AsyncVideoChunkSaver and its buffer strategies."""
 
+import asyncio
+import os
 from unittest.mock import MagicMock
 from unittest.mock import call
 
@@ -254,3 +256,85 @@ async def test_saver_with_memory_strategy_full_flow(mocker: MockerFixture) -> No
     # Assert post-fire flush(es)
     total_post_fire_frames = sum(len(call.args[0]) for call in mock_ffmpeg_flush.call_args_list[1:])
     assert total_post_fire_frames == frames_to_record
+
+
+# ==============================================================================
+# == Event Queue Publishing Tests
+# ==============================================================================
+
+
+def _build_disk_saver(mocker: MockerFixture, event_queue: asyncio.Queue | None) -> AsyncVideoChunkSaver:
+    """Builds a disk-mode saver with mocked filesystem for publishing tests."""
+    mock_settings = mocker.patch("is_goat_burning.stream_recording.save_stream_to_file.settings")
+    mock_settings.video.buffer_mode = "disk"
+    mocker.patch("os.makedirs")
+    return AsyncVideoChunkSaver(
+        enabled=True,
+        output_dir="test_output",
+        chunk_length_seconds=1,
+        max_chunks=1,
+        chunks_to_keep_after_fire=1,
+        event_queue=event_queue,
+    )
+
+
+def test_publish_chunk_path_puts_absolute_path(mocker: MockerFixture) -> None:
+    """Verifies the publish helper enqueues the absolute path of a chunk."""
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    saver = _build_disk_saver(mocker, queue)
+
+    saver._publish_chunk_path("relative/dir/goat-cam_chunk.mp4")
+
+    assert queue.get_nowait() == os.path.abspath("relative/dir/goat-cam_chunk.mp4")
+
+
+def test_publish_chunk_path_is_noop_without_queue(mocker: MockerFixture) -> None:
+    """Verifies the publish helper is a no-op when no queue is configured."""
+    saver = _build_disk_saver(mocker, None)
+    # Should not raise.
+    saver._publish_chunk_path("some/path.mp4")
+
+
+@pytest.mark.asyncio
+async def test_flush_chunk_buffer_publishes_on_success(mocker: MockerFixture) -> None:
+    """Verifies a successful post-fire flush publishes the chunk path."""
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    saver = _build_disk_saver(mocker, queue)
+    mocker.patch.object(AsyncVideoChunkSaver, "_flush_buffer_to_disk_ffmpeg")
+
+    from collections import deque
+
+    await saver._flush_chunk_buffer_to_disk_async(deque([b"frame"]), "event_dir")
+
+    published = queue.get_nowait()
+    assert published.startswith(os.path.abspath("event_dir"))
+    assert published.endswith(".mp4")
+
+
+@pytest.mark.asyncio
+async def test_flush_chunk_buffer_does_not_publish_on_failure(mocker: MockerFixture) -> None:
+    """Verifies a failed post-fire flush does not publish anything."""
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    saver = _build_disk_saver(mocker, queue)
+    mocker.patch.object(AsyncVideoChunkSaver, "_flush_buffer_to_disk_ffmpeg", side_effect=OSError("boom"))
+
+    from collections import deque
+
+    await saver._flush_chunk_buffer_to_disk_async(deque([b"frame"]), "event_dir")
+
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_archive_task_publishes_moved_chunk_path(mocker: MockerFixture) -> None:
+    """Verifies archived (moved) chunks are published with their new path."""
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    saver = _build_disk_saver(mocker, queue)
+    mocker.patch.object(AsyncVideoChunkSaver, "_move_file_blocking")
+
+    await saver.archive_queue.put(("/videos/goat-cam_chunk.mp4", "/videos/event_dir"))
+    await saver.archive_queue.put(None)
+
+    await saver.archive_task()
+
+    assert queue.get_nowait() == os.path.abspath("/videos/event_dir/goat-cam_chunk.mp4")

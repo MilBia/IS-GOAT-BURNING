@@ -106,12 +106,14 @@ class VideoStreamer:
         frame_shape (tuple[int, int]): The (width, height) of the video frames.
     """
 
-    def __init__(self, url: str, cap: cv2.VideoCapture) -> None:
+    def __init__(self, url: str, cap: cv2.VideoCapture, event_queue: asyncio.Queue[str] | None = None) -> None:
         """Initializes the VideoStreamer. Private, use `create`.
 
         Args:
             url: The direct, playable video stream URL.
             cap: An opened `cv2.VideoCapture` instance.
+            event_queue: An optional shared queue onto which the video saver
+                publishes the paths of saved chunks for event-driven actions.
         """
         self.url = url
         self.cap = cap
@@ -136,12 +138,13 @@ class VideoStreamer:
             chunk_length_seconds=settings.video.video_chunk_length_seconds,
             max_chunks=settings.video.max_video_chunks,
             chunks_to_keep_after_fire=settings.video.chunks_to_keep_after_fire,
+            event_queue=event_queue,
         )
         self.video_saver.start()
         logger.info(f"VideoStreamer initialized for backend '{self.backend}' at {self.framerate} FPS.")
 
     @classmethod
-    async def create(cls, url: str) -> VideoStreamer:
+    async def create(cls, url: str, event_queue: asyncio.Queue[str] | None = None) -> VideoStreamer:
         """Creates and asynchronously initializes a VideoStreamer instance.
 
         This factory method runs the blocking `cv2.VideoCapture` operation in
@@ -149,6 +152,8 @@ class VideoStreamer:
 
         Args:
             url: The direct, playable video stream URL.
+            event_queue: An optional shared queue onto which the video saver
+                publishes the paths of saved chunks for event-driven actions.
 
         Returns:
             A fully initialized VideoStreamer instance.
@@ -163,7 +168,7 @@ class VideoStreamer:
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video stream at {url}")
 
-        return cls(url=url, cap=cap)
+        return cls(url=url, cap=cap, event_queue=event_queue)
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray | cv2.UMat | cv2.cuda.GpuMat:
         """Prepares a raw frame for the selected processing backend.

@@ -8,6 +8,7 @@ selected detector implementation (CPU, CUDA, or OpenCL) to check for fire.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 import time
@@ -67,6 +68,7 @@ class StreamFireDetector:
         checks_per_second: float | None = None,
         lower_hsv: np.ndarray | None = None,
         upper_hsv: np.ndarray | None = None,
+        event_queue: asyncio.Queue[str] | None = None,
     ) -> StreamFireDetector:
         """Creates and asynchronously initializes a StreamFireDetector instance.
 
@@ -81,6 +83,8 @@ class StreamFireDetector:
                 None, every frame is analyzed.
             lower_hsv: An optional override for the lower HSV fire color bound.
             upper_hsv: An optional override for the upper HSV fire color bound.
+            event_queue: An optional shared queue onto which the video saver
+                publishes the paths of saved chunks for event-driven actions.
 
         Returns:
             A fully initialized StreamFireDetector instance.
@@ -90,7 +94,7 @@ class StreamFireDetector:
         # Resolve the stream URL
         resolver = YouTubeStream(url=src)
         stream_url = await resolver.resolve_url()
-        instance.stream = await VideoStreamer.create(url=stream_url)
+        instance.stream = await VideoStreamer.create(url=stream_url, event_queue=event_queue)
 
         # This assertion helps static analysis tools understand that `instance.stream`
         # is guaranteed to be initialized before it is used below.
