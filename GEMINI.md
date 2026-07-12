@@ -77,9 +77,9 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
         ```
         feat(notifications): add Slack notification service (#42)
 
-        Implement a new SendToSlack class in on_fire_actions/ to send
-        notifications to a configured Slack webhook when a fire is detected.
-        Configuration is loaded from the .env file via setting.py.
+        Implement a new SendToSlack class in is_goat_burning/on_fire_actions/
+        to send notifications to a configured Slack webhook when a fire is
+        detected. Configuration is loaded from the .env file via config.py.
         ```
 3.  **Propose a Pull Request Description:** If applicable, also provide a template for the Pull Request body.
     *   **Example PR Description:**
@@ -87,9 +87,9 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
         This PR resolves issue #42 by adding a new notification service for Slack.
 
         **Changes:**
-        - Created `on_fire_actions/send_to_slack.py`.
-        - Updated `burning_goat_detection.py` to initialize and use the new service.
-        - Added `SLACK_HOOK` to `.env.example` and `setting.py`.
+        - Created `is_goat_burning/on_fire_actions/send_to_slack.py`.
+        - Updated `is_goat_burning/app.py` to initialize and use the new service.
+        - Added `SLACK__HOOK` to `.env.example` and `is_goat_burning/config.py`.
         ```
 
 ## 4. Responding to Pull Request Reviews
@@ -105,8 +105,8 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
     *   **Example Plan:**
         ```
         My plan is to address the review comments as follows:
-        - [ ] In `on_fire_actions/send_email.py`: Change the `timeout` from 1 to 3 seconds.
-        - [ ] In `fire_detection/utils.py`: Add a comment explaining the HSV color range.
+        - [ ] In `is_goat_burning/on_fire_actions/send_email.py`: Change the `timeout` from 1 to 3 seconds.
+        - [ ] In `is_goat_burning/fire_detection/detectors.py`: Add a comment explaining the HSV color range.
         - [ ] In `README.md`: Fix the typo in the Docker run command.
         ```
 3.  **Confirm the Plan:** Present this checklist to the user for approval before you begin editing files.
@@ -166,7 +166,7 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 These are the fundamental architectural philosophies of this project. Adhere to them in all your work.
 
 *   **Asynchronous First:** The entire application is built on `asyncio`. All new I/O operations you introduce (networking, file access) **MUST** be non-blocking and integrate into the existing event loop.
-*   **Configuration via Environment:** All settings are managed through environment variables. **DO NOT** hardcode configuration values. `setting.py` is the single source of truth for accessing these values in the application.
+*   **Configuration via Environment:** All settings are managed through environment variables. **DO NOT** hardcode configuration values. `is_goat_burning/config.py` (a Pydantic `pydantic-settings` model exposed as the `settings` singleton) is the single source of truth for accessing these values in the application.
 *   **Strict Modularity:** Major components are isolated in their respective directories (`fire_detection`, `on_fire_actions`, `stream_recording`). You **MUST** respect this separation of concerns.
 
 ## 8. Global Rules
@@ -174,9 +174,9 @@ These are the fundamental architectural philosophies of this project. Adhere to 
 These rules are non-negotiable and apply to the entire project.
 
 1.  **Configuration Workflow:** When adding a new configuration option:
-    1.  Add the variable with a default value to `.env.example`.
-    2.  Load it in `setting.py` using the appropriate `env()` method (e.g., `env.bool()`, `env.list()`).
-    3.  Import the setting from `setting.py` where needed. **DO NOT** call `os.environ` or `env()` anywhere else.
+    1.  Add the variable with a default value to `.env.example` (and to `.env.tests` for the test suite). Env vars use `__` as the nested delimiter (e.g. `EMAIL__SENDER`, `VIDEO__BUFFER_MODE`).
+    2.  Add the field to the appropriate model in `is_goat_burning/config.py` with a typed default (and a `validation_alias` for top-level fields, or the nested model for prefixed vars).
+    3.  Import the `settings` singleton from `is_goat_burning/config.py` where needed. **DO NOT** call `os.environ` anywhere else.
 
 2.  **Dependency Management:** This project uses `pyproject.toml` as the single source of truth for all Python dependencies. The `requirements.txt`, `requirements-cpu.txt`, and `requirements-dev.txt` files are auto-generated from this file using `pip-tools`.
 
@@ -190,7 +190,7 @@ These rules are non-negotiable and apply to the entire project.
     pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
     ```
 
-3.  **Idempotent Actions:** All fire-response actions **MUST** be wrapped by the `OnceAction` class in `burning_goat_detection.py` to ensure they are triggered only once per execution.
+3.  **Idempotent Actions:** All fire-response actions **MUST** be wrapped by the `OnceAction` class (assembled in `Application._setup_actions` in `is_goat_burning/app.py`) to ensure they are triggered only once per execution.
 4.  **Error Handling and Logging:**
     *   Use the standard `logging` module configured in the project.
     *   `logger.info()`: For routine lifecycle events (e.g., "Starting new video chunk").
@@ -208,7 +208,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
     ```bash
     pre-commit run --all-files
     ```
-*   If the user has not set up the environment, you MUST instruct them to run `pip install -r requirements_dev.txt` and `pre-commit install` first.
+*   If the user has not set up the environment, you MUST instruct them to run `pip install -r requirements-dev.txt` and `pre-commit install` first.
 *   **Style Adherence:** Your code must follow PEP 8, use double quotes for strings, and conform to the `isort` configuration in `pyproject.toml`.
 
 ## 10. Tool Usage Directives
@@ -221,25 +221,28 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 
 ## 11. Directory- and File-Specific Instructions
 
-*   #### `on_fire_actions/`
+*   #### `is_goat_burning/on_fire_actions/`
     *   **Rule:** Any new notification service **MUST** be implemented in its own file as a class with an `async def __call__(self)` method.
     *   **Rule:** Configuration **MUST** be passed to the class's `__init__`. The class must not read from the environment itself.
 
-*   #### `fire_detection/`
-    *   **`base_fire_detection/utils.py`:** The functions `_detect_fire` and `_cuda_detect_fire` are performance-critical. Prioritize efficiency.
+*   #### `is_goat_burning/fire_detection/`
+    *   **`detectors.py`:** The `_detect_logic` methods of `CPUFireDetector` / `CUDAFireDetector` (and the `OpenCLFireDetector` subclass) run per frame and are performance-critical. Prioritize efficiency.
+    *   **Rule:** All detectors must conform to the `FireDetector` protocol (`async detect(frame) -> tuple[bool, annotated_frame]`); new strategies are wired up through the `create_fire_detector` factory.
 
-*   #### `stream_recording/`
-    *   **Rule:** The `AsyncVideoChunkSaver` class contains complex logic. **DO NOT** alter its core state machine unless requested.
+*   #### `is_goat_burning/stream_recording/`
+    *   **Rule:** The `AsyncVideoChunkSaver` class and its `BufferStrategy` implementations (`strategies.py`) contain complex logic. **DO NOT** alter their core state machine unless requested.
 
-*   #### `burning_goat_detection.py`
-    *   **Role:** This file is the central coordinator. **DO NOT** add business logic directly into this file.
+*   #### `is_goat_burning/app.py`
+    *   **Role:** The `Application` class is the central coordinator. **DO NOT** add business logic directly into it.
 
 ## 12. Project Context Map
 
-*   **Entry Point & Orchestration:** `burning_goat_detection.py`
-*   **Core CV Logic:** `fire_detection/`
-*   **Notifications:** `on_fire_actions/`
-*   **Video Saving & Archiving:** `stream_recording/`
-*   **Configuration Loading:** `setting.py`
-*   **Dependencies:** `requirements.txt`, `pyproject.toml`
-*   **Dev Tools & Linting:** `requirements_dev.txt`
+*   **Process Entry Point:** `burning_goat_detection.py` (thin `asyncio.run` wrapper)
+*   **Orchestration:** `is_goat_burning/app.py` (`Application`)
+*   **Core CV / Detection Logic:** `is_goat_burning/fire_detection/`
+*   **Streaming (yt-dlp + OpenCV):** `is_goat_burning/stream.py`
+*   **Notifications:** `is_goat_burning/on_fire_actions/`
+*   **Video Saving & Archiving:** `is_goat_burning/stream_recording/`
+*   **Configuration Loading:** `is_goat_burning/config.py`
+*   **Dependencies:** `pyproject.toml` (source of truth); generated `requirements*.txt`
+*   **Dev Tools & Linting:** `requirements-dev.txt`
