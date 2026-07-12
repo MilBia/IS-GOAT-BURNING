@@ -23,7 +23,7 @@ WORKDIR /app
 # Copy scripts with execute permissions, install Python, set up the runtime,
 # and clean up all in a single layer to optimize image size.
 COPY --chmod=755 scripts/ /tmp/scripts/
-RUN /tmp/scripts/install_python.sh python3.13 python3.13-venv libgl1-mesa-glx libglib2.0-0 gosu ffmpeg && \
+RUN /tmp/scripts/install_python.sh python3.14 python3.14-venv libgl1-mesa-glx libglib2.0-0 gosu ffmpeg && \
     /tmp/scripts/setup_runtime.sh && \
     rm -rf /tmp/scripts
 
@@ -111,13 +111,13 @@ ENV TZ=Etc/UTC \
 # and clean up all in a single layer to optimize image size.
 COPY --chmod=755 scripts/ /tmp/scripts/
 RUN /tmp/scripts/install_python.sh \
-    python3.13 python3.13-full python3.13-venv gosu \
+    python3.14 python3.14-full python3.14-venv gosu \
     libjpeg-turbo8 libpng16-16 libtiff5 libavcodec58 libavformat58 libswscale5 libgtk-3-0 libgl1 && \
     /tmp/scripts/setup_runtime.sh && \
     rm -rf /tmp/scripts
 
 # Copy OpenCV from the builder stage.
-COPY --from=gpu_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
+COPY --from=gpu_builder /usr/local/lib/python3.14/dist-packages/cv2 /usr/local/lib/python3.14/dist-packages/cv2
 COPY --from=gpu_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
 COPY --from=gpu_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig
@@ -195,7 +195,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Copy OpenCV from the builder stage.
-COPY --from=opencl_builder /usr/local/lib/python3.13/dist-packages/cv2 /usr/local/lib/python3.13/dist-packages/cv2
+COPY --from=opencl_builder /usr/local/lib/python3.14/dist-packages/cv2 /usr/local/lib/python3.14/dist-packages/cv2
 COPY --from=opencl_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
 COPY --from=opencl_builder /usr/local/include/opencv4 /usr/local/include/opencv4
 RUN ldconfig

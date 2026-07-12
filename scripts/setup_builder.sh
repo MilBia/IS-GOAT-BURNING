@@ -70,13 +70,13 @@ install_base_dependencies_and_ppa
 # Install Python variants required for building
 echo "Installing Python build variants..."
 apt-get install -y --no-install-recommends \
-    python3.13 \
-    python3.13-full \
-    python3.13-dev \
-    python3.13-venv
+    python3.14 \
+    python3.14-full \
+    python3.14-dev \
+    python3.14-venv
 
 # Finalize the Python installation
-finalize_python_setup "python3.13"
+finalize_python_setup "python3.14"
 
 # Install common build dependencies
 echo "Installing common build dependencies..."

@@ -24,6 +24,13 @@ ruff format --check .        # add --fix / drop --check to apply
 
 # Install dev env
 pip install -e .[dev,cpu] && pre-commit install
+
+# GitHub operations — use the `gh` CLI (issues, PRs, CI status)
+gh issue view <n>            # read an issue before starting work
+gh pr create --fill         # open a PR for the current branch
+gh pr diff <n>              # inspect a PR's diff
+gh pr checks <n>            # check CI status
+gh run view <run-id> --log  # inspect a failed CI run
 ```
 
 Tests auto-load `.env.tests` first (then `.env`) via `SettingsConfigDict(env_file=(".env.tests", ".env"))`, so the suite runs against mock config with all external I/O disabled. Async tests use explicit `@pytest.mark.asyncio` markers (no global asyncio mode configured).

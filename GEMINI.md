@@ -48,7 +48,7 @@ When you are asked to resolve a GitHub issue, you **MUST** follow this structure
 
 ### Phase 1: Understand and Plan
 
-1.  **Request Context:** Begin by asking the user to provide the full context of the GitHub issue, including its title, body, and any relevant comments.
+1.  **Request Context:** Fetch the issue directly with the `gh` CLI via the `Shell` tool — `gh issue view <number> --comments` — to read its title, body, and comments. Only fall back to asking the user if `gh` is unavailable or unauthenticated.
 2.  **Formulate a Plan:** After reviewing the issue, formulate a clear, step-by-step plan of action. Your plan **MUST** include:
     *   A summary of the goal (e.g., "My goal is to add a new Slack notification service as described in issue #42.").
     *   A list of files you anticipate creating or modifying.
@@ -98,9 +98,10 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
 
 ### Phase 1: Ingest and Plan
 
-1.  **Request Context:** You **MUST** ask the user to provide the following:
-    *   The complete `git diff` of the code that was reviewed.
-    *   A list of all review comments, grouped by filename.
+1.  **Request Context:** Gather the review context directly with the `gh` CLI via the `Shell` tool:
+    *   `gh pr diff <number>` — the complete diff of the code that was reviewed.
+    *   `gh pr view <number> --comments` — the review comments (group them by filename yourself).
+    *   Only fall back to asking the user if `gh` is unavailable or unauthenticated.
 2.  **Formulate a Plan:** You **MUST** process each review comment as a distinct sub-task. Create a checklist of the changes you will make.
     *   **Example Plan:**
         ```
@@ -136,7 +137,7 @@ When asked to apply changes from a pull request review, you **MUST** act as a de
         - Corrected a typo in the documentation.
         ```
 3.  **Generate Commit Message:** You **MUST** generate a well-formatted commit message that follows the "Conventional Commits" standard.
-4.  **Propose PR Comment:** Provide a template for the user to post back on the GitHub PR.
+4.  **Propose PR Comment:** Provide a template for the reply on the GitHub PR. You may post it directly with `gh pr comment <number> --body "..."` (via `Shell`), but only after confirming with the user first.
     *   **Example PR Comment:**
         ```
         Thank you for the review! I have addressed all your feedback and pushed the changes. Please take another look when you have a moment.
@@ -218,6 +219,7 @@ This project enforces a strict code style using `ruff` and `pre-commit`.
 *   **`Edit`:** Apply changes surgically. Do not rewrite entire files.
 *   **`Shell`:** Use for all command-line operations. This is **REQUIRED** for running `pre-commit`.
     *   **Docker Multi-Stage Builds:** When building Docker images with multiple stages, use the `--target` flag to specify the desired build stage (e.g., `docker build --target cpu .`).
+    *   **GitHub CLI (`gh`):** Prefer `gh` (through `Shell`) for all GitHub interactions instead of asking the user to copy/paste. Useful commands: `gh issue view <n> --comments`, `gh pr diff <n>`, `gh pr view <n> --comments`, `gh pr create --fill`, `gh pr comment <n> --body "..."`, `gh pr checks <n>`, and `gh run view <run-id> --log` to inspect failed CI. Confirm before any command that writes or publishes (creating/commenting on/merging PRs); read-only queries need no confirmation.
 
 ## 11. Directory- and File-Specific Instructions
 

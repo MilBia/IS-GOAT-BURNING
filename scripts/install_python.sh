@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# This script installs Python 3.13 and other specified packages by leveraging
+# This script installs Python 3.14 and other specified packages by leveraging
 # the shared functions in common.sh.
 
 # 1. Source the shared functions using a robust method to find the script's directory.
@@ -16,7 +16,7 @@ echo "Installing Python and specified packages: $@"
 apt-get install -y --no-install-recommends "$@"
 
 # 4. Finalize the Python installation.
-finalize_python_setup "python3.13"
+finalize_python_setup "python3.14"
 
 # 5. Clean up apt caches. Build-time dependencies like software-properties-common
 #    are intentionally not purged here. Purging them on Ubuntu 22.04 has been

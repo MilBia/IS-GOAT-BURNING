@@ -186,7 +186,7 @@ class VideoStreamer:
             return cv2.UMat(frame)
         return frame
 
-    async def frames(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat, None]:
+    async def frames(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
         """An async generator that yields processed frames from the stream.
 
         This is the main loop that reads from the camera, queues the raw frame

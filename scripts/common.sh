@@ -22,7 +22,7 @@ install_base_dependencies_and_ppa() {
 # and bootstrapping a modern version of pip.
 #
 # Arguments:
-#   $1: The Python executable name (e.g., "python3.13").
+#   $1: The Python executable name (e.g., "python3.14").
 finalize_python_setup() {
     if [[ -z "$1" ]]; then
         echo "Error: Python executable name must be provided to finalize_python_setup." >&2

@@ -20,7 +20,7 @@ from is_goat_burning.fire_detection.detector_core import StreamFireDetector
 
 
 @pytest.fixture
-def mock_settings() -> Generator[MagicMock, None, None]:
+def mock_settings() -> Generator[MagicMock]:
     """Fixture to mock the global settings object for debouncing."""
     with patch("is_goat_burning.fire_detection.detector_core.settings") as mock:
         mock.fire_detected_debounce_seconds = 1.0
@@ -126,7 +126,7 @@ async def test_fire_extinguished_with_zero_debounce_triggers_immediately(
 # ==============================================================================
 
 
-async def mock_frame_source(num_frames: int) -> AsyncGenerator[np.ndarray, None]:
+async def mock_frame_source(num_frames: int) -> AsyncGenerator[np.ndarray]:
     """A helper async generator to simulate a video stream source."""
     for i in range(num_frames):
         yield np.array([i], dtype=np.uint8)

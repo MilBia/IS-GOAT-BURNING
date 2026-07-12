@@ -22,7 +22,7 @@ The Gävle Goat is a giant straw goat built annually in Gävle, Sweden. It has b
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.14 or higher
 - NVIDIA GPU with CUDA drivers installed (if using CUDA acceleration)
 - Docker (optional, for Docker deployment)
 
