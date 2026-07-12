@@ -147,7 +147,7 @@ class DiskBufferStrategy(BufferStrategy):
                         logger.debug("Disk strategy fire event handling completed successfully.")
                     except asyncio.CancelledError:
                         raise
-                    except (OSError, shutil.Error, cv2.error):
+                    except OSError, shutil.Error, cv2.error:
                         logger.exception("Unexpected but recoverable error during disk strategy fire event handling.")
                     finally:
                         self.context.reset_after_fire()
@@ -184,7 +184,7 @@ class DiskBufferStrategy(BufferStrategy):
                 except asyncio.CancelledError:
                     logger.info("Disk strategy writer task cancelled during frame wait.")
                     raise
-                except (OSError, cv2.error):
+                except OSError, cv2.error:
                     logger.exception("Error in disk strategy writer task, but will continue running.")
         except asyncio.CancelledError:
             logger.info("Disk strategy main loop was cancelled.")
@@ -293,7 +293,7 @@ class MemoryBufferStrategy(BufferStrategy):
                         logger.debug("Memory strategy fire event handling completed successfully.")
                     except asyncio.CancelledError:
                         raise
-                    except (OSError, shutil.Error, cv2.error):
+                    except OSError, shutil.Error, cv2.error:
                         logger.exception("Unexpected but recoverable error during memory strategy fire event handling.")
                     finally:
                         self.context.reset_after_fire()

@@ -1,7 +1,7 @@
 # Define build arguments for version consistency
 # IMPORTANT: These versions should be kept in sync with pyproject.toml.
 ARG SETUPTOOLS_VERSION=80.9.0
-ARG NUMPY_VERSION=2.3.3
+ARG NUMPY_VERSION=2.5.1
 
 # --- Base Stage ---
 # Use a specific Ubuntu version and install Python for consistency.
@@ -70,8 +70,8 @@ COPY --chmod=755 scripts/ /tmp/scripts/
 RUN /tmp/scripts/setup_builder.sh --type gpu --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
-ARG OPENCV_VERSION=4.11.0
-ARG OPENCV_CONTRIB_VERSION=4.11.0
+ARG OPENCV_VERSION=5.0.0
+ARG OPENCV_CONTRIB_VERSION=5.0.0
 ARG CUDA_ARCH=8.6
 
 RUN /tmp/scripts/build_opencv.sh \
@@ -159,8 +159,8 @@ COPY --chmod=755 scripts/ /tmp/scripts/
 RUN /tmp/scripts/setup_builder.sh --type opencl --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
-ARG OPENCV_VERSION=4.11.0
-ARG OPENCV_CONTRIB_VERSION=4.11.0
+ARG OPENCV_VERSION=5.0.0
+ARG OPENCV_CONTRIB_VERSION=5.0.0
 
 RUN /tmp/scripts/build_opencv.sh \
     --opencv-version ${OPENCV_VERSION} \
