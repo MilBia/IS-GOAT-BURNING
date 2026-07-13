@@ -88,6 +88,21 @@ async def test_missing_file_sends_nothing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_failure_after_stat_sends_nothing() -> None:
+    """Verifies a file vanishing between the stat and the read sends no request."""
+    with (
+        patch("os.path.getsize", return_value=1024),
+        patch.object(SendVideoToDiscord, "_read_file", side_effect=OSError("gone")),
+        patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+    ):
+        sender = SendVideoToDiscord(webhooks=[WEBHOOK])
+
+        await sender("/videos/event/goat-cam_chunk.mp4")
+
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_upload_continues_when_one_webhook_fails() -> None:
     """Verifies one failing webhook does not prevent uploads to the others."""
     second = "https://discord.com/api/webhooks/456/def"

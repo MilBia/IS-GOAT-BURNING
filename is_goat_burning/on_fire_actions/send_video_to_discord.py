@@ -115,7 +115,11 @@ class SendVideoToDiscord:
 
     async def _upload_file(self, session: ClientSession, file_path: str) -> None:
         """Reads and uploads the file concurrently to all configured webhooks."""
-        data = await asyncio.to_thread(self._read_file, file_path)
+        try:
+            data = await asyncio.to_thread(self._read_file, file_path)
+        except OSError as e:
+            logger.error(f"Could not read video chunk {file_path}: [{e.__class__.__name__}] {e}")
+            return
         filename = os.path.basename(file_path)
         logger.info(f"Uploading video chunk {filename} to {len(self.webhooks)} webhook(s)...")
         tasks = [self._post_file(session, url, data, filename) for url in self.webhooks]
