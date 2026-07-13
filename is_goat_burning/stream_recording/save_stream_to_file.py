@@ -76,6 +76,7 @@ class AsyncVideoChunkSaver:
     max_chunks: int
     chunks_to_keep_after_fire: int
     fps: float = 30.0
+    event_queue: asyncio.Queue[str] | None = None
     FILENAME_PREFIX: ClassVar[str] = "goat-cam_"
     FILENAME_SUFFIX: ClassVar[str] = ".mp4"
     VIDEO_CODEC: ClassVar[str] = "mp4v"
@@ -173,6 +174,23 @@ class AsyncVideoChunkSaver:
                 self.frame_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+
+    def _publish_chunk_path(self, path: str) -> None:
+        """Publishes the absolute path of a saved chunk onto the event queue.
+
+        This is a no-op when no event queue has been configured. It must only be
+        called from the event loop thread (never from an executor), because
+        `asyncio.Queue` is not thread-safe.
+
+        Args:
+            path: The path of a video chunk that was successfully written.
+        """
+        if self.event_queue is None:
+            return
+        try:
+            self.event_queue.put_nowait(os.path.abspath(path))
+        except asyncio.QueueFull:
+            logger.error(f"Event queue is full. Failed to publish chunk {os.path.basename(path)}.")
 
     def _enforce_chunk_limit_blocking(self) -> None:
         """Deletes the oldest video chunk(s) if the `max_chunks` limit is exceeded."""
@@ -448,6 +466,8 @@ class AsyncVideoChunkSaver:
                 break
             chunk_path, event_dir = item
             await loop.run_in_executor(None, self._move_file_blocking, chunk_path, event_dir)
+            # The chunk now lives in the event directory under its original name.
+            self._publish_chunk_path(os.path.join(event_dir, os.path.basename(chunk_path)))
 
     async def _create_event_directory(self) -> str | None:
         """Creates a timestamped directory for a fire event.
@@ -526,6 +546,8 @@ class AsyncVideoChunkSaver:
         try:
             # This is a blocking I/O operation, run it in an executor
             await loop.run_in_executor(None, self._flush_buffer_to_disk_ffmpeg, buffer, path)
+            # Only publish once the chunk has been written successfully.
+            self._publish_chunk_path(path)
         except Exception as e:
             logger.error(f"Failed to flush post-fire buffer to disk: {e}", exc_info=True)
 

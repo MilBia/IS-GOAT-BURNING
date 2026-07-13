@@ -94,11 +94,14 @@ class DiscordSettings(BaseModel):
         use_discord: If True, Discord notifications are enabled.
         hooks: A list of Discord webhook URLs.
         message: The message content to send to the webhooks.
+        send_video_chunks: If True, saved video chunks are uploaded to the
+            configured Discord webhooks as they are archived after a fire event.
     """
 
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
     message: CleanedMessage = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
+    send_video_chunks: bool = Field(default=False)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
