@@ -102,6 +102,7 @@ def test_detection_strategy_hybrid_cloud_is_accepted(monkeypatch: MonkeyPatch) -
 def test_detection_strategy_hybrid_edge_requires_model_path(monkeypatch: MonkeyPatch) -> None:
     """Verifies `hybrid_edge` fails validation when no model path is configured."""
     monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_edge")
+    monkeypatch.delenv("EDGE__MODEL_PATH", raising=False)
     with pytest.raises(ValidationError, match="EDGE__MODEL_PATH must be set"):
         Settings()
 
@@ -125,9 +126,11 @@ def test_detection_strategy_hybrid_edge_with_valid_model_file(monkeypatch: Monke
     assert settings.edge.model_path == str(model_file)
 
 
-def test_hybrid_edge_validation_skipped_for_other_strategies() -> None:
+def test_hybrid_edge_validation_skipped_for_other_strategies(monkeypatch: MonkeyPatch) -> None:
     """Verifies the edge model-path check is only enforced for `hybrid_edge`."""
     # Default strategy is `classic` with no EDGE__MODEL_PATH; this must not raise.
+    monkeypatch.setenv("DETECTION_STRATEGY", "classic")
+    monkeypatch.delenv("EDGE__MODEL_PATH", raising=False)
     settings = Settings()
     assert settings.detection_strategy == "classic"
     assert settings.edge.model_path is None
@@ -152,6 +155,13 @@ def test_edge_accelerator_rejects_invalid_value() -> None:
     """Verifies an unsupported accelerator value fails validation."""
     with pytest.raises(ValidationError):
         EdgeSettings(accelerator="quantum")
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_edge_confidence_threshold_rejects_out_of_range(value: float) -> None:
+    """Verifies confidence_threshold is constrained to the [0.0, 1.0] range."""
+    with pytest.raises(ValidationError):
+        EdgeSettings(confidence_threshold=value)
 
 
 @pytest.mark.parametrize(

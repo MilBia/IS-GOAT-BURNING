@@ -270,7 +270,7 @@ class EdgeSettings(BaseModel):
     """
 
     model_path: str | None = Field(default=None)
-    confidence_threshold: float = Field(default=0.5)
+    confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     accelerator: Accelerator = Field(default=Accelerator.AUTO)
 
 
@@ -333,6 +333,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def check_edge_model_path(self) -> Settings:
         """Validates the edge model path when the ``hybrid_edge`` strategy is active.
+
+        Returns:
+            The validated Settings instance.
 
         Raises:
             ValueError: If ``hybrid_edge`` is selected but ``EDGE__MODEL_PATH`` is
