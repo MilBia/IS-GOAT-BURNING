@@ -150,3 +150,19 @@ def test_create_fire_detector_factory_returns_hybrid_when_requested(
     assert isinstance(detector, HybridFireDetector)
     assert isinstance(detector.local_detector, CPUFireDetector)
     assert isinstance(detector.gemini_detector, GeminiFireDetector)
+
+
+@pytest.mark.parametrize("strategy", ["hybrid_cloud", "hybrid"])
+def test_create_fire_detector_factory_returns_hybrid_for_cloud_strategies(
+    strategy: str,
+    mock_genai_client: MagicMock,  # noqa: ARG001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies the factory returns a HybridFireDetector for `hybrid_cloud` and legacy `hybrid`."""
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+
+    detector = create_fire_detector(TEST_MARGIN, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=False, strategy=strategy)
+
+    assert isinstance(detector, HybridFireDetector)
+    assert isinstance(detector.local_detector, CPUFireDetector)
+    assert isinstance(detector.gemini_detector, GeminiFireDetector)
