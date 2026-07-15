@@ -7,13 +7,16 @@ Video).
 
 import importlib
 import os
+from pathlib import Path
 
 from _pytest.monkeypatch import MonkeyPatch
 from pydantic import ValidationError
 import pytest
 
 from is_goat_burning import config
+from is_goat_burning.config import Accelerator
 from is_goat_burning.config import DiscordSettings
+from is_goat_burning.config import EdgeSettings
 from is_goat_burning.config import EmailSettings
 from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
@@ -82,6 +85,73 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     monkeypatch.delenv("STREAM_INACTIVITY_TIMEOUT")
     importlib.reload(config)
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{DEFAULT_INACTIVITY_TIMEOUT * MICROSECONDS_PER_SECOND}"
+
+
+def test_detection_strategy_hybrid_maps_to_hybrid_cloud(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the legacy `hybrid` strategy is auto-migrated to `hybrid_cloud`."""
+    monkeypatch.setenv("DETECTION_STRATEGY", "hybrid")
+    assert Settings().detection_strategy == "hybrid_cloud"
+
+
+def test_detection_strategy_hybrid_cloud_is_accepted(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the new `hybrid_cloud` strategy is a valid value."""
+    monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_cloud")
+    assert Settings().detection_strategy == "hybrid_cloud"
+
+
+def test_detection_strategy_hybrid_edge_requires_model_path(monkeypatch: MonkeyPatch) -> None:
+    """Verifies `hybrid_edge` fails validation when no model path is configured."""
+    monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_edge")
+    with pytest.raises(ValidationError, match="EDGE__MODEL_PATH must be set"):
+        Settings()
+
+
+def test_detection_strategy_hybrid_edge_requires_existing_model_file(monkeypatch: MonkeyPatch) -> None:
+    """Verifies `hybrid_edge` fails validation when the model file does not exist."""
+    monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_edge")
+    monkeypatch.setenv("EDGE__MODEL_PATH", "/nonexistent/path/to/model.onnx")
+    with pytest.raises(ValidationError, match="EDGE__MODEL_PATH"):
+        Settings()
+
+
+def test_detection_strategy_hybrid_edge_with_valid_model_file(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    """Verifies `hybrid_edge` validates successfully when the model file exists."""
+    model_file = tmp_path / "model.onnx"
+    model_file.write_bytes(b"fake-model")
+    monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_edge")
+    monkeypatch.setenv("EDGE__MODEL_PATH", str(model_file))
+    settings = Settings()
+    assert settings.detection_strategy == "hybrid_edge"
+    assert settings.edge.model_path == str(model_file)
+
+
+def test_hybrid_edge_validation_skipped_for_other_strategies() -> None:
+    """Verifies the edge model-path check is only enforced for `hybrid_edge`."""
+    # Default strategy is `classic` with no EDGE__MODEL_PATH; this must not raise.
+    settings = Settings()
+    assert settings.detection_strategy == "classic"
+    assert settings.edge.model_path is None
+
+
+def test_edge_settings_defaults() -> None:
+    """Verifies EdgeSettings applies the documented defaults."""
+    edge = EdgeSettings()
+    assert edge.model_path is None
+    assert edge.confidence_threshold == 0.5
+    assert edge.accelerator == Accelerator.AUTO
+
+
+@pytest.mark.parametrize("value", ["auto", "cpu", "cuda", "opencl", "ncs2"])
+def test_edge_accelerator_accepts_valid_values(value: str) -> None:
+    """Verifies every documented accelerator value is accepted."""
+    edge = EdgeSettings(accelerator=value)
+    assert edge.accelerator == value
+
+
+def test_edge_accelerator_rejects_invalid_value() -> None:
+    """Verifies an unsupported accelerator value fails validation."""
+    with pytest.raises(ValidationError):
+        EdgeSettings(accelerator="quantum")
 
 
 @pytest.mark.parametrize(
