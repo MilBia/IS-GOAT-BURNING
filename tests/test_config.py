@@ -104,7 +104,7 @@ def test_detection_strategy_hybrid_edge_requires_model_path(monkeypatch: MonkeyP
     monkeypatch.setenv("DETECTION_STRATEGY", "hybrid_edge")
     monkeypatch.delenv("EDGE__MODEL_PATH", raising=False)
     with pytest.raises(ValidationError, match="EDGE__MODEL_PATH must be set"):
-        Settings()
+        Settings(_env_file=".env.tests")
 
 
 def test_detection_strategy_hybrid_edge_requires_existing_model_file(monkeypatch: MonkeyPatch) -> None:
@@ -131,7 +131,7 @@ def test_hybrid_edge_validation_skipped_for_other_strategies(monkeypatch: Monkey
     # Default strategy is `classic` with no EDGE__MODEL_PATH; this must not raise.
     monkeypatch.setenv("DETECTION_STRATEGY", "classic")
     monkeypatch.delenv("EDGE__MODEL_PATH", raising=False)
-    settings = Settings()
+    settings = Settings(_env_file=".env.tests")
     assert settings.detection_strategy == "classic"
     assert settings.edge.model_path is None
 
