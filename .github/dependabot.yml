@@ -10,6 +10,11 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Only direct dependencies: transitive pins in the generated requirements*.txt
+    # must be re-resolved together by pip-compile, so single-package bumps of them
+    # (done by Dependabot in isolation) leave an inconsistent, uninstallable set.
+    allow:
+      - dependency-type: "direct"
     commit-message:
       prefix: "chore(deps)"
     groups:
