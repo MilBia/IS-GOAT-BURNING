@@ -90,7 +90,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | **Detection Strategy** | | |
 | `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV) or `gemini` (AI). | `"classic"` |
 | `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
-| `GEMINI__MODEL` | Gemini model to use. | `"gemini-2.5-flash"` |
+| `GEMINI__MODEL` | Gemini model to use. | `"gemini-3.5-flash-lite"` |
 | `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |
 | | | |
 | **Debouncing** | | |

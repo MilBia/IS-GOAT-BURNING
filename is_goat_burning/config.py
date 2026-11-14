@@ -223,12 +223,12 @@ class GeminiSettings(BaseModel):
 
     Attributes:
         api_key: The Google Gemini API key.
-        model: The model to use (e.g., "gemini-2.5-flash").
+        model: The model to use (e.g., "gemini-3.5-flash-lite").
         prompt: The prompt to send to the model.
     """
 
     api_key: SecretStr | None = Field(default=None)
-    model: str = Field(default="gemini-2.5-flash")
+    model: str = Field(default="gemini-3.5-flash-lite")
     prompt: str = Field(default="Analyze this image and determine if there is a visible fire. Ignore purely digital overlays.")
 
     @model_validator(mode="after")
