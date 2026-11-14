@@ -65,6 +65,7 @@ Keep the `ruff` version in `.pre-commit-config.yaml` in sync with `pyproject.tom
     and any other relevant information.
     """
 
+
     class ExampleClass:
         """A summary of the class's purpose.
 
