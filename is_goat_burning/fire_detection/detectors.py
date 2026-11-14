@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
+    from is_goat_burning.fire_detection.decision_detector import DecisionFireDetector
     from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
 from is_goat_burning.config import settings
@@ -363,13 +364,13 @@ class HybridFireDetector:
     def __init__(
         self,
         local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector,
-        gemini_detector: GeminiFireDetector,
+        gemini_detector: GeminiFireDetector | DecisionFireDetector,
     ) -> None:
         """Initializes the HybridFireDetector.
 
         Args:
             local_detector: A local CV-based detector for the fast first pass.
-            gemini_detector: The Gemini API detector for verification.
+            gemini_detector: The cloud detector (Gemini or Decisions API) used for verification.
         """
         self.local_detector = local_detector
         self.gemini_detector = gemini_detector
@@ -475,8 +476,8 @@ def create_fire_detector(
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
         strategy: The detection strategy to use ("classic", "gemini",
-                  "hybrid_cloud", or the legacy alias "hybrid"). If None, uses
-                  `settings.detection_strategy`.
+                  "hybrid_cloud", "gemini_decision", "hybrid_decision", or the
+                  legacy alias "hybrid"). If None, uses `settings.detection_strategy`.
 
     Returns:
         An instance of a class that conforms to the FireDetector protocol.
@@ -493,6 +494,16 @@ def create_fire_detector(
     if selected_strategy == "hybrid_edge":
         raise NotImplementedError(
             "The 'hybrid_edge' strategy is not yet implemented; use 'classic', 'gemini', or 'hybrid_cloud'."
+        )
+
+    if selected_strategy in ("gemini_decision", "hybrid_decision"):
+        from is_goat_burning.fire_detection.decision_detector import DecisionFireDetector
+
+        if selected_strategy == "gemini_decision":
+            return DecisionFireDetector()
+        return HybridFireDetector(
+            _create_local_detector(margin, lower, upper, use_open_cl, use_cuda),
+            DecisionFireDetector(),
         )
 
     if selected_strategy == "gemini" or selected_strategy in cloud_hybrid_strategies:
