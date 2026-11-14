@@ -63,6 +63,10 @@ async def test_cuda_fire_detector() -> None:
     fire_image = create_test_image(FIRE_COLOR_HSV)
     gpu_frame.upload(fire_image)
     is_fire, _ = await detector.detect(gpu_frame)
+    assert is_fire is False, "CUDA detector must not alarm on the first frame (no motion baseline)"
+
+    gpu_frame.upload(create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE))
+    is_fire, _ = await detector.detect(gpu_frame)
     assert is_fire is True, "CUDA detector failed to detect fire"
 
     no_fire_image = create_test_image(NON_FIRE_COLOR_HSV)
@@ -79,6 +83,10 @@ async def test_opencl_fire_detector() -> None:
 
     fire_image = create_test_image(FIRE_COLOR_HSV)
     umat_frame = cv2.UMat(fire_image)
+    is_fire, _ = await detector.detect(umat_frame)
+    assert is_fire is False, "OpenCL detector must not alarm on the first frame (no motion baseline)"
+
+    umat_frame = cv2.UMat(create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE))
     is_fire, _ = await detector.detect(umat_frame)
     assert is_fire is True, "OpenCL detector failed to detect fire"
 
