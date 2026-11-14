@@ -474,24 +474,37 @@ def create_fire_detector(
                      the global `settings.open_cl`.
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
-        strategy: The detection strategy to use ("classic", "gemini", or "hybrid").
-                  If None, uses `settings.detection_strategy`.
+        strategy: The detection strategy to use ("classic", "gemini",
+                  "hybrid_cloud", or the legacy alias "hybrid"). If None, uses
+                  `settings.detection_strategy`.
 
     Returns:
         An instance of a class that conforms to the FireDetector protocol.
+
+    Raises:
+        NotImplementedError: If the ``hybrid_edge`` strategy is requested, as the
+            local edge inference detector is not yet available.
     """
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
-    if selected_strategy in ("gemini", "hybrid"):
+    # "hybrid" is the deprecated alias for "hybrid_cloud" (see Settings migration).
+    cloud_hybrid_strategies = ("hybrid_cloud", "hybrid")
+
+    if selected_strategy == "hybrid_edge":
+        raise NotImplementedError(
+            "The 'hybrid_edge' strategy is not yet implemented; use 'classic', 'gemini', or 'hybrid_cloud'."
+        )
+
+    if selected_strategy == "gemini" or selected_strategy in cloud_hybrid_strategies:
         from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
     if selected_strategy == "gemini":
         return GeminiFireDetector()
 
-    # For both "classic" and "hybrid", we need a local detector.
+    # For both "classic" and the cloud hybrid strategies, we need a local detector.
     local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
 
-    if selected_strategy == "hybrid":
+    if selected_strategy in cloud_hybrid_strategies:
         gemini_detector = GeminiFireDetector()
         return HybridFireDetector(local_detector, gemini_detector)
     # "classic" strategy

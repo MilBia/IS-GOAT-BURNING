@@ -7,7 +7,9 @@ validators to ensure that the configuration is consistent and complete.
 
 from __future__ import annotations
 
+from enum import StrEnum
 import os
+from pathlib import Path
 from typing import Annotated
 from typing import ClassVar
 from typing import Literal
@@ -237,6 +239,41 @@ class GeminiSettings(BaseModel):
         return self
 
 
+class Accelerator(StrEnum):
+    """Hardware backend used for local (edge) model inference.
+
+    Attributes:
+        AUTO: Detect the best available backend at runtime.
+        CPU: Generic CPU execution (fallback for any host).
+        CUDA: NVIDIA GPU acceleration.
+        OPENCL: OpenCL acceleration (AMD / Intel integrated GPUs).
+        NCS2: Intel Neural Compute Stick 2 (Myriad VPU).
+    """
+
+    AUTO = "auto"
+    CPU = "cpu"
+    CUDA = "cuda"
+    OPENCL = "opencl"
+    NCS2 = "ncs2"
+
+
+class EdgeSettings(BaseModel):
+    """Configuration specific to the local ``hybrid_edge`` verification strategy.
+
+    Attributes:
+        model_path: Path to the local inference model (e.g. ``.onnx`` or
+            ``.xml``). Required when ``DETECTION_STRATEGY=hybrid_edge``; its
+            existence is validated by the top-level ``Settings`` model.
+        confidence_threshold: Minimum confidence above which a detection is
+            confirmed as fire.
+        accelerator: The hardware backend to run inference on.
+    """
+
+    model_path: str | None = Field(default=None)
+    confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    accelerator: Accelerator = Field(default=Accelerator.AUTO)
+
+
 class Settings(BaseSettings):
     """The main application settings model.
 
@@ -250,7 +287,9 @@ class Settings(BaseSettings):
     )
 
     source: str = Field(validation_alias="SOURCE")
-    detection_strategy: Literal["classic", "gemini", "hybrid"] = Field(default="classic", validation_alias="DETECTION_STRATEGY")
+    detection_strategy: Literal["classic", "gemini", "hybrid_cloud", "hybrid_edge"] = Field(
+        default="classic", validation_alias="DETECTION_STRATEGY"
+    )
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
@@ -270,6 +309,44 @@ class Settings(BaseSettings):
     discord: DiscordSettings = Field(default_factory=DiscordSettings)
     video: VideoSettings = Field(default_factory=VideoSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
+    edge: EdgeSettings = Field(default_factory=EdgeSettings)
+
+    @field_validator("detection_strategy", mode="before")
+    @classmethod
+    def migrate_legacy_hybrid(cls, v: object) -> object:
+        """Maps the deprecated ``hybrid`` strategy to ``hybrid_cloud``.
+
+        This preserves backward compatibility for existing deployments that
+        still set ``DETECTION_STRATEGY=hybrid``.
+
+        Args:
+            v: The raw ``detection_strategy`` value (after alias resolution).
+
+        Returns:
+            ``"hybrid_cloud"`` if the value was the legacy ``"hybrid"``,
+            otherwise the value unchanged.
+        """
+        if v == "hybrid":
+            return "hybrid_cloud"
+        return v
+
+    @model_validator(mode="after")
+    def check_edge_model_path(self) -> Settings:
+        """Validates the edge model path when the ``hybrid_edge`` strategy is active.
+
+        Returns:
+            The validated Settings instance.
+
+        Raises:
+            ValueError: If ``hybrid_edge`` is selected but ``EDGE__MODEL_PATH`` is
+                unset or points to a file that does not exist.
+        """
+        if self.detection_strategy == "hybrid_edge":
+            if not self.edge.model_path:
+                raise ValueError("EDGE__MODEL_PATH must be set when DETECTION_STRATEGY is 'hybrid_edge'")
+            if not Path(self.edge.model_path).is_file():
+                raise ValueError(f"EDGE__MODEL_PATH points to a non-existent file: {self.edge.model_path}")
+        return self
 
 
 # A single, validated instance to be used across the application.
