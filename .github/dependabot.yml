@@ -1,0 +1,47 @@
+version: 2
+
+updates:
+  # Python dependencies declared in pyproject.toml (runtime + `cpu` and `dev` extras).
+  # NOTE: requirements*.txt are generated with pip-tools; regenerate them on every
+  # Dependabot PR (see CONTRIBUTING.md). The docker ecosystem is intentionally not
+  # enabled: the base images are coupled to apt packages and the CUDA/OpenCV build.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Workflow actions in .github/workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Hook revisions in .pre-commit-config.yaml (keep ruff in sync with pyproject.toml).
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pre-commit-hooks:
+        patterns:
+          - "*"
