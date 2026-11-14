@@ -130,7 +130,7 @@ pydantic-settings==2.14.2
     # via IS-GOAT-BURNING (pyproject.toml)
 pydocstyle==6.3.0
     # via flake8-docstrings
-pyflakes==3.4.0
+pyflakes==4.1.0
     # via flake8
 pygments==2.20.0
     # via pytest
