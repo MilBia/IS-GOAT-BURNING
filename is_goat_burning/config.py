@@ -265,7 +265,10 @@ class Accelerator(StrEnum):
         CPU: Generic CPU execution (fallback for any host).
         CUDA: NVIDIA GPU acceleration.
         OPENCL: OpenCL acceleration (AMD / Intel integrated GPUs).
-        NCS2: Intel Neural Compute Stick 2 (Myriad VPU).
+        NCS2: Intel Neural Compute Stick 2 (Myriad VPU). Experimental: needs a
+            separate OpenVINO 2022.3 runtime/container (#101); only suited to heavier
+            models (e.g. MobileNetV2/EfficientNet), not hard-swish ones like
+            MobileNetV3.
     """
 
     AUTO = "auto"
