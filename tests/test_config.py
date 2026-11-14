@@ -15,6 +15,7 @@ import pytest
 
 from is_goat_burning import config
 from is_goat_burning.config import Accelerator
+from is_goat_burning.config import DecisionSettings
 from is_goat_burning.config import DiscordSettings
 from is_goat_burning.config import EdgeSettings
 from is_goat_burning.config import EmailSettings
@@ -162,6 +163,35 @@ def test_edge_confidence_threshold_rejects_out_of_range(value: float) -> None:
     """Verifies confidence_threshold is constrained to the [0.0, 1.0] range."""
     with pytest.raises(ValidationError):
         EdgeSettings(confidence_threshold=value)
+
+
+def test_decision_settings_defaults() -> None:
+    """Verifies the Decisions API settings defaults."""
+    decision = DecisionSettings()
+    assert decision.model == "gemini-decision-1"
+    assert decision.threshold == 0.5
+    assert decision.timeout_seconds == 10.0
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_decision_threshold_rejects_out_of_range(value: float) -> None:
+    """Verifies the decision threshold is constrained to the [0.0, 1.0] range."""
+    with pytest.raises(ValidationError):
+        DecisionSettings(threshold=value)
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0])
+def test_decision_timeout_must_be_positive(value: float) -> None:
+    """Verifies the request timeout must be strictly positive."""
+    with pytest.raises(ValidationError):
+        DecisionSettings(timeout_seconds=value)
+
+
+@pytest.mark.parametrize("strategy", ["gemini_decision", "hybrid_decision"])
+def test_decision_strategies_are_valid(monkeypatch: MonkeyPatch, strategy: str) -> None:
+    """Verifies the Decisions API strategies are accepted without extra required settings."""
+    monkeypatch.setenv("DETECTION_STRATEGY", strategy)
+    assert Settings(_env_file=".env.tests").detection_strategy == strategy
 
 
 @pytest.mark.parametrize(

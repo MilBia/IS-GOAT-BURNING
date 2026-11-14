@@ -239,6 +239,24 @@ class GeminiSettings(BaseModel):
         return self
 
 
+class DecisionSettings(BaseModel):
+    """Configuration for fire detection with the Gemini Decisions API.
+
+    The API key is shared with :class:`GeminiSettings` (``GEMINI__API_KEY``).
+
+    Attributes:
+        model: The decision model to use (e.g., "gemini-decision-1").
+        threshold: Minimum calibrated probability ``P(fire)`` in ``[0, 1]`` to report fire.
+        instructions: The yes/no question asked about every analysed frame.
+        timeout_seconds: Per-request timeout; a timed-out request counts as an error.
+    """
+
+    model: str = Field(default="gemini-decision-1")
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    instructions: str = Field(default="Is there a visible fire in the image? Ignore purely digital overlays.")
+    timeout_seconds: float = Field(default=10.0, gt=0.0)
+
+
 class Accelerator(StrEnum):
     """Hardware backend used for local (edge) model inference.
 
@@ -287,8 +305,8 @@ class Settings(BaseSettings):
     )
 
     source: str = Field(validation_alias="SOURCE")
-    detection_strategy: Literal["classic", "gemini", "hybrid_cloud", "hybrid_edge"] = Field(
-        default="classic", validation_alias="DETECTION_STRATEGY"
+    detection_strategy: Literal["classic", "gemini", "hybrid_cloud", "hybrid_edge", "gemini_decision", "hybrid_decision"] = (
+        Field(default="classic", validation_alias="DETECTION_STRATEGY")
     )
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
@@ -310,6 +328,7 @@ class Settings(BaseSettings):
     video: VideoSettings = Field(default_factory=VideoSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     edge: EdgeSettings = Field(default_factory=EdgeSettings)
+    decision: DecisionSettings = Field(default_factory=DecisionSettings)
 
     @field_validator("detection_strategy", mode="before")
     @classmethod

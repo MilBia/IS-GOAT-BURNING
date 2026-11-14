@@ -88,10 +88,14 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
 | **Detection Strategy** | | |
-| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV) or `gemini` (AI). | `"classic"` |
+| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
 | `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
 | `GEMINI__MODEL` | Gemini model to use. | `"gemini-2.5-flash"` |
 | `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |
+| `DECISION__MODEL` | Decisions API model (strategies `gemini_decision`, `hybrid_decision`; uses `GEMINI__API_KEY`). | `"gemini-decision-1"` |
+| `DECISION__THRESHOLD` | Minimum `P(fire)` (0–1) to report fire. | `0.5` |
+| `DECISION__INSTRUCTIONS` | Yes/no question asked about each frame. | `"Is there a visible fire..."` |
+| `DECISION__TIMEOUT_SECONDS` | Per-request timeout in seconds. | `10` |
 | | | |
 | **Debouncing** | | |
 | `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |
