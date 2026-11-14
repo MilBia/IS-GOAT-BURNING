@@ -97,7 +97,7 @@ typing-inspection==0.4.2
     #   pydantic-settings
 urllib3==2.7.0
     # via requests
-websockets==16.1
+websockets==17.4
     # via google-genai
 yarl==1.24.2
     # via aiohttp

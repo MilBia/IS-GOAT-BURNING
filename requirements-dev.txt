@@ -185,7 +185,7 @@ urllib3==2.7.0
     # via requests
 virtualenv==21.6.1
     # via pre-commit
-websockets==16.1
+websockets==17.4
     # via google-genai
 wheel==0.47.0
     # via pip-tools
