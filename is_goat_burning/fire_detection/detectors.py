@@ -98,7 +98,8 @@ class CPUFireDetector:
         4. Combine masks: fire = color match AND motion detected.
         5. Store current grayscale frame for next iteration.
 
-        On the first frame, motion is assumed valid to establish a baseline.
+        On the first frame (or after a reset) there is nothing to compare with, so no motion is reported and the
+        frame cannot trigger a detection; it only establishes the baseline.
 
         Args:
             frame: The input frame (np.ndarray or cv2.UMat).
@@ -114,7 +115,7 @@ class CPUFireDetector:
         # Step 2: Convert current frame to grayscale for motion detection
         current_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Step 3: Create motion mask (or assume motion on first frame)
+        # Step 3: Create motion mask (empty on the first frame: no baseline, no evidence of motion)
         is_umat = isinstance(frame, cv2.UMat)
 
         frame_diff = None
@@ -136,13 +137,13 @@ class CPUFireDetector:
                     frame_diff = cv2.absdiff(current_gray, self._previous_frame)
 
         if self._previous_frame is None:
-            # First frame (or reset): assume all motion is valid to establish baseline
+            # First frame (or reset): no baseline, so no motion. A colour-only match must not raise an alarm.
             self._logger.debug("Motion detection initialized (first frame or reset)")
             if is_umat:
-                # For UMat, create the motion mask directly on-device.
-                motion_mask = cv2.compare(color_mask, color_mask, cv2.CMP_EQ)
+                # For UMat, create the (empty) motion mask directly on-device.
+                motion_mask = cv2.compare(color_mask, color_mask, cv2.CMP_NE)
             else:
-                motion_mask = np.ones_like(current_gray, dtype=np.uint8) * MAX_PIXEL_VALUE
+                motion_mask = np.zeros_like(current_gray, dtype=np.uint8)
         else:
             # Threshold to create binary motion mask using the pre-computed frame_diff
             _, motion_mask = cv2.threshold(frame_diff, self.motion_threshold, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
@@ -289,9 +290,9 @@ class CUDAFireDetector:
             self._previous_frame_gpu = None
 
         if self._previous_frame_gpu is None:
-            # First frame: assume all motion is valid to establish baseline
+            # First frame: no baseline, so no motion
             motion_mask_gpu = cv2.cuda.GpuMat(current_gray_gpu.size(), cv2.CV_8UC1)
-            motion_mask_gpu.setTo(MAX_PIXEL_VALUE)
+            motion_mask_gpu.setTo(0)
         else:
             try:
                 # Compute absolute difference between frames
@@ -305,7 +306,7 @@ class CUDAFireDetector:
                 self._previous_frame_gpu = None
                 # Fallback to treating it as a first frame
                 motion_mask_gpu = cv2.cuda.GpuMat(current_gray_gpu.size(), cv2.CV_8UC1)
-                motion_mask_gpu.setTo(MAX_PIXEL_VALUE)
+                motion_mask_gpu.setTo(0)
 
         # Store current grayscale for next frame comparison
         # GpuMat is reference counted, so simple assignment is sufficient (no need for clone)

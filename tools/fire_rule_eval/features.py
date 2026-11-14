@@ -119,8 +119,8 @@ def _tile_fractions(mask: np.ndarray) -> np.ndarray:
 def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np.ndarray]:
     """Computes per-check features from a stream of sampled frames.
 
-    The first check of a stream has no previous frame; production then treats every pixel as moving
-    (colour only). That behaviour is reproduced and flagged through the ``first`` feature.
+    The first check of a stream has no previous frame; production used to treat every pixel as moving
+    (colour only; fixed since, see ``skip_first``). That old behaviour is reproduced and flagged through the ``first`` feature.
 
     Args:
         frames: Iterator of ``(time_s, frame)`` pairs.

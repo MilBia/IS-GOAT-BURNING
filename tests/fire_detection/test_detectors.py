@@ -42,6 +42,10 @@ async def test_cpu_fire_detector() -> None:
 
     fire_image = create_test_image(FIRE_COLOR_HSV)
     is_fire, _ = await detector.detect(fire_image)
+    assert is_fire is False, "CPU detector must not alarm on the first frame (no motion baseline)"
+
+    moved_fire_image = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
+    is_fire, _ = await detector.detect(moved_fire_image)
     assert is_fire is True, "CPU detector failed to detect fire"
 
     no_fire_image = create_test_image(NON_FIRE_COLOR_HSV)
@@ -184,7 +188,7 @@ async def test_detector_filters_static_false_positive(detector_class, to_device_
     static_fire_image = create_test_image(FIRE_COLOR_HSV)
     frame = to_device_func(static_fire_image)
 
-    # Frame 1: First frame, should detect fire (motion assumed)
+    # Frame 1: First frame, no baseline -> must not detect (colour alone is not enough)
     # Note: For stateful detectors, we might need to re-upload/create frame if it's modified in place,
     # but here detect() shouldn't modify the input frame structure significantly for next calls
     # except for UMat/GpuMat where we might need fresh inputs if they were consumed/modified?
@@ -192,7 +196,7 @@ async def test_detector_filters_static_false_positive(detector_class, to_device_
     # But to be safe and simulate real stream where new frames come in:
 
     is_fire, _ = await detector.detect(frame)
-    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+    assert is_fire is False, "Frame 1: First frame has no motion baseline, must not detect"
 
     # Frame 2: Identical frame, should NOT detect fire (no motion)
     # Re-create frame to ensure distinct object if needed, though content is same
@@ -232,10 +236,10 @@ async def test_detector_detects_dynamic_fire(detector_class, to_device_func) -> 
     frame2_np = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=PIXEL_INTENSITY_CHANGE)
     frame3_np = create_varied_fire_image(FIRE_COLOR_HSV, value_offset=-PIXEL_INTENSITY_CHANGE)
 
-    # Frame 1: First frame, should detect fire (motion assumed)
+    # Frame 1: First frame, no baseline -> must not detect (colour alone is not enough)
     frame1 = to_device_func(frame1_np)
     is_fire, _ = await detector.detect(frame1)
-    assert is_fire is True, "Frame 1: Should detect fire on first frame"
+    assert is_fire is False, "Frame 1: First frame has no motion baseline, must not detect"
 
     # Frame 2: Different intensity, should detect fire (motion detected)
     frame2 = to_device_func(frame2_np)
@@ -273,18 +277,18 @@ async def test_detector_handles_resolution_change(detector_class, to_device_func
     frame1_np = create_varied_fire_image(FIRE_COLOR_HSV, size=(100, 100))
     frame1 = to_device_func(frame1_np)
     is_fire, _ = await detector.detect(frame1)
-    assert is_fire is True, "Frame 1 (100x100): Should detect fire on first frame"
+    assert is_fire is False, "Frame 1 (100x100): First frame must not detect"
 
     # Frame 2: Size 100x100 (Identical) -> Should be filtered
     frame2 = to_device_func(frame1_np)
     is_fire, _ = await detector.detect(frame2)
     assert is_fire is False, "Frame 2 (100x100): Should filter static false positive"
 
-    # Frame 3: Size 150x150 (Resolution Change) -> Should reset and detect fire (treated as first frame)
+    # Frame 3: Size 150x150 (Resolution Change) -> Should reset and NOT detect (treated as first frame)
     frame3_np = create_varied_fire_image(FIRE_COLOR_HSV, size=(150, 150))
     frame3 = to_device_func(frame3_np)
     is_fire, _ = await detector.detect(frame3)
-    assert is_fire is True, "Frame 3 (150x150): Should detect fire after resolution change (reset)"
+    assert is_fire is False, "Frame 3 (150x150): Reset frame must not detect"
 
     # Frame 4: Size 150x150 (Identical to Frame 3) -> Should be filtered
     frame4 = to_device_func(frame3_np)
