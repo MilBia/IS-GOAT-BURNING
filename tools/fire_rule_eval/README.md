@@ -33,8 +33,8 @@ Edit the manifest by hand to add `fire_from_s` / `fire_to_s` for positives where
 
 | Rule | Idea |
 |---|---|
-| `deployed` | Production: warm AND motion(25) pixels > p x frame area. The first check after (re)start has no previous frame and counts colour only. |
-| `skip_first` | As `deployed`, but never alarms on the first check. |
+| `deployed` | Production before the first-check fix: warm AND motion(25) pixels > p x frame area. The first check after (re)start has no previous frame and counted colour only. |
+| `skip_first` | As `deployed`, but never alarms on the first check. Equals current production. |
 | `motion15`, `motion40` | `skip_first` with a different motion threshold. |
 | `avg_motion` | Motion against the mean of the last 3 checks. |
 | `area_relative` | Share of the warm region that moves, instead of share of the whole frame. |

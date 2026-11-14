@@ -40,12 +40,20 @@ def _detector(margin: int) -> CPUFireDetector:
 
 
 def test_features_match_production_detector() -> None:
-    """The deployed rule on extracted features must agree with ``CPUFireDetector`` pixel-for-pixel."""
+    """Extracted features must agree with ``CPUFireDetector`` pixel-for-pixel.
+
+    The first check is excluded: production no longer alarms on it (``skip_first`` rule), while the
+    ``deployed`` rule keeps the earlier colour-only behaviour so old results stay reproducible.
+    """
     frames = [_frame(20), _frame(60), _frame(100)]
     feats = extract_features(iter(enumerate(frames)))
 
+    assert bool(_detector(0)._detect_logic(frames[0])[0]) is False  # no baseline, no alarm
+
     for index, frame in enumerate(frames):
-        count = feats["warm"][index] if index == 0 else feats["wm25"][index]
+        if index == 0:
+            continue
+        count = feats["wm25"][index]
         assert count > 0
         for margin, expected in ((count - 1, True), (count, False)):
             detector = _detector(margin)
