@@ -45,7 +45,7 @@ distlib==0.4.3
     # via virtualenv
 distro==1.9.0
     # via google-genai
-filelock==3.29.7
+filelock==4.2.10
     # via
     #   python-discovery
     #   virtualenv
