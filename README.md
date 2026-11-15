@@ -149,28 +149,35 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 The defaults are conservative and were **not tuned for real fires**: in the evaluation of #104 the default
 `FIRE_DETECTION_THRESHOLD=0.1` detected 0 of 11 real fire clips, while the unburnt goat peaks at only ~1.5 % of the
 frame (so there is a large false-alarm margin to spend). The numbers below come from a narrow data set (one scene,
-one time of day, no real Gävle fire footage), so the defaults in code are left unchanged until #109 is done.
+one time of day, one day of the year, no real Gävle fire footage), so the defaults in code are left unchanged until #109 is done.
 
 Pick **one** of the two decision rules (they use different parameters):
 
-| Rule | Settings | Evaluation result (#104) |
+| Rule | Settings | Evaluation result (#104, measured with debounce `0`) |
 | --- | --- | --- |
 | `frame_fraction` (default) | `FIRE_DETECTION_THRESHOLD=0.05` | 6/11 real clips, 0 steady-state alarms on the goat |
 | `area_relative` | `FIRE_DETECTION_MODE=area_relative` (uses `AREA_RELATIVE_THRESHOLD`, default `0.23`; `FIRE_DETECTION_THRESHOLD` is ignored) | 9/11 real clips, 0 steady-state alarms on the goat |
 
-Then add a safety net against single-frame glitches and, preferably, a verifier:
+Then add a safety net against single-frame glitches and, preferably, a verifier. The recall numbers above were
+measured with `FIRE_DETECTED_DEBOUNCE_SECONDS=0` (one alarmed check is enough); a debounce of 3 s at
+`CHECKS_PER_SECOND=1` needs about three consecutive alarmed checks and can lower recall (not measured). The verifier
+is a plausible filter but has not been evaluated on these data yet:
 
 ```env
 FIRE_DETECTION_MODE=area_relative
-FIRE_DETECTED_DEBOUNCE_SECONDS=3.0     # a few seconds instead of a single check (not measured, a sensible starting point)
-DETECTION_STRATEGY=hybrid_decision     # or hybrid_cloud; needs GEMINI__API_KEY
+# A few seconds instead of a single check (not measured, a sensible starting point)
+FIRE_DETECTED_DEBOUNCE_SECONDS=3.0
+# Or hybrid_cloud; needs GEMINI__API_KEY
+DETECTION_STRATEGY=hybrid_decision
 ```
 
 Known limits of the colour + motion rule (also with `area_relative`):
 
--   Fires smaller than ~0.5 % of the frame (a distant campfire) are not detected by any variant that was tested.
+-   Fires smaller than ~0.5 % of the frame (a distant campfire) are not detected by any whole-frame variant that was tested.
 -   Sped-up sunrise/sunset time-lapses and similar scenes where the whole picture changes between checks still
-    raise false alarms (4/5 in #104). A verifier (`hybrid_cloud`, `hybrid_decision`) is the only tested filter for that.
+    raise false alarms with `area_relative` (4/5 in #104, 7/8 on the wider set in #105; sped-up time-lapses are a stress
+    test, not a field estimate). A verifier (`hybrid_cloud`, `hybrid_decision`) is the only filter available for that,
+    but it has not been evaluated on these scenes yet.
 -   `hybrid_edge` needs a trained model that is not published yet (#73); do not use it in production before then.
 -   `AREA_RELATIVE_THRESHOLD` was chosen on the same narrow data set; a better value is tracked in #128.
 
