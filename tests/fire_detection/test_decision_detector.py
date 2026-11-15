@@ -183,4 +183,4 @@ def test_factory_builds_decision_detectors(mock_genai_client: MagicMock, strateg
     else:
         assert isinstance(detector, HybridFireDetector)
         assert isinstance(detector.local_detector, CPUFireDetector)
-        assert isinstance(detector.gemini_detector, DecisionFireDetector)
+        assert isinstance(detector.verifier, DecisionFireDetector)

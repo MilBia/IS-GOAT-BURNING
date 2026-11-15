@@ -14,15 +14,10 @@ detector based on the application's configuration.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
 from typing import Protocol
 
 import cv2
 import numpy as np
-
-if TYPE_CHECKING:
-    from is_goat_burning.fire_detection.decision_detector import DecisionFireDetector
-    from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
 from is_goat_burning.config import settings
 from is_goat_burning.logger import get_logger
@@ -88,6 +83,27 @@ class FireDetector(Protocol):
             A tuple containing:
             - A boolean indicating if fire was detected.
             - The annotated frame with the fire mask applied.
+        """
+        ...
+
+
+class FireVerifier(Protocol):
+    """A protocol for second-stage verifiers used by `HybridFireDetector`.
+
+    Verifiers always receive a BGR `np.ndarray` (never a GPU/UMat frame), which is
+    satisfied by `GeminiFireDetector`, `DecisionFireDetector` and offline edge models.
+    """
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        """Verifies whether a frame contains fire.
+
+        Args:
+            frame: The input video frame as a BGR numpy array.
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if fire was confirmed.
+            - The (possibly annotated) frame.
         """
         ...
 
@@ -416,37 +432,39 @@ class OpenCLFireDetector(CPUFireDetector):
 
 
 class HybridFireDetector:
-    """Two-stage fire detector: CV gatekeeper + Gemini verifier.
+    """Two-stage fire detector: CV gatekeeper + pluggable verifier.
 
     This detector uses a lightweight local CV detector (e.g., CPUFireDetector)
     as a fast first pass. If the local detector finds potential fire, it then
-    uses the GeminiFireDetector for high-accuracy verification. This approach
-    minimizes API costs while reducing false positives.
+    uses a `FireVerifier` (e.g. Gemini, Decisions API or an edge model) for
+    high-accuracy verification. This approach minimizes verifier cost while
+    reducing false positives.
     """
 
     def __init__(
         self,
         local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector,
-        gemini_detector: GeminiFireDetector | DecisionFireDetector,
+        verifier: FireVerifier,
     ) -> None:
         """Initializes the HybridFireDetector.
 
         Args:
             local_detector: A local CV-based detector for the fast first pass.
-            gemini_detector: The cloud detector (Gemini or Decisions API) used for verification.
+            verifier: The second-stage verifier (any `FireVerifier`) used to confirm detections.
         """
         self.local_detector = local_detector
-        self.gemini_detector = gemini_detector
+        self.verifier = verifier
         self._logger = get_logger("HybridFireDetector")
+        self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
 
     async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
 
         Stage 1 (Gatekeeper): Uses the local CV detector for a fast check.
-        If no fire is detected, returns immediately without calling the API.
+        If no fire is detected, returns immediately without calling the verifier.
 
-        Stage 2 (Verifier): If local detection is positive, calls the Gemini
-        API to verify the detection and filter false positives.
+        Stage 2 (Verifier): If local detection is positive, calls the
+        verifier to confirm the detection and filter false positives.
 
         Args:
             frame: The input video frame (BGR numpy array, UMat, or GpuMat).
@@ -460,11 +478,11 @@ class HybridFireDetector:
         local_result, annotated_frame = await self.local_detector.detect(frame)
 
         if not local_result:
-            # No fire detected locally - return immediately without API call
+            # No fire detected locally - return immediately without verifier call
             return False, annotated_frame
 
-        # Stage 2: Gemini verification
-        # Convert frame to numpy array for Gemini detector (it requires np.ndarray)
+        # Stage 2: verifier confirmation
+        # Convert frame to numpy array (verifiers require np.ndarray)
         numpy_frame: np.ndarray
         if isinstance(frame, cv2.cuda.GpuMat):
             numpy_frame = frame.download()
@@ -473,12 +491,14 @@ class HybridFireDetector:
         else:
             numpy_frame = frame
 
-        gemini_result, _ = await self.gemini_detector.detect(numpy_frame)
+        verified, _ = await self.verifier.detect(numpy_frame)
 
-        if not gemini_result:
-            self._logger.info("CV detector found fire but Gemini rejected it - false positive filtered.")
+        if not verified:
+            self._logger.info(
+                f"CV detector found fire but verifier {type(self.verifier).__name__} rejected it - false positive filtered."
+            )
 
-        return gemini_result, annotated_frame
+        return verified, annotated_frame
 
 
 def _create_local_detector(
@@ -583,7 +603,6 @@ def create_fire_detector(
     local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
 
     if selected_strategy in cloud_hybrid_strategies:
-        gemini_detector = GeminiFireDetector()
-        return HybridFireDetector(local_detector, gemini_detector)
+        return HybridFireDetector(local_detector, GeminiFireDetector())
     # "classic" strategy
     return local_detector
