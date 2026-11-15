@@ -1,7 +1,7 @@
 """Tests for the HybridFireDetector class.
 
 This module tests the two-stage hybrid detection strategy that uses a local
-CV detector as a gatekeeper and the Gemini API for verification.
+CV detector as a gatekeeper and a pluggable verifier (Gemini, Decisions API, edge model) for verification.
 """
 
 from collections.abc import Generator
@@ -42,7 +42,7 @@ def mock_local_detector() -> MagicMock:
 
 @pytest.fixture
 def mock_verifier() -> MagicMock:
-    """Creates a mock Gemini detector."""
+    """Creates a mock verifier (shaped like the Gemini detector)."""
     mock = MagicMock(spec=GeminiFireDetector)
     mock.detect = AsyncMock()
     return mock
@@ -63,7 +63,7 @@ async def test_hybrid_case_a_local_false_no_api_call(
     mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
-    """Case A: Local(False) -> API not called -> Result(False)."""
+    """Case A: Local(False) -> verifier not called -> Result(False)."""
     # Setup: local detector returns False
     mock_local_detector.detect.return_value = (False, sample_frame)
 
@@ -74,7 +74,7 @@ async def test_hybrid_case_a_local_false_no_api_call(
     assert is_fire is False
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_verifier.detect.assert_not_called()  # Critical: API NOT called
+    mock_verifier.detect.assert_not_called()  # Critical: verifier NOT called
 
 
 @pytest.mark.asyncio
@@ -83,8 +83,8 @@ async def test_hybrid_case_b_local_true_gemini_false(
     mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
-    """Case B: Local(True) -> API(False) -> Result(False) [False positive filtered]."""
-    # Setup: local detector returns True, Gemini returns False
+    """Case B: Local(True) -> verifier(False) -> Result(False) [False positive filtered]."""
+    # Setup: local detector returns True, verifier returns False
     mock_local_detector.detect.return_value = (True, sample_frame)
     mock_verifier.detect.return_value = (False, sample_frame)
 
@@ -92,7 +92,7 @@ async def test_hybrid_case_b_local_true_gemini_false(
     is_fire, returned_frame = await detector.detect(sample_frame)
 
     # Verify
-    assert is_fire is False  # False positive filtered by Gemini
+    assert is_fire is False  # False positive filtered by the verifier
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
     mock_verifier.detect.assert_called_once_with(sample_frame)
@@ -104,7 +104,7 @@ async def test_hybrid_case_c_local_true_gemini_true(
     mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
-    """Case C: Local(True) -> API(True) -> Result(True) [Confirmed fire]."""
+    """Case C: Local(True) -> verifier(True) -> Result(True) [Confirmed fire]."""
     # Setup: both detectors return True
     mock_local_detector.detect.return_value = (True, sample_frame)
     mock_verifier.detect.return_value = (True, sample_frame)
@@ -216,3 +216,17 @@ def test_hybrid_logs_verifier_class_name(mock_local_detector: MagicMock) -> None
     with patch("is_goat_burning.fire_detection.detectors.get_logger") as get_logger:
         HybridFireDetector(mock_local_detector, _FakeVerifier(True))
     get_logger.return_value.info.assert_called_once_with("Initialized hybrid detector with verifier _FakeVerifier")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_logs_rejection_with_verifier_class_name(mock_local_detector: MagicMock) -> None:
+    """A rejected detection is logged with the verifier's class name."""
+    mock_local_detector.detect.return_value = (True, np.zeros((10, 10, 3), dtype=np.uint8))
+    with patch("is_goat_burning.fire_detection.detectors.get_logger") as get_logger:
+        detector = HybridFireDetector(mock_local_detector, _FakeVerifier(False))
+        get_logger.return_value.info.reset_mock()
+        is_fire, _ = await detector.detect(np.zeros((10, 10, 3), dtype=np.uint8))
+    assert is_fire is False
+    message = get_logger.return_value.info.call_args.args[0]
+    assert "_FakeVerifier" in message
+    assert "false positive filtered" in message
