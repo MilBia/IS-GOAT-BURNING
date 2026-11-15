@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 from pathlib import Path
+import threading
 from typing import Protocol
 
 import cv2
@@ -81,10 +83,10 @@ def opencl_available() -> bool:
     """Probes whether OpenCV reports a usable OpenCL runtime.
 
     Returns:
-        ``True`` if ``cv2.ocl.haveOpenCL()`` is true.
+        ``True`` if ``cv2.ocl.haveOpenCL()`` and ``cv2.ocl.useOpenCL()`` are true.
     """
     try:
-        return bool(cv2.ocl.haveOpenCL())
+        return bool(cv2.ocl.haveOpenCL() and cv2.ocl.useOpenCL())
     except Exception:
         return False
 
@@ -187,7 +189,7 @@ class CvDnnBackend:
             self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             if accelerator == Accelerator.OPENCL:
                 logger.warning(
-                    "cv2.dnn OpenCL is experimental and unreliable with OpenCV 5.0.0 (see #73); "
+                    "cv2.dnn OpenCL is experimental and unreliable in recent OpenCV releases (see #73); "
                     "inference may silently run on the CPU."
                 )
                 self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL)
@@ -212,16 +214,23 @@ class CvDnnBackend:
 class OnnxRuntimeBackend:
     """ONNX Runtime backend (CPU or CUDA execution provider); ``onnxruntime`` is imported lazily."""
 
-    def __init__(self, model_path: Path, accelerator: Accelerator) -> None:
+    def __init__(
+        self, model_path: Path, accelerator: Accelerator, *, input_size: int | None = None, strict: bool = True
+    ) -> None:
         """Loads the model.
 
         Args:
             model_path: Path to the ``.onnx`` model.
             accelerator: ``CPU`` or ``CUDA``.
+            input_size: Expected square input side; compared with the model's static input dims when given.
+            strict: If ``True`` and CUDA was requested, a session not running on CUDA is an error; otherwise a
+                WARNING is logged and ``accelerator`` reports the real one.
 
         Raises:
-            EdgeModelError: If onnxruntime is missing, CUDA is unavailable or the model cannot be loaded.
+            EdgeModelError: If onnxruntime is missing, CUDA is unavailable/inactive, the model cannot be loaded or
+                its input size does not match ``input_size``.
         """
+        self.accelerator = accelerator
         try:
             import onnxruntime as ort
         except ImportError as e:
@@ -237,7 +246,20 @@ class OnnxRuntimeBackend:
             self._session = ort.InferenceSession(str(model_path), providers=providers)
         except Exception as e:
             raise EdgeModelError(f"Failed to load ONNX model '{model_path}' with onnxruntime: {e}") from e
-        self._input_name = self._session.get_inputs()[0].name
+        if accelerator == Accelerator.CUDA and self._session.get_providers()[0] != _CUDA_PROVIDER:
+            if strict:
+                raise EdgeModelError(
+                    f"EDGE__ACCELERATOR=cuda requested but CUDA is not the active onnxruntime provider "
+                    f"({self._session.get_providers()}); check the CUDA/cuDNN installation."
+                )
+            logger.warning("CUDAExecutionProvider is not active (%s); running on the CPU.", self._session.get_providers())
+            self.accelerator = Accelerator.CPU
+        model_input = self._session.get_inputs()[0]
+        self._input_name = model_input.name
+        dims = list(model_input.shape)[2:]
+        static = len(dims) == 2 and all(isinstance(d, int) for d in dims)
+        if input_size is not None and static and tuple(dims) != (input_size, input_size):
+            raise EdgeModelError(f"Model '{model_path}' expects a {dims[0]}x{dims[1]} input but EDGE__INPUT_SIZE={input_size}.")
 
     def predict(self, blob: np.ndarray) -> np.ndarray:
         """Runs inference.
@@ -251,10 +273,10 @@ class OnnxRuntimeBackend:
         return np.asarray(self._session.run(None, {self._input_name: blob})[0])
 
 
-def _create_backend(plan: BackendPlan, model_path: Path) -> EdgeBackend:
+def _create_backend(plan: BackendPlan, model_path: Path, input_size: int, strict: bool) -> EdgeBackend:
     """Instantiates the backend for a plan."""
     if plan.engine == "onnxruntime":
-        return OnnxRuntimeBackend(model_path, plan.accelerator)
+        return OnnxRuntimeBackend(model_path, plan.accelerator, input_size=input_size, strict=strict)
     return CvDnnBackend(model_path, plan.accelerator)
 
 
@@ -287,6 +309,7 @@ class EdgeInferenceDetector:
         self.input_size = settings.input_size
         self._postprocess = postprocess
         self._consecutive_errors = 0
+        self._lock = threading.Lock()  # cv2.dnn Net is not thread-safe; a cancelled to_thread keeps running
         if backend is not None:
             self._backend = backend
             return
@@ -300,8 +323,27 @@ class EdgeInferenceDetector:
             cuda_available=onnxruntime_has_cuda() if settings.accelerator in (Accelerator.AUTO, Accelerator.CUDA) else False,
             opencl_available=opencl_available() if settings.accelerator == Accelerator.OPENCL else False,
         )
-        self._backend = _create_backend(plan, model_path)
-        logger.info("Edge detector ready: engine=%s accelerator=%s model=%s", plan.engine, plan.accelerator, model_path)
+        self._backend = _create_backend(plan, model_path, self.input_size, strict=settings.accelerator == Accelerator.CUDA)
+        self._warm_up(model_path)
+        accelerator = getattr(self._backend, "accelerator", plan.accelerator)
+        logger.info("Edge detector ready: engine=%s accelerator=%s model=%s", plan.engine, accelerator, model_path)
+
+    def _warm_up(self, model_path: Path | str) -> None:
+        """Runs one zero-frame inference to fail fast on a wrong input size or unusable output.
+
+        Args:
+            model_path: Model path, used in the error message.
+
+        Raises:
+            EdgeModelError: If the inference fails or yields an unusable output.
+        """
+        try:
+            self._infer(np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8))
+        except Exception as e:
+            raise EdgeModelError(
+                f"Test inference with model '{model_path}' failed ({e}); check that EDGE__INPUT_SIZE={self.input_size} "
+                "matches the model and that it is a fire classifier with 1 or 2 outputs."
+            ) from e
 
     def _record_error(self) -> None:
         """Counts a failed inference and escalates to CRITICAL once per outage."""
@@ -315,13 +357,19 @@ class EdgeInferenceDetector:
     def _infer(self, frame: np.ndarray) -> float:
         """Runs preprocessing, inference and post-processing (blocking)."""
         blob = preprocess(frame, self.input_size)
-        return float(self._postprocess(self._backend.predict(blob)))
+        with self._lock:
+            output = self._backend.predict(blob)
+        probability = float(self._postprocess(output))
+        if not math.isfinite(probability):
+            raise ValueError(f"Model produced a non-finite probability: {probability}.")
+        return probability
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire with the local model.
 
         Args:
-            frame: The input video frame (BGR numpy array).
+            frame: The input video frame. Only BGR ``np.ndarray`` frames are accepted; GPU/UMat frames must be
+                converted beforehand (``HybridFireDetector`` does this).
 
         Returns:
             A tuple containing:

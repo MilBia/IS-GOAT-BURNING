@@ -1,6 +1,11 @@
 """Tests for the EdgeInferenceDetector, its preprocessing, post-processing and backend selection."""
 
+import asyncio
 import struct
+import sys
+import threading
+import time
+import types
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -10,8 +15,10 @@ from is_goat_burning.config import Accelerator
 from is_goat_burning.config import EdgeSettings
 from is_goat_burning.fire_detection import edge_detector
 from is_goat_burning.fire_detection.edge_detector import CONSECUTIVE_ERRORS_BEFORE_CRITICAL
+from is_goat_burning.fire_detection.edge_detector import CvDnnBackend
 from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
 from is_goat_burning.fire_detection.edge_detector import EdgeModelError
+from is_goat_burning.fire_detection.edge_detector import OnnxRuntimeBackend
 from is_goat_burning.fire_detection.edge_detector import classifier_fire_probability
 from is_goat_burning.fire_detection.edge_detector import preprocess
 from is_goat_burning.fire_detection.edge_detector import select_backend
@@ -256,16 +263,23 @@ def _build_classifier_onnx(size: int) -> bytes:
     return _vi(1, 8) + _ld(8, _vi(2, 12)) + _ld(7, graph)
 
 
+def _build_flatten_onnx(size: int) -> bytes:
+    """Flatten -> MatMul classifier whose weight shape depends on the input size (wrong sizes fail to run)."""
+    n = 3 * size * size
+    nodes = [_node("Flatten", ["x"], "f"), _node("MatMul", ["f", "w"], "logits")]
+    graph = b"".join(_ld(1, x) for x in nodes) + _ld(2, b"flat")
+    graph += _ld(5, _initializer("w", [n, 2], [0.0] * (n * 2)))
+    graph += _ld(11, _value_info("x", [1, 3, size, size])) + _ld(12, _value_info("logits", [1, 2]))
+    return _vi(1, 8) + _ld(8, _vi(2, 12)) + _ld(7, graph)
+
+
 @pytest.mark.asyncio
 async def test_real_cv2_dnn_tiny_onnx_classifier(tmp_path):
     model = tmp_path / "tiny.onnx"
     model.write_bytes(_build_classifier_onnx(8))
-    try:
-        detector = EdgeInferenceDetector(
-            EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=8, confidence_threshold=0.5)
-        )
-    except EdgeModelError as e:  # pragma: no cover - depends on the OpenCV build
-        pytest.skip(f"cv2.dnn could not load the hand-built ONNX model: {e}")
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=8, confidence_threshold=0.5)
+    )
 
     red = np.zeros((20, 30, 3), np.uint8)
     red[..., 2] = 255  # BGR red -> high R channel -> fire
@@ -274,3 +288,180 @@ async def test_real_cv2_dnn_tiny_onnx_classifier(tmp_path):
 
     assert (await detector.detect(red))[0] is True
     assert (await detector.detect(blue))[0] is False
+
+
+def test_input_size_mismatch_fails_at_construction(tmp_path):
+    model = tmp_path / "flat.onnx"
+    model.write_bytes(_build_flatten_onnx(8))
+    with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
+        EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=16))
+
+
+def test_warm_up_rejects_unusable_output():
+    backend = MagicMock()
+    backend.predict.return_value = np.zeros((1, 5))
+    detector = _detector(backend)  # injected backends skip the warm-up; call it explicitly
+    with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
+        detector._warm_up("m.onnx")
+
+
+# --- fake onnxruntime ---
+
+
+def _fake_ort(monkeypatch, providers, active=None, shape=(1, 3, 8, 8)):
+    ort = types.ModuleType("onnxruntime")
+    calls = {}
+
+    class Session:
+        def __init__(self, path, providers=None):
+            calls["providers"] = providers
+
+        def get_providers(self):
+            return active if active is not None else calls["providers"]
+
+        def get_inputs(self):
+            return [types.SimpleNamespace(name="x", shape=list(shape))]
+
+        def run(self, _names, feed):
+            calls["feed"] = feed
+            return [np.array([[0.0, 1.0]], dtype=np.float32)]
+
+    ort.InferenceSession = Session
+    ort.get_available_providers = lambda: providers
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+    return ort, calls
+
+
+def test_onnxruntime_backend_cpu_loads_and_predicts(monkeypatch):
+    _, calls = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
+    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
+    assert calls["providers"] == ["CPUExecutionProvider"]
+    blob = np.zeros((1, 3, 8, 8), np.float32)
+    assert backend.predict(blob).shape == (1, 2)
+    assert calls["feed"]["x"] is blob
+
+
+def test_onnxruntime_backend_cuda_provider_order(monkeypatch):
+    _, calls = _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
+    assert calls["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert backend.accelerator == Accelerator.CUDA
+
+
+def test_onnxruntime_backend_cuda_provider_missing(monkeypatch):
+    _fake_ort(monkeypatch, ["CPUExecutionProvider"])
+    with pytest.raises(EdgeModelError, match="CUDAExecutionProvider"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
+
+
+def test_onnxruntime_cuda_not_active_strict_raises(monkeypatch):
+    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
+    with pytest.raises(EdgeModelError, match="not the active"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA, strict=True)
+
+
+def test_onnxruntime_cuda_not_active_auto_warns_and_reports_cpu(monkeypatch):
+    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CUDA, strict=False)
+    assert backend.accelerator == Accelerator.CPU
+    mock_logger.warning.assert_called_once()
+
+
+def test_onnxruntime_input_shape_mismatch(monkeypatch):
+    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=(1, 3, 224, 224))
+    with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
+
+
+def test_onnxruntime_dynamic_shape_is_accepted(monkeypatch):
+    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=(1, 3, "h", "w"))
+    OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
+
+
+def test_onnxruntime_import_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    with pytest.raises(EdgeModelError, match="onnxruntime"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
+
+
+def test_onnxruntime_session_failure(monkeypatch):
+    ort, _ = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
+    ort.InferenceSession = MagicMock(side_effect=RuntimeError("bad model"))
+    with pytest.raises(EdgeModelError, match="Failed to load"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
+
+
+def test_onnxruntime_has_cuda_probe(monkeypatch):
+    _fake_ort(monkeypatch, ["CUDAExecutionProvider"])
+    assert edge_detector.onnxruntime_has_cuda() is True
+    _fake_ort(monkeypatch, ["CPUExecutionProvider"])
+    assert edge_detector.onnxruntime_has_cuda() is False
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    assert edge_detector.onnxruntime_has_cuda() is False
+
+
+def test_opencl_available_probe(monkeypatch):
+    monkeypatch.setattr(edge_detector.cv2.ocl, "haveOpenCL", lambda: True)
+    monkeypatch.setattr(edge_detector.cv2.ocl, "useOpenCL", lambda: True)
+    assert edge_detector.opencl_available() is True
+    monkeypatch.setattr(edge_detector.cv2.ocl, "useOpenCL", lambda: False)
+    assert edge_detector.opencl_available() is False
+    monkeypatch.setattr(edge_detector.cv2.ocl, "haveOpenCL", MagicMock(side_effect=RuntimeError))
+    assert edge_detector.opencl_available() is False
+
+
+def test_cvdnn_opencl_branch_warns_and_sets_target(monkeypatch):
+    net = MagicMock()
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: net)
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    CvDnnBackend("m.onnx", Accelerator.OPENCL)
+    mock_logger.warning.assert_called_once()
+    net.setPreferableTarget.assert_called_once_with(edge_detector.cv2.dnn.DNN_TARGET_OPENCL)
+
+
+# --- hardening ---
+
+
+@pytest.mark.asyncio
+async def test_critical_fires_again_on_second_outage(monkeypatch):
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    n = CONSECUTIVE_ERRORS_BEFORE_CRITICAL
+    backend = MagicMock()
+    backend.predict.side_effect = [RuntimeError("x")] * n + [np.array([[0.0, 0.0]])] + [RuntimeError("x")] * n
+    detector = _detector(backend)
+    frame = np.zeros((8, 8, 3), np.uint8)
+    for _ in range(2 * n + 1):
+        await detector.detect(frame)
+    assert mock_logger.critical.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+async def test_non_finite_probability_counts_as_error(bad):
+    detector = _detector(MagicMock(), postprocess=lambda _o: bad)
+    is_fire, _ = await detector.detect(np.zeros((8, 8, 3), np.uint8))
+    assert is_fire is False
+    assert detector._consecutive_errors == 1
+
+
+@pytest.mark.asyncio
+async def test_backend_inference_is_serialized():
+    state = {"active": 0, "max": 0}
+
+    class Slow:
+        def predict(self, blob):
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            time.sleep(0.02)
+            state["active"] -= 1
+            return np.array([[0.0, 0.0]])
+
+    detector = _detector(Slow())
+    assert isinstance(detector._lock, type(threading.Lock()))
+    frame = np.zeros((8, 8, 3), np.uint8)
+    await asyncio.gather(*(detector.detect(frame) for _ in range(4)))
+    assert state["max"] == 1
