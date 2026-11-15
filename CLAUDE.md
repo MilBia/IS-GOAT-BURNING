@@ -65,6 +65,7 @@ All I/O is `asyncio`-based; every new networking/file operation must be non-bloc
   pip-compile --output-file=requirements.txt pyproject.toml
   pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
   pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+  pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml   # optional: onnxruntime-gpu for hybrid_edge on CUDA, bare-metal only (needs CUDA 13 libs; not usable in the Docker `gpu` image)
   ```
   Dependabot (`.github/dependabot.yml`: pip, github-actions, pre-commit) bumps `pyproject.toml` only — regenerate `requirements*.txt` on its PRs. The docker ecosystem is deliberately disabled (CUDA/apt-coupled base images).
 - **Style:** ruff (line length 128, double quotes, isort with `force-single-line` + `force-sort-within-sections`), Google-convention docstrings (enforced by pydocstyle in pre-commit).

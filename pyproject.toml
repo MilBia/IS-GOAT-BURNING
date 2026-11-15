@@ -23,6 +23,9 @@ classifiers = [
 cpu = [
     "opencv-python==5.0.0.93",
 ]
+edge-gpu = [
+    "onnxruntime-gpu==1.32.0",
+]
 dev = [
     "ruff==0.17.4",
     "pre-commit==4.7.0",
