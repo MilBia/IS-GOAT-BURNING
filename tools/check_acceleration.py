@@ -47,7 +47,15 @@ def probe_cv2() -> dict[str, Any]:
         info["error"] = "cv2 not installed"
         return info
     info["version"] = getattr(cv2, "__version__", "unknown")
+    try:
+        _probe_cv2_details(cv2, info)
+    except Exception as e:  # e.g. cv2.dnn missing: report, never raise
+        info["error"] = f"probe failed: {type(e).__name__}: {e}"
+    return info
 
+
+def _probe_cv2_details(cv2: Any, info: dict[str, Any]) -> None:
+    """Fills ``info`` with DNN, OpenCL and CUDA data (may raise; the caller handles it)."""
     target_names = {getattr(cv2.dnn, name): name for name in _TARGET_NAMES if hasattr(cv2.dnn, name)}
     for backend_name in _BACKEND_NAMES:
         backend = getattr(cv2.dnn, backend_name, None)
@@ -72,7 +80,6 @@ def probe_cv2() -> dict[str, Any]:
         info["cuda_devices"] = int(cv2.cuda.getCudaEnabledDeviceCount())
     except Exception:
         info["cuda_devices"] = None  # module absent (pip wheels) or built without CUDA
-    return info
 
 
 def _opencl_device_name(cv2: Any) -> str | None:
@@ -167,15 +174,17 @@ def format_report(
         lines.append(f"cv2: {cv2_info.get('error', 'not installed')}")
     else:
         lines.append(f"cv2 version: {cv2_info['version']}")
+        if cv2_info.get("error"):
+            lines.append(f"cv2: {cv2_info['error']}")
         for backend, targets in cv2_info["dnn"].items():
             shown = ", ".join(targets) if isinstance(targets, list) else targets
             lines.append(f"dnn {backend}: {shown or 'no targets'}")
-        ocl = cv2_info["opencl"] or {}
+        ocl = cv2_info.get("opencl") or {}
         if "error" in ocl:
             lines.append(f"opencl: error: {ocl['error']}")
         else:
             lines.append(f"opencl: haveOpenCL={ocl.get('have')} useOpenCL={ocl.get('use')} device={ocl.get('device')}")
-        devices = cv2_info["cuda_devices"]
+        devices = cv2_info.get("cuda_devices")
         lines.append(f"cuda devices (cv2.cuda): {devices if devices is not None else 'n/a (no cv2.cuda module)'}")
     lines.append("")
     lines.append("== ONNX Runtime ==")
@@ -188,7 +197,8 @@ def format_report(
     lines.append(f"EDGE__ACCELERATOR=auto -> {auto}")
     if benchmarks:
         lines.append("")
-        lines.append(f"== Model benchmark (median of {RUNS} runs) ==")
+        lines.append(f"== Model benchmark (median of {RUNS} runs, includes preprocessing) ==")
+        lines.append("(1080p frame resize + normalisation are timed too: not comparable to model-only numbers.)")
         for accelerator, result in benchmarks.items():
             if result["ok"]:
                 lines.append(f"{accelerator}: ok, median {result['median_ms']:.1f} ms")
@@ -226,10 +236,13 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], object] = print
         ``0`` always (invalid arguments exit with 2 through argparse).
     """
     args = parse_args(argv)
-    benchmarks = None
-    if args.model:
-        benchmarks = {acc: benchmark_accelerator(acc, args.model, args.size) for acc in ("auto", "cpu", "cuda", "opencl")}
-    out(format_report(probe_cv2(), probe_onnxruntime(), probe_auto_selection(), benchmarks))
+    try:
+        benchmarks = None
+        if args.model:
+            benchmarks = {acc: benchmark_accelerator(acc, args.model, args.size) for acc in ("auto", "cpu", "cuda", "opencl")}
+        out(format_report(probe_cv2(), probe_onnxruntime(), probe_auto_selection(), benchmarks))
+    except Exception as e:  # the tool only reports; it must not fail
+        out(f"check_acceleration failed unexpectedly: {type(e).__name__}: {e}")
     return 0
 
 

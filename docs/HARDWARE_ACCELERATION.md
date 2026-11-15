@@ -16,9 +16,11 @@ reading the code or documentation only and have not been run on real hardware.
    detector) executed locally with `cv2.dnn` or ONNX Runtime. No network access is needed.
 3. The verifier confirms fire when `P(fire) >= EDGE__CONFIDENCE_THRESHOLD`. The existing debounce logic applies afterwards.
 
-If the model cannot be loaded at startup (file missing or invalid, wrong `EDGE__INPUT_SIZE`, requested accelerator
-unavailable), the application logs a **CRITICAL** message and falls back to the classic local detector: fires are still
-reported, but **unverified**. At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
+A missing or unset `EDGE__MODEL_PATH` (or a path that is not an existing file) is a hard startup error: the `Settings`
+validator raises at settings load and the application does not start. If the model exists but cannot be loaded (corrupt or
+invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `onnxruntime` missing, unexpected errors),
+the detector factory logs a **CRITICAL** message and falls back to the classic local detector (honouring the CUDA/OpenCL
+settings): fires are still reported, but **unverified**. At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
 CRITICAL after 5 consecutive failures.
 
 ## Configuration
@@ -31,9 +33,10 @@ CRITICAL after 5 consecutive failures.
 | `EDGE__CONFIDENCE_THRESHOLD` | `0.5` | Minimum `P(fire)` (0 to 1) that confirms a fire. |
 | `EDGE__INPUT_SIZE` | `224` | Side of the square model input; must match the model. |
 
-`auto` selects CUDA (ONNX Runtime) when `onnxruntime` reports `CUDAExecutionProvider`, otherwise CPU (`cv2.dnn`). OpenCL
-is never auto-selected. An explicitly requested accelerator that is unavailable is a startup error (and therefore the
-fallback described above), not a silent downgrade.
+With `auto`, ONNX Runtime CUDA is tried when `onnxruntime` offers `CUDAExecutionProvider`; if CUDA is not the active
+provider after all, the detector falls back to the `cv2.dnn` CPU engine with a WARNING. Without ONNX Runtime CUDA, `auto`
+uses `cv2.dnn` on the CPU. OpenCL is never auto-selected. An explicit `cuda` that cannot be activated raises
+`EdgeModelError` (and therefore the factory fallback described above), not a silent downgrade.
 
 ### Model contract
 
@@ -75,22 +78,19 @@ faster than ONNX Runtime with 4 threads **(measured)**.
 
 Uses ONNX Runtime with the CUDA execution provider (not `cv2.dnn`, whose pip build has no CUDA).
 
-1. Host: NVIDIA driver and the
-   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-2. Install the optional extra: `pip install -e .[edge-gpu]` (pins `onnxruntime-gpu==1.32.0`; lock file
+Bare-metal install:
+
+1. Install the optional extra: `pip install -e .[edge-gpu]` (pins `onnxruntime-gpu==1.32.0`; lock file
    `requirements-edge-gpu.txt`). Do not install `onnxruntime` and `onnxruntime-gpu` together.
-3. Docker: build the `gpu` stage with the opt-in build argument and run with GPU access:
+2. **Constraint:** `onnxruntime-gpu` 1.32.0 needs the **CUDA 13** userspace libraries (`libcudart.so.13`,
+   `libcublas.so.13`, `libcurand.so.10`, plus cuDNN) and an NVIDIA driver >= 580. They can come from the system or from
+   pip (`onnxruntime-gpu[cuda,cudnn]`). This was taken from the package requirements and not run here **(unverified)**.
 
-   ```bash
-   docker build --target gpu --build-arg CUDA_ARCH=8.6 --build-arg EDGE_GPU=true -t burning_goat_detection .
-   docker run --gpus all -v "$PWD/models:/app/models:ro" --env-file .env -d burning_goat_detection
-   ```
-
-   Default builds (`EDGE_GPU=false`) are unchanged. Whether the image's CUDA 12.4 / cuDNN runtime base satisfies
-   `onnxruntime-gpu` 1.32.0 is **unverified**: no CUDA machine was available. If the provider fails to activate, the
-   startup error says so and the app falls back to the classic detector.
-
-The `gpu` image also contains a source-built OpenCV with CUDA DNN enabled, but the edge verifier does not use it.
+**Docker:** this is **not supported yet**. The repository's `gpu` image is based on `nvidia/cuda:12.4.1`, whose CUDA 12
+libraries are not compatible with `onnxruntime-gpu` 1.32.0, so `EDGE__ACCELERATOR=cuda` fails there (CRITICAL log and
+classic-detector fallback). Open question / planned: the `gpu` image already builds OpenCV with CUDA DNN
+(`OPENCV_DNN_CUDA=ON`), so mapping `cuda` to the `cv2.dnn` CUDA backend inside that image is the likely follow-up. It is
+not implemented and unverified. The NVIDIA Container Toolkit and `--gpus all` are needed for any future GPU container.
 
 ### Intel / AMD integrated GPU (`EDGE__ACCELERATOR=opencl`, experimental)
 
@@ -144,16 +144,17 @@ Inside a container: `tools/` is copied only into the `*-test` stages, so use a `
 
 The tool prints the OpenCV version, the DNN backend/target pairs OpenCV reports, OpenCL and `cv2.cuda` status, ONNX
 Runtime providers, what `EDGE__ACCELERATOR=auto` resolves to and, with `--model`, `ok`/`error` plus the median latency
-of 20 inferences for `auto`, `cpu`, `cuda` and `opencl`. It always exits with 0 (2 for invalid arguments). Treat an
+of 20 inferences (preprocessing included: 1080p frame resized and normalised to the input size, so not directly comparable to the model-only #73 numbers) for `auto`, `cpu`, `cuda` and `opencl`. It always exits with 0 (2 for invalid arguments). Treat an
 `opencl: ok` result with a latency equal to `cpu` as "running on the CPU".
 
 ## Troubleshooting
 
 | Symptom | Likely cause / action |
 |---|---|
-| CRITICAL log at startup, classic detector used | Model path/size wrong, or the requested accelerator is unavailable. Read the error line above it; run `tools.check_acceleration --model ...`. |
-| `EDGE__ACCELERATOR=cuda requires onnxruntime-gpu ...` | Extra not installed (`pip install -e .[edge-gpu]` / `EDGE_GPU=true`), or container started without `--gpus all`. |
-| `CUDA is not the active onnxruntime provider` | CUDA/cuDNN libraries missing or incompatible with `onnxruntime-gpu` 1.32.0 inside the image. |
+| App refuses to start, `EDGE__MODEL_PATH` error | Path unset or not an existing file: hard startup error from the `Settings` validator. |
+| CRITICAL log at startup, classic detector used | Model exists but cannot be loaded (invalid model, wrong `EDGE__INPUT_SIZE`, accelerator or `onnxruntime` unavailable). Read the error line above it; run `tools.check_acceleration --model ...`. |
+| `EDGE__ACCELERATOR=cuda requires onnxruntime-gpu ...` | Extra not installed (`pip install -e .[edge-gpu]`), or running in the Docker `gpu` image, which is not supported for this (see above). |
+| `CUDA is not the active onnxruntime provider` | CUDA 13 libraries / driver >= 580 missing (`onnxruntime-gpu` 1.32.0 needs them). |
 | `Model ... expects a NxN input but EDGE__INPUT_SIZE=...` | Set `EDGE__INPUT_SIZE` to the model's input side. |
 | `Test inference ... failed` | Not a 1/2-output classifier, or exported with an opset `cv2.dnn` cannot read (use opset 12). |
 | `opencl requested but OpenCV reports no usable OpenCL runtime` | No ICD/device in the container: pass `--device /dev/dri`, add the `render` group, check `clinfo`. |

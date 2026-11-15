@@ -6,6 +6,8 @@
 #   sha256  expected SHA-256 hex digest of the file.
 #   dest    destination path (default: ./models/<basename of the URL path>).
 #   --force overwrite an existing destination file.
+#   --      end of options.
+# Environment: MODEL_DOWNLOAD_MAX_TIME (total seconds, default 600).
 set -euo pipefail
 
 usage() {
@@ -15,19 +17,23 @@ usage() {
 
 force=0
 args=()
+parse_opts=1
 for arg in "$@"; do
-    case "$arg" in
-        --force) force=1 ;;
-        -h | --help) usage ;;
-        *) args+=("$arg") ;;
-    esac
+    if [ "$parse_opts" -eq 1 ]; then
+        case "$arg" in
+            --) parse_opts=0; continue ;;
+            --force) force=1; continue ;;
+            -h | --help) usage ;;
+        esac
+    fi
+    args+=("$arg")
 done
 if [ "${#args[@]}" -lt 2 ] || [ "${#args[@]}" -gt 3 ]; then
     usage
 fi
 
 url="${args[0]}"
-expected="${args[1],,}"
+expected="$(printf '%s' "${args[1]}" | tr '[:upper:]' '[:lower:]')"
 case "$url" in
     https://*) ;;
     *)
@@ -52,26 +58,50 @@ else
     dest="./models/${name}"
 fi
 
+case "$(basename "$dest")" in
+    . | ..)
+        echo "error: invalid destination file name '$dest'." >&2
+        exit 2
+        ;;
+esac
+if [ -d "$dest" ]; then
+    echo "error: $dest is a directory." >&2
+    exit 2
+fi
 if [ -e "$dest" ] && [ "$force" -ne 1 ]; then
     echo "error: $dest already exists; use --force to overwrite." >&2
     exit 1
 fi
 
-dest_dir="$(dirname "$dest")"
-mkdir -p "$dest_dir"
-tmp="$(mktemp "${dest_dir}/.download.XXXXXX")"
+if command -v sha256sum >/dev/null 2>&1; then
+    hash_cmd=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+    hash_cmd=(shasum -a 256)
+else
+    echo "error: neither sha256sum nor shasum is available." >&2
+    exit 2
+fi
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/download_model.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-    --retry 3 --connect-timeout 20 --output "$tmp" "$url"
+    --retry 3 --connect-timeout 20 --max-time "${MODEL_DOWNLOAD_MAX_TIME:-600}" \
+    --speed-limit 1024 --speed-time 60 --output "$tmp" -- "$url"
 
-actual="$(sha256sum "$tmp" | cut -d' ' -f1)"
+actual="$("${hash_cmd[@]}" "$tmp" | cut -d' ' -f1)"
 if [ "$actual" != "$expected" ]; then
     echo "error: SHA-256 mismatch (expected $expected, got $actual); nothing written." >&2
     exit 1
 fi
 
-chmod 644 "$tmp"
-mv -f "$tmp" "$dest"
-trap - EXIT
+dest_dir="$(dirname "$dest")"
+mkdir -p "$dest_dir"
+# Stage next to the destination so the final mv is an atomic rename on the same filesystem.
+staged="$(mktemp "${dest_dir}/.download.XXXXXX")"
+trap 'rm -f "$tmp" "$staged"' EXIT
+cp "$tmp" "$staged"
+chmod 644 "$staged"
+mv -f "$staged" "$dest"
+trap 'rm -f "$tmp"' EXIT
 echo "Model saved to $dest (sha256 verified)."
