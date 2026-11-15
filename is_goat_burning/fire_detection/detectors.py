@@ -572,14 +572,17 @@ def create_fire_detector(
     Returns:
         An instance of a class that conforms to the FireDetector protocol. For
         ``hybrid_edge`` this is a ``HybridFireDetector``, or, if the edge model
-        cannot be loaded at startup, the plain local detector (see below).
+        cannot be loaded at startup, the plain local detector (see Note).
 
     Note:
-        ``hybrid_edge`` never raises on a bad edge model: an ``EdgeModelError``
-        (missing/invalid model, input-size mismatch, unavailable accelerator) is
-        logged at CRITICAL and the factory falls back to the classic local
-        detector, so fires are still reported (unverified) instead of every
-        alert being silently suppressed.
+        A missing or unset ``EDGE__MODEL_PATH`` is rejected earlier, at settings
+        validation (fail fast on misconfiguration). The factory itself covers
+        model LOAD failures only: if building the edge verifier raises (corrupt
+        or invalid model, input-size mismatch, unavailable accelerator, missing
+        onnxruntime, unexpected errors), it logs CRITICAL and falls back to the
+        local detector (classic rule; honours CUDA/OpenCL settings), so fires
+        are still reported (unverified) instead of every alert being silently
+        suppressed.
     """
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
@@ -593,11 +596,12 @@ def create_fire_detector(
         edge_local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
         try:
             return HybridFireDetector(edge_local_detector, EdgeInferenceDetector(settings.edge))
-        except EdgeModelError as exc:
+        except Exception as exc:  # noqa: BLE001 - any load failure must degrade to the local detector, never abort startup
             _factory_logger.critical(
-                "hybrid_edge verification is unavailable (%s). Falling back to the classic local detector: "
+                "hybrid_edge verification is unavailable (%s). Falling back to the local detector (classic rule): "
                 "fires will still be reported, but WITHOUT edge-model verification.",
                 exc,
+                exc_info=not isinstance(exc, EdgeModelError),
             )
             return edge_local_detector
 
