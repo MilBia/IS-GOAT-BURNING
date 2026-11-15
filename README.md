@@ -79,6 +79,8 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | --- | --- | --- |
 | `SOURCE` | URL of the webcam feed. | `"https://youtu.be/vDFPpkp9krY"` |
 | `FIRE_DETECTION_THRESHOLD` | Percentage of frame pixels to trigger fire detection. | `0.1` |
+| `FIRE_DETECTION_MODE` | `frame_fraction` (threshold above) or `area_relative` (experimental: share of the warm region that is moving; detects small fires). | `frame_fraction` |
+| `AREA_RELATIVE_THRESHOLD` | Share of warm pixels that must be moving in `area_relative` mode (0–1). | `0.23` |
 | `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
 | `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
 | `CHECKS_PER_SECOND` | How many times per second to analyze the video. | `1.0` |

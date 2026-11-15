@@ -32,6 +32,46 @@ GAUSSIAN_BLUR_KERNEL_SIZE = (21, 21)
 GAUSSIAN_BLUR_SIGMA_X = 0
 DEFAULT_MOTION_THRESHOLD = 25
 MAX_PIXEL_VALUE = 255
+# Area-relative mode: ignore tiny warm regions and tiny amounts of motion (fractions of the frame area).
+MIN_WARM_FRACTION = 0.002
+MIN_MOVING_FRACTION = 0.0005
+
+
+def is_fire_by_pixels(
+    moving_warm: int,
+    warm: int,
+    margin: int,
+    relative_threshold: float | None = None,
+    frame_area: int = 0,
+) -> bool:
+    """Applies the decision rule to the pixel counts of one frame.
+
+    Two modes are supported:
+
+    * ``relative_threshold is None`` (default): fire if the warm AND moving pixels exceed ``margin``
+      (a fixed share of the whole frame).
+    * ``relative_threshold`` set: fire if the warm region is at least ``MIN_WARM_FRACTION`` of the frame,
+      the moving part of it is at least ``MIN_MOVING_FRACTION`` of the frame, and the moving pixels exceed
+      ``relative_threshold`` times the warm pixels. This scales with the size of the flame instead of
+      the frame, so small fires are not out of reach.
+
+    Args:
+        moving_warm: Pixels that are both fire-coloured and moving.
+        warm: Pixels that are fire-coloured.
+        margin: Pixel count for the frame-fraction mode.
+        relative_threshold: Share of warm pixels that must be moving; None selects the frame-fraction mode.
+        frame_area: Number of pixels in the frame (needed for the area-relative mode).
+
+    Returns:
+        True if the counts indicate fire.
+    """
+    if relative_threshold is None:
+        return moving_warm > margin
+    return (
+        warm >= MIN_WARM_FRACTION * frame_area
+        and moving_warm > MIN_MOVING_FRACTION * frame_area
+        and moving_warm > relative_threshold * warm
+    )
 
 
 class FireDetector(Protocol):
@@ -71,6 +111,7 @@ class CPUFireDetector:
         lower: np.ndarray,
         upper: np.ndarray,
         motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
+        relative_threshold: float | None = None,
     ) -> None:
         """Initializes the CPU fire detector.
 
@@ -81,11 +122,14 @@ class CPUFireDetector:
             upper: The upper bound of the HSV color range for fire.
             motion_threshold: The pixel intensity change threshold for motion
                               detection (0-255). Higher = less sensitive.
+            relative_threshold: If set, use the area-relative rule (share of warm
+                                pixels that must be moving) instead of ``margin``.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
         self.motion_threshold = motion_threshold
+        self.relative_threshold = relative_threshold
         self._previous_frame: np.ndarray | cv2.UMat | None = None
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
@@ -159,8 +203,15 @@ class CPUFireDetector:
 
         # Count pixels matching both color AND motion criteria
         no_red = cv2.countNonZero(final_mask)
-        is_fire = no_red > self.margin
-        self._logger.debug("Detection result: pixels=%d, margin=%d, fire=%s", no_red, self.margin, is_fire)
+        warm = 0
+        frame_area = 0
+        if self.relative_threshold is not None:
+            warm = cv2.countNonZero(color_mask)
+            # Per frame, so a mid-stream resolution change cannot leave a stale area behind.
+            gray_shape = current_gray.get().shape if is_umat else current_gray.shape
+            frame_area = gray_shape[0] * gray_shape[1]
+        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
+        self._logger.debug("Detection result: pixels=%d, warm=%d, margin=%d, fire=%s", no_red, warm, self.margin, is_fire)
         return is_fire, cv2.bitwise_and(frame, frame, mask=final_mask)
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
@@ -187,6 +238,7 @@ class CUDAFireDetector:
         lower: np.ndarray,
         upper: np.ndarray,
         motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
+        relative_threshold: float | None = None,
     ) -> None:
         """Initializes the CUDA fire detector.
 
@@ -197,11 +249,14 @@ class CUDAFireDetector:
             upper: The upper bound of the HSV color range for fire.
             motion_threshold: The pixel intensity change threshold for motion
                               detection (0-255). Higher = less sensitive.
+            relative_threshold: If set, use the area-relative rule (share of warm
+                                pixels that must be moving) instead of ``margin``.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
         self.motion_threshold = motion_threshold
+        self.relative_threshold = relative_threshold
         self.base_bound_set: bool = False
         self.lower_channel: list[cv2.cuda.GpuMat] = []
         self.upper_channel: list[cv2.cuda.GpuMat] = []
@@ -316,12 +371,19 @@ class CUDAFireDetector:
         final_mask_gpu = cv2.cuda.bitwise_and(color_mask_gpu, motion_mask_gpu)
 
         no_red = cv2.cuda.countNonZero(final_mask_gpu)
+        warm = 0
+        frame_area = 0
+        if self.relative_threshold is not None:
+            warm = cv2.cuda.countNonZero(color_mask_gpu)
+            width, height = frame.size()
+            frame_area = width * height
 
         result_gpu = cv2.cuda.GpuMat(frame.size(), frame.type())
         result_gpu.setTo((0, 0, 0))
         frame.copyTo(result_gpu, final_mask_gpu)
 
-        return no_red > self.margin, result_gpu.download()
+        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
+        return is_fire, result_gpu.download()
 
 
 class OpenCLFireDetector(CPUFireDetector):
@@ -447,11 +509,15 @@ def _create_local_detector(
     should_use_cuda = settings.cuda if use_cuda is None else use_cuda
     threshold = settings.motion_detection_threshold if motion_threshold is None else motion_threshold
 
+    relative_threshold: float | None = None
+    if settings.fire_detection_mode == "area_relative":
+        relative_threshold = settings.area_relative_threshold
+
     if should_use_cuda:
-        return CUDAFireDetector(margin, lower, upper, threshold)
+        return CUDAFireDetector(margin, lower, upper, threshold, relative_threshold)
     if should_use_open_cl:
-        return OpenCLFireDetector(margin, lower, upper, threshold)
-    return CPUFireDetector(margin, lower, upper, threshold)
+        return OpenCLFireDetector(margin, lower, upper, threshold, relative_threshold)
+    return CPUFireDetector(margin, lower, upper, threshold, relative_threshold)
 
 
 def create_fire_detector(

@@ -224,6 +224,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
+COPY tools/ ./tools/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
@@ -244,6 +245,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
+COPY tools/ ./tools/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
@@ -264,6 +266,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
+COPY tools/ ./tools/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.

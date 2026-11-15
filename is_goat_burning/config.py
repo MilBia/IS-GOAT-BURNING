@@ -307,6 +307,10 @@ class Settings(BaseSettings):
         Field(default="classic", validation_alias="DETECTION_STRATEGY")
     )
     fire_detection_threshold: float = Field(validation_alias="FIRE_DETECTION_THRESHOLD", default=0.1)
+    fire_detection_mode: Literal["frame_fraction", "area_relative"] = Field(
+        default="frame_fraction", validation_alias="FIRE_DETECTION_MODE"
+    )
+    area_relative_threshold: float = Field(default=0.23, gt=0.0, le=1.0, validation_alias="AREA_RELATIVE_THRESHOLD")
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)
