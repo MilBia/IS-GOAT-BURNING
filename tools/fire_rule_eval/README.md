@@ -1,7 +1,7 @@
 # fire_rule_eval
 
 Offline harness for measuring the classical (colour + motion) fire rule on recorded video, built for
-issue #104. It reuses the HSV range and blur settings of the production detector, so the numbers
+issues #104 and #105. It reuses the HSV range and blur settings of the production detector, so the numbers
 describe what `CPUFireDetector` would do at the production check rate.
 
 Videos are **not** kept in the repository. Pass directories on the command line.
@@ -26,6 +26,18 @@ python -m tools.fire_rule_eval extract --manifest manifest.json --out features/ 
 python -m tools.fire_rule_eval report --manifest manifest.json --features features/
 ```
 
+### Temporal flicker (#105, optional)
+
+```bash
+# 5. Per-second flicker features at 30 fps / 480x270: windowed reference and incremental version.
+python -m tools.fire_rule_eval flicker --manifest manifest.json --out flicker/ --jobs 6 --skip-existing
+python -m tools.fire_rule_eval report --manifest manifest.json --features features/ --flicker flicker/
+```
+
+With `--flicker`, only clips that have both feature sets are reported, the first 3 s are dropped (the incremental filters
+settle) and the `flicker_*` rules plus an incremental-vs-windowed agreement table are added. The source must really be
+~30 fps: clips recorded at 1 fps (frames repeat) show no flicker by construction. `--no-windowed` skips the slow reference.
+
 `extract` runs at native resolution (`--scale 1.0`) for parity with production; use `--scale` only for quick looks.
 Edit the manifest by hand to add `fire_from_s` / `fire_to_s` for positives where the fire is not visible for the whole clip.
 
@@ -41,6 +53,9 @@ Edit the manifest by hand to add `fire_from_s` / `fire_to_s` for positives where
 | `tiled` | Maximum over an 8x4 tile grid of the warm-and-moving tile fraction. |
 | `component`, `component_closed` | Largest connected warm-and-moving component. |
 | `white_core` | Adds bright, desaturated moving pixels next to warm regions (white-hot flame cores). |
+| `flicker_win`, `flicker_inc` | Warm pixels that flicker (std and mean crossings over 1 s) > p x frame area; windowed reference / incremental. |
+| `flicker_rel` | Share of the warm region that flickers (incremental). |
+| `area_or_flicker`, `area_or_flicker_rel`, `area_and_flicker` | `area_relative` combined with flicker (OR / AND). |
 
 ## Interpreting the report
 

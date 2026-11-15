@@ -8,13 +8,18 @@ from pathlib import Path
 import sys
 import time
 
+import cv2
 import numpy as np
 
 from tools.fire_rule_eval.features import ExtractOptions
 from tools.fire_rule_eval.features import extract_features
 from tools.fire_rule_eval.features import iter_check_frames
+from tools.fire_rule_eval.flicker import extract_flicker_features
+from tools.fire_rule_eval.flicker import iter_frames_30fps
 from tools.fire_rule_eval.report import load_clips
 from tools.fire_rule_eval.report import render_markdown
+from tools.fire_rule_eval.rules import FLICKER_RULES
+from tools.fire_rule_eval.rules import RULES
 from tools.fire_rule_eval.synth import SynthOptions
 from tools.fire_rule_eval.synth import composite_video
 
@@ -57,6 +62,40 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _extract_flicker_one(job: tuple[str, str, str, bool]) -> str:
+    name, path, out, windowed = job
+    cv2.setNumThreads(1)
+    started = time.time()
+    features = extract_flicker_features(iter_frames_30fps(Path(path)), windowed=windowed)
+    if not len(features["t"]):
+        raise ValueError(f"{name}: fewer than 31 frames decoded, nothing to store")
+    target = Path(out) / f"{name}.npz"
+    temporary = target.with_suffix(".tmp.npz")  # written aside and renamed: an interrupted run leaves no corrupt file
+    np.savez_compressed(temporary, **features)
+    temporary.replace(target)
+    return f"{name}: {len(features['t'])} rows in {time.time() - started:.0f}s"
+
+
+def _cmd_flicker(args: argparse.Namespace) -> int:
+    """Extracts per-second flicker features (windowed reference and incremental) for manifest clips."""
+    import multiprocessing
+
+    manifest = json.loads(Path(args.manifest).read_text())
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    jobs = [
+        (entry["name"], entry["path"], str(out_dir), not args.no_windowed)
+        for entry in manifest["clips"]
+        if (not args.only or entry["name"] in args.only)
+        and not (args.skip_existing and (out_dir / f"{entry['name']}.npz").exists())
+    ]
+    # `fork`: the default start method on Python 3.14 (forkserver) hangs when run through `python -m`.
+    with multiprocessing.get_context("fork").Pool(args.jobs) as pool:
+        for line in pool.imap_unordered(_extract_flicker_one, jobs):
+            print(line, flush=True)
+    return 0
+
+
 def _cmd_synth(args: argparse.Namespace) -> int:
     """Writes a synthetic positive clip."""
     options = SynthOptions(args.fraction, args.anchor_x, args.anchor_y, args.seconds, args.fire_start, args.onset)
@@ -67,11 +106,12 @@ def _cmd_synth(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     """Prints the Markdown report."""
-    clips = load_clips(Path(args.manifest), Path(args.features))
+    flicker_dir = Path(args.flicker) if args.flicker else None
+    clips = load_clips(Path(args.manifest), Path(args.features), flicker_dir)
     if not clips:
         print("no clips with features found", file=sys.stderr)
         return 1
-    print(render_markdown(clips))
+    print(render_markdown(clips, (*RULES, *FLICKER_RULES) if flicker_dir else RULES))
     return 0
 
 
@@ -98,6 +138,15 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--skip-existing", action="store_true")
     extract.set_defaults(func=_cmd_extract)
 
+    flicker = sub.add_parser("flicker", help="compute per-second flicker features (30 fps, 480x270) for manifest clips")
+    flicker.add_argument("--manifest", required=True)
+    flicker.add_argument("--out", required=True)
+    flicker.add_argument("--jobs", type=int, default=4)
+    flicker.add_argument("--no-windowed", action="store_true", help="skip the slow windowed reference")
+    flicker.add_argument("--only", nargs="*")
+    flicker.add_argument("--skip-existing", action="store_true")
+    flicker.set_defaults(func=_cmd_flicker)
+
     synth = sub.add_parser("synth", help="composite real flames onto a fire-free background (synthetic positive)")
     synth.add_argument("--background", required=True)
     synth.add_argument("--fire", required=True)
@@ -113,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="print recall / false-positive tables")
     report.add_argument("--manifest", required=True)
     report.add_argument("--features", required=True)
+    report.add_argument("--flicker", help="directory from the `flicker` command; adds the flicker rules")
     report.set_defaults(func=_cmd_report)
     return parser
 
