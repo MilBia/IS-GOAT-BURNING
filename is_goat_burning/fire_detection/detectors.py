@@ -112,7 +112,6 @@ class CPUFireDetector:
         upper: np.ndarray,
         motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
         relative_threshold: float | None = None,
-        frame_area: int = 0,
     ) -> None:
         """Initializes the CPU fire detector.
 
@@ -125,14 +124,12 @@ class CPUFireDetector:
                               detection (0-255). Higher = less sensitive.
             relative_threshold: If set, use the area-relative rule (share of warm
                                 pixels that must be moving) instead of ``margin``.
-            frame_area: Pixels per frame; required with ``relative_threshold``.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
         self.motion_threshold = motion_threshold
         self.relative_threshold = relative_threshold
-        self.frame_area = frame_area
         self._previous_frame: np.ndarray | cv2.UMat | None = None
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
@@ -206,8 +203,14 @@ class CPUFireDetector:
 
         # Count pixels matching both color AND motion criteria
         no_red = cv2.countNonZero(final_mask)
-        warm = cv2.countNonZero(color_mask) if self.relative_threshold is not None else 0
-        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, self.frame_area)
+        warm = 0
+        frame_area = 0
+        if self.relative_threshold is not None:
+            warm = cv2.countNonZero(color_mask)
+            # Per frame, so a mid-stream resolution change cannot leave a stale area behind.
+            gray_shape = current_gray.get().shape if is_umat else current_gray.shape
+            frame_area = gray_shape[0] * gray_shape[1]
+        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
         self._logger.debug("Detection result: pixels=%d, warm=%d, margin=%d, fire=%s", no_red, warm, self.margin, is_fire)
         return is_fire, cv2.bitwise_and(frame, frame, mask=final_mask)
 
@@ -236,7 +239,6 @@ class CUDAFireDetector:
         upper: np.ndarray,
         motion_threshold: int = DEFAULT_MOTION_THRESHOLD,
         relative_threshold: float | None = None,
-        frame_area: int = 0,
     ) -> None:
         """Initializes the CUDA fire detector.
 
@@ -249,14 +251,12 @@ class CUDAFireDetector:
                               detection (0-255). Higher = less sensitive.
             relative_threshold: If set, use the area-relative rule (share of warm
                                 pixels that must be moving) instead of ``margin``.
-            frame_area: Pixels per frame; required with ``relative_threshold``.
         """
         self.margin = margin
         self.lower = lower
         self.upper = upper
         self.motion_threshold = motion_threshold
         self.relative_threshold = relative_threshold
-        self.frame_area = frame_area
         self.base_bound_set: bool = False
         self.lower_channel: list[cv2.cuda.GpuMat] = []
         self.upper_channel: list[cv2.cuda.GpuMat] = []
@@ -371,13 +371,18 @@ class CUDAFireDetector:
         final_mask_gpu = cv2.cuda.bitwise_and(color_mask_gpu, motion_mask_gpu)
 
         no_red = cv2.cuda.countNonZero(final_mask_gpu)
-        warm = cv2.cuda.countNonZero(color_mask_gpu) if self.relative_threshold is not None else 0
+        warm = 0
+        frame_area = 0
+        if self.relative_threshold is not None:
+            warm = cv2.cuda.countNonZero(color_mask_gpu)
+            width, height = frame.size()
+            frame_area = width * height
 
         result_gpu = cv2.cuda.GpuMat(frame.size(), frame.type())
         result_gpu.setTo((0, 0, 0))
         frame.copyTo(result_gpu, final_mask_gpu)
 
-        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, self.frame_area)
+        is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
         return is_fire, result_gpu.download()
 
 
@@ -483,7 +488,6 @@ def _create_local_detector(
     use_open_cl: bool | None = None,
     use_cuda: bool | None = None,
     motion_threshold: int | None = None,
-    frame_area: int | None = None,
 ) -> CPUFireDetector | CUDAFireDetector | OpenCLFireDetector:
     """Creates a local CV-based fire detector based on hardware settings.
 
@@ -497,7 +501,6 @@ def _create_local_detector(
                   the global `settings.cuda`.
         motion_threshold: The pixel intensity change threshold for motion
                           detection. If None, uses `settings.motion_detection_threshold`.
-        frame_area: Pixels per frame. Needed for ``FIRE_DETECTION_MODE=area_relative``.
 
     Returns:
         A CPU, CUDA, or OpenCL fire detector instance.
@@ -509,15 +512,12 @@ def _create_local_detector(
     relative_threshold: float | None = None
     if settings.fire_detection_mode == "area_relative":
         relative_threshold = settings.area_relative_threshold
-        if not frame_area:
-            raise ValueError("FIRE_DETECTION_MODE=area_relative needs the frame area (frame_area).")
 
-    area = frame_area or 0
     if should_use_cuda:
-        return CUDAFireDetector(margin, lower, upper, threshold, relative_threshold, area)
+        return CUDAFireDetector(margin, lower, upper, threshold, relative_threshold)
     if should_use_open_cl:
-        return OpenCLFireDetector(margin, lower, upper, threshold, relative_threshold, area)
-    return CPUFireDetector(margin, lower, upper, threshold, relative_threshold, area)
+        return OpenCLFireDetector(margin, lower, upper, threshold, relative_threshold)
+    return CPUFireDetector(margin, lower, upper, threshold, relative_threshold)
 
 
 def create_fire_detector(
@@ -527,7 +527,6 @@ def create_fire_detector(
     use_open_cl: bool | None = None,
     use_cuda: bool | None = None,
     strategy: str | None = None,
-    frame_area: int | None = None,
 ) -> FireDetector:
     """Factory function to create the appropriate fire detector.
 
@@ -546,8 +545,6 @@ def create_fire_detector(
         strategy: The detection strategy to use ("classic", "gemini",
                   "hybrid_cloud", "gemini_decision", "hybrid_decision", or the
                   legacy alias "hybrid"). If None, uses `settings.detection_strategy`.
-        frame_area: Pixels per frame; required when `settings.fire_detection_mode`
-                    is ``area_relative``.
 
     Returns:
         An instance of a class that conforms to the FireDetector protocol.
@@ -572,7 +569,7 @@ def create_fire_detector(
         if selected_strategy == "gemini_decision":
             return DecisionFireDetector()
         return HybridFireDetector(
-            _create_local_detector(margin, lower, upper, use_open_cl, use_cuda, frame_area=frame_area),
+            _create_local_detector(margin, lower, upper, use_open_cl, use_cuda),
             DecisionFireDetector(),
         )
 
@@ -583,7 +580,7 @@ def create_fire_detector(
         return GeminiFireDetector()
 
     # For both "classic" and the cloud hybrid strategies, we need a local detector.
-    local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda, frame_area=frame_area)
+    local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
 
     if selected_strategy in cloud_hybrid_strategies:
         gemini_detector = GeminiFireDetector()

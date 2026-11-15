@@ -11,6 +11,7 @@ from is_goat_burning.config import Settings
 from is_goat_burning.fire_detection.detectors import CPUFireDetector
 from is_goat_burning.fire_detection.detectors import OpenCLFireDetector
 from is_goat_burning.fire_detection.detectors import _create_local_detector
+from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.detectors import is_fire_by_pixels
 
 HEIGHT, WIDTH = 240, 320
@@ -49,9 +50,7 @@ def test_area_relative_rejects(moving_warm: int, warm: int) -> None:
 
 
 def _detector(relative: float | None) -> CPUFireDetector:
-    return CPUFireDetector(
-        margin=int(0.1 * AREA), lower=LOWER, upper=UPPER, motion_threshold=25, relative_threshold=relative, frame_area=AREA
-    )
+    return CPUFireDetector(margin=int(0.1 * AREA), lower=LOWER, upper=UPPER, motion_threshold=25, relative_threshold=relative)
 
 
 @pytest.mark.asyncio
@@ -74,20 +73,33 @@ async def test_detector_static_warm_scene_is_rejected_in_area_relative_mode() ->
     assert [(await detector.detect(frame))[0] for _ in range(3)] == [False, False, False]
 
 
-def test_factory_passes_mode_and_requires_frame_area() -> None:
+def test_factory_passes_mode_to_detector() -> None:
     with patch("is_goat_burning.fire_detection.detectors.settings") as mock_settings:
         mock_settings.fire_detection_mode = "area_relative"
         mock_settings.area_relative_threshold = 0.3
         mock_settings.motion_detection_threshold = 25
         mock_settings.open_cl = False
         mock_settings.cuda = False
+        mock_settings.detection_strategy = "classic"
 
-        detector = _create_local_detector(10, LOWER, UPPER, frame_area=AREA)
-        assert detector.relative_threshold == 0.3
-        assert detector.frame_area == AREA
+        assert _create_local_detector(10, LOWER, UPPER).relative_threshold == 0.3
+        assert create_fire_detector(10, LOWER, UPPER).relative_threshold == 0.3  # public factory, classic strategy
 
-        with pytest.raises(ValueError, match="frame area"):
-            _create_local_detector(10, LOWER, UPPER)
+
+@pytest.mark.asyncio
+async def test_area_relative_uses_the_current_frame_size_after_resolution_change() -> None:
+    """A 16x16 flame (after blur) is 0.65 % of 320x240 but 0.16 % of 640x480: below the 0.2 % warm floor."""
+    detector = _detector(0.23)
+    await detector.detect(_frame(40, 16))
+    assert (await detector.detect(_frame(80, 16)))[0] is True
+
+    def big(x: int) -> np.ndarray:
+        frame = np.full((480, 640, 3), 20, dtype=np.uint8)
+        frame[100:116, x : x + 16] = FLAME_BGR
+        return frame
+
+    await detector.detect(big(40))  # resolution change: baseline reset, first frame never alarms
+    assert (await detector.detect(big(80)))[0] is False
 
 
 def test_factory_default_mode_is_frame_fraction() -> None:
@@ -120,7 +132,7 @@ def test_constants_match_evaluation_harness() -> None:
 @pytest.mark.asyncio
 async def test_opencl_detector_area_relative() -> None:
     detector = OpenCLFireDetector(
-        margin=int(0.1 * AREA), lower=LOWER, upper=UPPER, motion_threshold=25, relative_threshold=0.23, frame_area=AREA
+        margin=int(0.1 * AREA), lower=LOWER, upper=UPPER, motion_threshold=25, relative_threshold=0.23
     )
     results = [(await detector.detect(cv2.UMat(f)))[0] for f in (_frame(40, 24), _frame(80, 24), _frame(80, 24))]
     assert results == [False, True, False]

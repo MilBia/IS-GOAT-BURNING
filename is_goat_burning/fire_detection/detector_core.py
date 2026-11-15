@@ -103,14 +103,12 @@ class StreamFireDetector:
         # Create the appropriate detector
         lower = lower_hsv if lower_hsv is not None else DEFAULT_LOWER_HSV_FIRE
         upper = upper_hsv if upper_hsv is not None else DEFAULT_UPPER_HSV_FIRE
-        frame_area = instance.stream.frame_shape[0] * instance.stream.frame_shape[1]
-        fire_pixel_margin = int(frame_area * threshold)
+        fire_pixel_margin = int(instance.stream.frame_shape[0] * instance.stream.frame_shape[1] * threshold)
         instance.fire_detector = create_fire_detector(
             margin=fire_pixel_margin,
             lower=lower,
             upper=upper,
             strategy=settings.detection_strategy,
-            frame_area=frame_area,
         )
         return instance
 
