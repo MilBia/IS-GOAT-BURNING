@@ -1,4 +1,8 @@
-"""Offline fire verification with a local image classifier (``hybrid_edge`` building block)."""
+"""Offline fire verification with a local image classifier (``hybrid_edge`` building block).
+
+Backends: ``cv2.dnn`` (default, CPU; experimental OpenCL) and ONNX Runtime (CUDA). ``auto`` uses ONNX Runtime CUDA
+only when it is actually active and otherwise ``cv2.dnn`` on the CPU; an explicit ``cuda`` never falls back.
+"""
 
 from __future__ import annotations
 
@@ -33,6 +37,10 @@ _CPU_PROVIDER = "CPUExecutionProvider"
 
 class EdgeModelError(RuntimeError):
     """Raised when the edge model cannot be loaded or the requested backend is unavailable."""
+
+
+class CudaNotActiveError(EdgeModelError):
+    """Raised when onnxruntime lists the CUDA provider but the session does not run on it."""
 
 
 class EdgeBackend(Protocol):
@@ -214,21 +222,18 @@ class CvDnnBackend:
 class OnnxRuntimeBackend:
     """ONNX Runtime backend (CPU or CUDA execution provider); ``onnxruntime`` is imported lazily."""
 
-    def __init__(
-        self, model_path: Path, accelerator: Accelerator, *, input_size: int | None = None, strict: bool = True
-    ) -> None:
+    def __init__(self, model_path: Path, accelerator: Accelerator, *, input_size: int | None = None) -> None:
         """Loads the model.
 
         Args:
             model_path: Path to the ``.onnx`` model.
             accelerator: ``CPU`` or ``CUDA``.
             input_size: Expected square input side; compared with the model's static input dims when given.
-            strict: If ``True`` and CUDA was requested, a session not running on CUDA is an error; otherwise a
-                WARNING is logged and ``accelerator`` reports the real one.
 
         Raises:
-            EdgeModelError: If onnxruntime is missing, CUDA is unavailable/inactive, the model cannot be loaded or
-                its input size does not match ``input_size``.
+            EdgeModelError: If onnxruntime is missing, CUDA is unavailable, the model cannot be loaded or its input
+                size does not match ``input_size``.
+            EdgeModelError: (``CudaNotActiveError``) If CUDA was requested and is listed but is not the active provider.
         """
         self.accelerator = accelerator
         try:
@@ -247,13 +252,10 @@ class OnnxRuntimeBackend:
         except Exception as e:
             raise EdgeModelError(f"Failed to load ONNX model '{model_path}' with onnxruntime: {e}") from e
         if accelerator == Accelerator.CUDA and self._session.get_providers()[0] != _CUDA_PROVIDER:
-            if strict:
-                raise EdgeModelError(
-                    f"EDGE__ACCELERATOR=cuda requested but CUDA is not the active onnxruntime provider "
-                    f"({self._session.get_providers()}); check the CUDA/cuDNN installation."
-                )
-            logger.warning("CUDAExecutionProvider is not active (%s); running on the CPU.", self._session.get_providers())
-            self.accelerator = Accelerator.CPU
+            raise CudaNotActiveError(
+                f"CUDA is not the active onnxruntime provider ({self._session.get_providers()}); "
+                "check the CUDA/cuDNN installation."
+            )
         model_input = self._session.get_inputs()[0]
         self._input_name = model_input.name
         dims = list(model_input.shape)[2:]
@@ -273,11 +275,33 @@ class OnnxRuntimeBackend:
         return np.asarray(self._session.run(None, {self._input_name: blob})[0])
 
 
-def _create_backend(plan: BackendPlan, model_path: Path, input_size: int, strict: bool) -> EdgeBackend:
-    """Instantiates the backend for a plan."""
+def _create_backend(
+    plan: BackendPlan, model_path: Path, input_size: int, *, cpu_fallback: bool
+) -> tuple[EdgeBackend, BackendPlan]:
+    """Instantiates the backend for a plan.
+
+    Args:
+        plan: The selected plan.
+        model_path: Path to the model.
+        input_size: Expected square input side.
+        cpu_fallback: If ``True`` (``auto``) and the ONNX Runtime CUDA backend cannot be activated, log a WARNING and
+            build the (faster on CPU, see #73) ``cv2.dnn`` CPU backend instead of failing.
+
+    Returns:
+        The backend and the plan it actually implements.
+
+    Raises:
+        EdgeModelError: If the backend cannot be created (and no fallback applies).
+    """
     if plan.engine == "onnxruntime":
-        return OnnxRuntimeBackend(model_path, plan.accelerator, input_size=input_size, strict=strict)
-    return CvDnnBackend(model_path, plan.accelerator)
+        try:
+            return OnnxRuntimeBackend(model_path, plan.accelerator, input_size=input_size), plan
+        except EdgeModelError as e:
+            if not cpu_fallback:
+                raise EdgeModelError(f"EDGE__ACCELERATOR=cuda requested but unusable: {e}") from e
+            logger.warning("ONNX Runtime CUDA could not be activated (%s); falling back to cv2.dnn on the CPU.", e)
+            plan = BackendPlan("cv2dnn", Accelerator.CPU)
+    return CvDnnBackend(model_path, plan.accelerator), plan
 
 
 class EdgeInferenceDetector:
@@ -286,6 +310,10 @@ class EdgeInferenceDetector:
     ``detect()`` never raises (an exception would abort the detection loop): failures are logged at ERROR,
     treated as "no fire" and counted; after ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive failures a
     CRITICAL message is logged once.
+
+    With ``EDGE__ACCELERATOR=auto`` the ONNX Runtime CUDA backend is preferred; if CUDA is listed but does not
+    activate, the detector falls back to ``cv2.dnn`` on the CPU (WARNING). An explicit ``cuda`` fails with
+    ``EdgeModelError`` instead.
     """
 
     def __init__(
@@ -323,10 +351,11 @@ class EdgeInferenceDetector:
             cuda_available=onnxruntime_has_cuda() if settings.accelerator in (Accelerator.AUTO, Accelerator.CUDA) else False,
             opencl_available=opencl_available() if settings.accelerator == Accelerator.OPENCL else False,
         )
-        self._backend = _create_backend(plan, model_path, self.input_size, strict=settings.accelerator == Accelerator.CUDA)
+        self._backend, plan = _create_backend(
+            plan, model_path, self.input_size, cpu_fallback=settings.accelerator == Accelerator.AUTO
+        )
         self._warm_up(model_path)
-        accelerator = getattr(self._backend, "accelerator", plan.accelerator)
-        logger.info("Edge detector ready: engine=%s accelerator=%s model=%s", plan.engine, accelerator, model_path)
+        logger.info("Edge detector ready: engine=%s accelerator=%s model=%s", plan.engine, plan.accelerator, model_path)
 
     def _warm_up(self, model_path: Path | str) -> None:
         """Runs one zero-frame inference to fail fast on a wrong input size or unusable output.

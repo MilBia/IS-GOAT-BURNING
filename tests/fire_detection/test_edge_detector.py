@@ -354,19 +354,35 @@ def test_onnxruntime_backend_cuda_provider_missing(monkeypatch):
         OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
 
 
-def test_onnxruntime_cuda_not_active_strict_raises(monkeypatch):
+def test_onnxruntime_cuda_not_active_raises(monkeypatch):
     _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
-    with pytest.raises(EdgeModelError, match="not the active"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA, strict=True)
+    with pytest.raises(edge_detector.CudaNotActiveError, match="not the active"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
 
 
-def test_onnxruntime_cuda_not_active_auto_warns_and_reports_cpu(monkeypatch):
+def _tiny_model(tmp_path):
+    model = tmp_path / "tiny.onnx"
+    model.write_bytes(_build_classifier_onnx(8))
+    return model
+
+
+def test_auto_falls_back_to_cvdnn_cpu_when_cuda_inactive(tmp_path, monkeypatch):
     _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
     mock_logger = MagicMock()
     monkeypatch.setattr(edge_detector, "logger", mock_logger)
-    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CUDA, strict=False)
-    assert backend.accelerator == Accelerator.CPU
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.AUTO, input_size=8)
+    )
+    assert isinstance(detector._backend, CvDnnBackend)
     mock_logger.warning.assert_called_once()
+    ready = mock_logger.info.call_args
+    assert ready.args[1:3] == ("cv2dnn", Accelerator.CPU)
+
+
+def test_explicit_cuda_raises_when_inactive(tmp_path, monkeypatch):
+    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
+    with pytest.raises(EdgeModelError, match="cuda"):
+        EdgeInferenceDetector(EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.CUDA, input_size=8))
 
 
 def test_onnxruntime_input_shape_mismatch(monkeypatch):
