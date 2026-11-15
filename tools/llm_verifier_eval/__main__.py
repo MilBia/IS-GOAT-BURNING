@@ -69,13 +69,15 @@ def call(base: str, key: str, model: str, uri: str, text: str, logprobs: bool, t
     )
     t0 = time.time()
     try:
-        d = json.load(urllib.request.urlopen(req, timeout=timeout))
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            d = json.load(resp)
+        choice = d["choices"][0]
+        out = {"latency": time.time() - t0, "content": choice["message"].get("content") or "", "usage": d.get("usage", {})}
+        lp = (choice.get("logprobs") or {}).get("content")
+        if lp:
+            out["top"] = [(t["token"].strip().lower(), t["logprob"]) for t in lp[0].get("top_logprobs", [])]
     except Exception as e:  # noqa: BLE001 - recorded, not raised
-        return {"error": str(e)[:200], "latency": time.time() - t0}
-    out = {"latency": time.time() - t0, "content": d["choices"][0]["message"].get("content") or "", "usage": d.get("usage", {})}
-    lp = (d["choices"][0].get("logprobs") or {}).get("content")
-    if lp:
-        out["top"] = [(t["token"].strip().lower(), t["logprob"]) for t in lp[0].get("top_logprobs", [])]
+        return {"error": f"{type(e).__name__}: {e}"[:200], "latency": time.time() - t0}
     return out
 
 
@@ -109,22 +111,36 @@ def yes_score(top: list | None) -> float | None:
     return y / (y + n) if y + n > 0 else None
 
 
+def _load_done(out: str) -> set[tuple]:
+    """Keys of successful calls already stored in ``out`` (truncated lines and failed calls are ignored)."""
+    done: set[tuple] = set()
+    if os.path.exists(out):
+        for line in Path(out).read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:  # truncated last line after an interrupted write
+                continue
+            if "error" not in r:  # failed calls are retried on resume
+                done.add((r["path"], r["prompt"], r["rep"], r["width"], r["model"]))
+    return done
+
+
 def run(a: argparse.Namespace) -> None:
     """Query every (image, prompt, repeat) and append JSON lines; resumable."""
+    if "LITELLM_BASE_URL" not in os.environ:
+        sys.exit("LITELLM_BASE_URL is not set (e.g. http://HOST:PORT/v1)")
+    if a.repeats > 1 and a.stability_n < 1:
+        sys.exit("--stability-n must be >= 1 when --repeats > 1")
     base, key = os.environ["LITELLM_BASE_URL"], os.environ.get("LITELLM_API_KEY", "")
     items = json.loads(Path(a.manifest).read_text())
-    done = set()
-    if os.path.exists(a.out):
-        for line in Path(a.out).read_text().splitlines():
-            r = json.loads(line)
-            done.add((r["path"], r["prompt"], r["rep"], r["width"]))
+    done = _load_done(a.out)
     stab = {items[i]["path"] for i in range(0, len(items), max(1, len(items) // a.stability_n))} if a.repeats > 1 else set()
     with open(a.out, "a") as fo:
         for n, it in enumerate(items):
             uri = None
             for rep in range(a.repeats if it["path"] in stab else 1):
                 for pn in a.prompts:
-                    if (it["path"], pn, rep, a.width) in done:
+                    if (it["path"], pn, rep, a.width, a.model) in done:
                         continue
                     uri = uri or encode(it["path"], a.width)
                     r = call(base, key, a.model, uri, PROMPTS[pn], pn == "yesno", a.timeout, 4 if pn == "yesno" else 60)
@@ -154,9 +170,11 @@ def frames(a: argparse.Namespace) -> None:
             if not ok:
                 continue
             img = cv2.resize(img, (a.width, round(img.shape[0] * a.width / img.shape[1])), interpolation=cv2.INTER_AREA)
-            path = os.path.join(a.out, f"{os.path.splitext(name)[0][:24]}_{idx / fps:05.1f}.jpg")
+            path = os.path.join(a.out, f"{os.path.splitext(name)[0]}_{idx / fps:05.1f}.jpg")
             cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            rows.append({"path": path, "label": a.label, "cat": a.cat})
+            if not any(r["path"] == path for r in rows):
+                rows.append({"path": path, "label": a.label, "cat": a.cat})
+        cap.release()
     Path(a.manifest).write_text(json.dumps(rows, indent=1))
 
 
@@ -211,7 +229,12 @@ def _sweep(sel: list[dict]) -> None:
 
 def report(a: argparse.Namespace) -> None:
     """Print Markdown tables: alarm rate per prompt and category, latency, parse failures, stability."""
-    rows = [json.loads(line) for line in Path(a.results).read_text().splitlines() if line]
+    rows = []
+    for line in Path(a.results).read_text().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:  # truncated line
+            continue
     ok = [r for r in rows if "error" not in r]
     print(f"{len(rows)} calls, {len(rows) - len(ok)} transport errors\n")
     for width, model, pn in sorted({(r["width"], r["model"], r["prompt"]) for r in ok}):

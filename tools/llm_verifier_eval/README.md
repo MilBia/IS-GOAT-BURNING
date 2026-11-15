@@ -31,3 +31,10 @@ nearly constant and should not be thresholded.
 
 Notes: temperature is 0, so repeated runs of one server are expected to be (near) deterministic; "stability" mostly checks that.
 Image-token cost depends on the width (`--width`); on a CPU-only llama.cpp server the image encode dominates latency.
+
+Caveats: a response that cannot be parsed counts as "no alarm" in the tables (its number is in each header as `unparsable`);
+transport errors are excluded from the denominators and are retried when `run` is resumed; resuming is keyed by
+(image, prompt, repeat, width, model), so several models can share one results file; frames of one clip are correlated, so the
+Wilson intervals assume independence they do not have and are too narrow; the API key is sent in clear text over `http://`,
+so use a trusted network or `https://`. The tool reads `LITELLM_*` directly from the environment (it is outside the app and
+does not use `settings`). `frames` also takes `--per-clip` and `--start`, `run` takes `--timeout`.
