@@ -41,7 +41,7 @@ def mock_local_detector() -> MagicMock:
 
 
 @pytest.fixture
-def mock_gemini_detector() -> MagicMock:
+def mock_verifier() -> MagicMock:
     """Creates a mock Gemini detector."""
     mock = MagicMock(spec=GeminiFireDetector)
     mock.detect = AsyncMock()
@@ -60,63 +60,63 @@ def sample_frame() -> np.ndarray:
 @pytest.mark.asyncio
 async def test_hybrid_case_a_local_false_no_api_call(
     mock_local_detector: MagicMock,
-    mock_gemini_detector: MagicMock,
+    mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
     """Case A: Local(False) -> API not called -> Result(False)."""
     # Setup: local detector returns False
     mock_local_detector.detect.return_value = (False, sample_frame)
 
-    detector = HybridFireDetector(mock_local_detector, mock_gemini_detector)
+    detector = HybridFireDetector(mock_local_detector, mock_verifier)
     is_fire, returned_frame = await detector.detect(sample_frame)
 
     # Verify
     assert is_fire is False
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_gemini_detector.detect.assert_not_called()  # Critical: API NOT called
+    mock_verifier.detect.assert_not_called()  # Critical: API NOT called
 
 
 @pytest.mark.asyncio
 async def test_hybrid_case_b_local_true_gemini_false(
     mock_local_detector: MagicMock,
-    mock_gemini_detector: MagicMock,
+    mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
     """Case B: Local(True) -> API(False) -> Result(False) [False positive filtered]."""
     # Setup: local detector returns True, Gemini returns False
     mock_local_detector.detect.return_value = (True, sample_frame)
-    mock_gemini_detector.detect.return_value = (False, sample_frame)
+    mock_verifier.detect.return_value = (False, sample_frame)
 
-    detector = HybridFireDetector(mock_local_detector, mock_gemini_detector)
+    detector = HybridFireDetector(mock_local_detector, mock_verifier)
     is_fire, returned_frame = await detector.detect(sample_frame)
 
     # Verify
     assert is_fire is False  # False positive filtered by Gemini
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_gemini_detector.detect.assert_called_once_with(sample_frame)
+    mock_verifier.detect.assert_called_once_with(sample_frame)
 
 
 @pytest.mark.asyncio
 async def test_hybrid_case_c_local_true_gemini_true(
     mock_local_detector: MagicMock,
-    mock_gemini_detector: MagicMock,
+    mock_verifier: MagicMock,
     sample_frame: np.ndarray,
 ) -> None:
     """Case C: Local(True) -> API(True) -> Result(True) [Confirmed fire]."""
     # Setup: both detectors return True
     mock_local_detector.detect.return_value = (True, sample_frame)
-    mock_gemini_detector.detect.return_value = (True, sample_frame)
+    mock_verifier.detect.return_value = (True, sample_frame)
 
-    detector = HybridFireDetector(mock_local_detector, mock_gemini_detector)
+    detector = HybridFireDetector(mock_local_detector, mock_verifier)
     is_fire, returned_frame = await detector.detect(sample_frame)
 
     # Verify
     assert is_fire is True  # Fire confirmed by both
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_gemini_detector.detect.assert_called_once_with(sample_frame)
+    mock_verifier.detect.assert_called_once_with(sample_frame)
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ def test_create_fire_detector_factory_returns_hybrid_when_requested(
 
     assert isinstance(detector, HybridFireDetector)
     assert isinstance(detector.local_detector, CPUFireDetector)
-    assert isinstance(detector.gemini_detector, GeminiFireDetector)
+    assert isinstance(detector.verifier, GeminiFireDetector)
 
 
 @pytest.mark.parametrize("strategy", ["hybrid_cloud", "hybrid"])
@@ -165,4 +165,54 @@ def test_create_fire_detector_factory_returns_hybrid_for_cloud_strategies(
 
     assert isinstance(detector, HybridFireDetector)
     assert isinstance(detector.local_detector, CPUFireDetector)
-    assert isinstance(detector.gemini_detector, GeminiFireDetector)
+    assert isinstance(detector.verifier, GeminiFireDetector)
+
+
+class _FakeVerifier:
+    """A minimal object satisfying the FireVerifier protocol."""
+
+    def __init__(self, verdict: bool) -> None:
+        self.verdict = verdict
+        self.calls = 0
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        self.calls += 1
+        return self.verdict, frame
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", [True, False])
+async def test_hybrid_accepts_any_protocol_verifier(
+    mock_local_detector: MagicMock, sample_frame: np.ndarray, verdict: bool
+) -> None:
+    """Any FireVerifier-compatible object decides the final result."""
+    mock_local_detector.detect.return_value = (True, sample_frame)
+    verifier = _FakeVerifier(verdict)
+
+    detector = HybridFireDetector(mock_local_detector, verifier)
+    result, _ = await detector.detect(sample_frame)
+
+    assert result is verdict
+    assert verifier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_fake_verifier_not_called_when_local_negative(
+    mock_local_detector: MagicMock, sample_frame: np.ndarray
+) -> None:
+    """The verifier is never called when the local gatekeeper says no."""
+    mock_local_detector.detect.return_value = (False, sample_frame)
+    verifier = _FakeVerifier(True)
+
+    detector = HybridFireDetector(mock_local_detector, verifier)
+    result, _ = await detector.detect(sample_frame)
+
+    assert result is False
+    assert verifier.calls == 0
+
+
+def test_hybrid_logs_verifier_class_name(mock_local_detector: MagicMock) -> None:
+    """Construction logs the active verifier backend by class name."""
+    with patch("is_goat_burning.fire_detection.detectors.get_logger") as get_logger:
+        HybridFireDetector(mock_local_detector, _FakeVerifier(True))
+    get_logger.return_value.info.assert_called_once_with("Initialized hybrid detector with verifier _FakeVerifier")
