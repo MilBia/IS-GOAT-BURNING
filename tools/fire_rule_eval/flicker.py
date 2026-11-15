@@ -117,10 +117,14 @@ def iter_frames_30fps(path: Path) -> Iterator[np.ndarray]:
     """Yields 480x270 BGR frames resampled in time to 30 fps."""
     cap = cv2.VideoCapture(str(path))
     try:
-        fps = cap.get(cv2.CAP_PROP_FPS) or FPS
+        if not cap.isOpened():
+            raise OSError(f"cannot open video: {path}")
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if not fps or not np.isfinite(fps) or fps <= 0:
+            fps = FPS
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         last_index, frame = -1, None
-        for k in range(int(total / fps * FPS) if total else 10**9):
+        for k in range(int(total / fps * FPS) if total > 0 else 10**9):
             index = int(round(k * fps / FPS))
             while last_index < index:
                 ok, frame = cap.read()

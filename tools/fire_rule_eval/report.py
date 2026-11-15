@@ -41,6 +41,11 @@ def _merge_flicker(feats: Features, flicker: Features) -> Features | None:
     Check ``k`` of the colour + motion features (frame ``k * fps``) matches flicker row ``k - 1`` (flicker
     rows start at 1 s). Matching by index rather than by time keeps NTSC clips (29.97 fps) aligned.
     """
+    if not len(feats["t"]) or not len(flicker["t"]):
+        return None  # an undecodable clip stores an empty file
+    spacing = np.diff(feats["t"])
+    if abs(float(feats["t"][0])) > 0.05 or (len(spacing) and np.abs(spacing - 1.0).max() > 0.05):
+        raise ValueError("flicker merging needs colour + motion features extracted with --interval 1 --start 0")
     count = min(len(feats["t"]) - 1, len(flicker["t"]))
     if count < 1:
         return None
@@ -53,6 +58,8 @@ def _merge_flicker(feats: Features, flicker: Features) -> Features | None:
     for key in ("flick_win", "flick_inc"):
         rows[key] = flicker[key][checks - 1]
     rows["fwarm"] = flicker["warm"][checks - 1]
+    # The flicker counts are at 480x270 while ``area`` is at the extraction resolution: keep both.
+    rows["flick_area"] = flicker["area"][checks - 1]
     return rows
 
 
@@ -206,15 +213,16 @@ AGREEMENT_THRESHOLDS = (0.0005, 0.001, 0.002, 0.005, 0.01)
 
 def render_flicker_agreement(clips: list[Clip]) -> str:
     """Compares the incremental flicker feature with the windowed reference over all checks."""
-    win = np.concatenate([c.features["flick_win"] / c.features["area"] for c in clips])
-    inc = np.concatenate([c.features["flick_inc"] / c.features["area"] for c in clips])
-    pearson = float(np.corrcoef(win, inc)[0, 1])
+    win = np.concatenate([c.features["flick_win"] / c.features["flick_area"] for c in clips])
+    inc = np.concatenate([c.features["flick_inc"] / c.features["flick_area"] for c in clips])
+    both = (win > 0) & (inc > 0)
+    pearson = float(np.corrcoef(win, inc)[0, 1]) if win.std() > 0 and inc.std() > 0 else float("nan")
     ranks = np.corrcoef(np.argsort(np.argsort(win)), np.argsort(np.argsort(inc)))[0, 1]
+    ratio = float(np.median(inc[both] / win[both])) if both.any() else float("nan")
     lines = [
         "### Incremental vs windowed flicker feature\n",
         f"Checks: {len(win)}; Pearson r = {pearson:.3f}; rank correlation = {float(ranks):.3f}; "
-        f"median ratio incremental/windowed over checks where both are non-zero = "
-        f"{float(np.median(inc[(win > 0) & (inc > 0)] / win[(win > 0) & (inc > 0)])):.2f}\n",
+        f"median ratio incremental/windowed over checks where both are non-zero = {ratio:.2f}\n",
         "| Threshold (share of frame) | Both | Windowed only | Incremental only |",
         "|---|---|---|---|",
     ]
@@ -222,6 +230,12 @@ def render_flicker_agreement(clips: list[Clip]) -> str:
         a, b = win > threshold, inc > threshold
         lines.append(f"| {threshold:g} | {int((a & b).sum())} | {int((a & ~b).sum())} | {int((b & ~a).sum())} |")
     return "\n".join(lines) + "\n"
+
+
+def _usable_rules(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule]) -> list[Rule]:
+    """Drops ``flicker_win`` when the windowed reference was not computed (stored as -1)."""
+    no_reference = any((c.features.get("flick_win", np.zeros(1)) < 0).any() for c in clips)
+    return [rule for rule in rules if not (no_reference and rule.name == "flicker_win")]
 
 
 def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RULES) -> str:
@@ -241,7 +255,7 @@ def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RU
     )
     lines.append("|---|---|---|---|---|---|---|---|---|")
     details: dict[str, tuple[Rule, Point]] = {}
-    for rule in rules:
+    for rule in _usable_rules(clips, rules):
         points = sweep(rule, clips)
         best = best_safe_point(points)
         if best is None:
@@ -256,7 +270,7 @@ def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RU
             f"{headroom_recall(points, HEADROOM)} | {best.hard_clips_alarmed}/{best.hard_clips} |"
         )
 
-    if all("flick_win" in c.features for c in clips):
+    if all("flick_win" in c.features and (c.features["flick_win"] >= 0).all() for c in clips):
         lines.append("")
         lines.append(render_flicker_agreement(clips))
 

@@ -67,7 +67,12 @@ def _extract_flicker_one(job: tuple[str, str, str, bool]) -> str:
     cv2.setNumThreads(1)
     started = time.time()
     features = extract_flicker_features(iter_frames_30fps(Path(path)), windowed=windowed)
-    np.savez_compressed(Path(out) / f"{name}.npz", **features)
+    if not len(features["t"]):
+        raise ValueError(f"{name}: fewer than 31 frames decoded, nothing to store")
+    target = Path(out) / f"{name}.npz"
+    temporary = target.with_suffix(".tmp.npz")  # written aside and renamed: an interrupted run leaves no corrupt file
+    np.savez_compressed(temporary, **features)
+    temporary.replace(target)
     return f"{name}: {len(features['t'])} rows in {time.time() - started:.0f}s"
 
 

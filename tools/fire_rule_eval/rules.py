@@ -94,14 +94,14 @@ AREA_RELATIVE_PRODUCTION = 0.23  # shipped default of AREA_RELATIVE_THRESHOLD
 
 def _flicker(key: str) -> Callable[[Features, float], np.ndarray]:
     def decide(f: Features, p: float) -> np.ndarray:
-        return f[key] > p * f["area"]
+        return f[key] > p * f["flick_area"]  # flicker counts are at the flicker resolution, not at ``area``
 
     return decide
 
 
 def _flicker_relative(f: Features, p: float) -> np.ndarray:
-    warm_enough = f["fwarm"] >= MIN_WARM_FRACTION * f["area"]
-    return warm_enough & (f["flick_inc"] > MIN_FLICKER_FRACTION * f["area"]) & (f["flick_inc"] > p * f["fwarm"])
+    warm_enough = f["fwarm"] >= MIN_WARM_FRACTION * f["flick_area"]
+    return warm_enough & (f["flick_inc"] > MIN_FLICKER_FRACTION * f["flick_area"]) & (f["flick_inc"] > p * f["fwarm"])
 
 
 def _area_or_flicker(f: Features, p: float) -> np.ndarray:
