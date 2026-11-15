@@ -158,15 +158,29 @@ Pick **one** of the two decision rules (they use different parameters):
 | `frame_fraction` (default) | `FIRE_DETECTION_THRESHOLD=0.05` | 6/11 real clips, 0 steady-state alarms on the goat |
 | `area_relative` | `FIRE_DETECTION_MODE=area_relative` (uses `AREA_RELATIVE_THRESHOLD`, default `0.23`; `FIRE_DETECTION_THRESHOLD` is ignored) | 9/11 real clips, 0 steady-state alarms on the goat |
 
-Then add a safety net against single-frame glitches and, preferably, a verifier. The recall numbers above were
-measured with `FIRE_DETECTED_DEBOUNCE_SECONDS=0` (one alarmed check is enough); a debounce of 3 s at
-`CHECKS_PER_SECOND=1` needs about three consecutive alarmed checks and can lower recall (not measured). The verifier
-is a plausible filter but has not been evaluated on these data yet:
+Then consider a debounce and, preferably, a verifier. A debounce `D` needs `D + 1` consecutive alarmed checks at
+`CHECKS_PER_SECOND=1` (3 s means 4 checks) and **costs recall** (#130, `area_relative`, measured on the narrow data
+set above):
+
+| `FIRE_DETECTED_DEBOUNCE_SECONDS` | Real clips detected (of 9) | Recall | Median time to alert |
+| --- | --- | --- | --- |
+| `0` | 8 | 0.74 | 3.5 s |
+| `1` | 8 | 0.68 | 5.5 s |
+| `2` | 8 | 0.64 | 8.5 s |
+| `3` | 8 | 0.59 | 9.5 s |
+| `5` | 8 | 0.50 | 12.5 s |
+| `10` | 6 | 0.30 | 19 s |
+
+Do **not** combine `FIRE_DETECTION_THRESHOLD=0.05` (`frame_fraction`) with a debounce: it detects 5, 4, 2, 0, 0, 0 of 9
+clips for debounce 0, 1, 2, 3, 5, 10 s. The protective value of a debounce could not be measured (the goat data
+contain no isolated single-check alarms), so `0` is not a recommendation either; `1`-`2` with `area_relative` is a
+compromise until December data (#109). A longer `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS` reduces repeated re-entries into
+the fire state. The verifier is a plausible filter but has not been evaluated on these data yet:
 
 ```env
 FIRE_DETECTION_MODE=area_relative
-# A few seconds instead of a single check (not measured, a sensible starting point)
-FIRE_DETECTED_DEBOUNCE_SECONDS=3.0
+# D + 1 consecutive alarmed checks; see the table above (1-2 is a compromise)
+FIRE_DETECTED_DEBOUNCE_SECONDS=2.0
 # Or hybrid_cloud; needs GEMINI__API_KEY
 DETECTION_STRATEGY=hybrid_decision
 ```
