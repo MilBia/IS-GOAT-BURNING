@@ -87,4 +87,48 @@ RULES: tuple[Rule, ...] = (
     Rule("white_core", "warm-AND-moving plus bright desaturated moving pixels near warm", FRACTION_GRID, _white_core),
 )
 
-RULES_BY_NAME = {rule.name: rule for rule in RULES}
+MIN_FLICKER_FRACTION = 0.0005
+AREA_RELATIVE_SAFE = 0.14  # most sensitive zero-alarm point of ``area_relative`` in the #104 evaluation
+AREA_RELATIVE_PRODUCTION = 0.23  # shipped default of AREA_RELATIVE_THRESHOLD
+
+
+def _flicker(key: str) -> Callable[[Features, float], np.ndarray]:
+    def decide(f: Features, p: float) -> np.ndarray:
+        return f[key] > p * f["area"]
+
+    return decide
+
+
+def _flicker_relative(f: Features, p: float) -> np.ndarray:
+    warm_enough = f["fwarm"] >= MIN_WARM_FRACTION * f["area"]
+    return warm_enough & (f["flick_inc"] > MIN_FLICKER_FRACTION * f["area"]) & (f["flick_inc"] > p * f["fwarm"])
+
+
+def _area_or_flicker(f: Features, p: float) -> np.ndarray:
+    return _area_relative(f, AREA_RELATIVE_PRODUCTION) | _flicker("flick_inc")(f, p)
+
+
+def _area_or_flicker_relative(f: Features, p: float) -> np.ndarray:
+    return _area_relative(f, AREA_RELATIVE_PRODUCTION) | _flicker_relative(f, p)
+
+
+def _area_and_flicker(f: Features, p: float) -> np.ndarray:
+    return _area_relative(f, AREA_RELATIVE_SAFE) & _flicker("flick_inc")(f, p)
+
+
+# Rules that need the columns added by ``load_clips(..., flicker_dir=...)`` (see ``flicker.py``).
+FLICKER_RULES: tuple[Rule, ...] = (
+    Rule("flicker_win", "windowed reference: flickering warm pixels > p * frame area", FRACTION_GRID, _flicker("flick_win")),
+    Rule("flicker_inc", "incremental: flickering warm pixels > p * frame area", FRACTION_GRID, _flicker("flick_inc")),
+    Rule("flicker_rel", "incremental: share of the warm region that flickers > p", RATIO_GRID, _flicker_relative),
+    Rule("area_or_flicker", "area_relative(0.23) OR incremental flicker > p * area", FRACTION_GRID, _area_or_flicker),
+    Rule(
+        "area_or_flicker_rel",
+        "area_relative(0.23) OR share of the warm region that flickers > p",
+        RATIO_GRID,
+        _area_or_flicker_relative,
+    ),
+    Rule("area_and_flicker", "area_relative(0.14) AND incremental flicker > p * area", FRACTION_GRID, _area_and_flicker),
+)
+
+RULES_BY_NAME = {rule.name: rule for rule in (*RULES, *FLICKER_RULES)}

@@ -32,7 +32,31 @@ class Clip:
         return self.label == POSITIVE
 
 
-def load_clips(manifest_path: Path, features_dir: Path) -> list[Clip]:
+FLICKER_SETTLE_S = 3.0  # the incremental filters need a few seconds to settle
+
+
+def _merge_flicker(feats: Features, flicker: Features) -> Features | None:
+    """Adds flicker columns to the colour + motion features.
+
+    Check ``k`` of the colour + motion features (frame ``k * fps``) matches flicker row ``k - 1`` (flicker
+    rows start at 1 s). Matching by index rather than by time keeps NTSC clips (29.97 fps) aligned.
+    """
+    count = min(len(feats["t"]) - 1, len(flicker["t"]))
+    if count < 1:
+        return None
+    checks = np.arange(1, count + 1)
+    wanted = checks >= FLICKER_SETTLE_S
+    if not wanted.any():
+        return None
+    checks = checks[wanted]
+    rows = {key: value[checks] for key, value in feats.items()}
+    for key in ("flick_win", "flick_inc"):
+        rows[key] = flicker[key][checks - 1]
+    rows["fwarm"] = flicker["warm"][checks - 1]
+    return rows
+
+
+def load_clips(manifest_path: Path, features_dir: Path, flicker_dir: Path | None = None) -> list[Clip]:
     """Loads clips listed in a manifest that have stored features.
 
     Positive clips are restricted to the ``fire_from_s`` / ``fire_to_s`` window when given and always
@@ -41,6 +65,8 @@ def load_clips(manifest_path: Path, features_dir: Path) -> list[Clip]:
     Args:
         manifest_path: JSON manifest with a ``clips`` list.
         features_dir: Directory holding ``<name>.npz`` files from ``extract``.
+        flicker_dir: Optional directory with ``<name>.npz`` files from ``flicker``; when given, only clips
+            present there are loaded, the first seconds are dropped and flicker columns are added.
 
     Returns:
         Loaded clips (clips without features are skipped).
@@ -53,6 +79,15 @@ def load_clips(manifest_path: Path, features_dir: Path) -> list[Clip]:
             continue
         with np.load(npz) as data:
             feats = {key: data[key] for key in data.files}
+        if flicker_dir is not None:
+            flicker_npz = flicker_dir / f"{entry['name']}.npz"
+            if not flicker_npz.exists():
+                continue
+            with np.load(flicker_npz) as data:
+                merged = _merge_flicker(feats, {key: data[key] for key in data.files})
+            if merged is None:
+                continue
+            feats = merged
         keep = np.ones(len(feats["t"]), dtype=bool)
         if entry["label"] == POSITIVE:
             keep &= feats["first"] == 0
@@ -166,7 +201,30 @@ def headroom_recall(points: list[Point], factor: float) -> str:
     return f"{robust[0].pos_recall:.2f} (p={robust[0].param:.4g})"
 
 
-def render_markdown(clips: list[Clip]) -> str:
+AGREEMENT_THRESHOLDS = (0.0005, 0.001, 0.002, 0.005, 0.01)
+
+
+def render_flicker_agreement(clips: list[Clip]) -> str:
+    """Compares the incremental flicker feature with the windowed reference over all checks."""
+    win = np.concatenate([c.features["flick_win"] / c.features["area"] for c in clips])
+    inc = np.concatenate([c.features["flick_inc"] / c.features["area"] for c in clips])
+    pearson = float(np.corrcoef(win, inc)[0, 1])
+    ranks = np.corrcoef(np.argsort(np.argsort(win)), np.argsort(np.argsort(inc)))[0, 1]
+    lines = [
+        "### Incremental vs windowed flicker feature\n",
+        f"Checks: {len(win)}; Pearson r = {pearson:.3f}; rank correlation = {float(ranks):.3f}; "
+        f"median ratio incremental/windowed over checks where both are non-zero = "
+        f"{float(np.median(inc[(win > 0) & (inc > 0)] / win[(win > 0) & (inc > 0)])):.2f}\n",
+        "| Threshold (share of frame) | Both | Windowed only | Incremental only |",
+        "|---|---|---|---|",
+    ]
+    for threshold in AGREEMENT_THRESHOLDS:
+        a, b = win > threshold, inc > threshold
+        lines.append(f"| {threshold:g} | {int((a & b).sum())} | {int((a & ~b).sum())} | {int((b & ~a).sum())} |")
+    return "\n".join(lines) + "\n"
+
+
+def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RULES) -> str:
     """Builds the full Markdown report."""
     lines: list[str] = []
     pos = [c for c in clips if c.is_positive]
@@ -183,7 +241,7 @@ def render_markdown(clips: list[Clip]) -> str:
     )
     lines.append("|---|---|---|---|---|---|---|---|---|")
     details: dict[str, tuple[Rule, Point]] = {}
-    for rule in RULES:
+    for rule in rules:
         points = sweep(rule, clips)
         best = best_safe_point(points)
         if best is None:
@@ -197,6 +255,10 @@ def render_markdown(clips: list[Clip]) -> str:
             f"{best.neg_alarm_checks}/{best.neg_checks} | {best.neg_first_alarms}/{best.neg_clips} | {margin_text} | "
             f"{headroom_recall(points, HEADROOM)} | {best.hard_clips_alarmed}/{best.hard_clips} |"
         )
+
+    if all("flick_win" in c.features for c in clips):
+        lines.append("")
+        lines.append(render_flicker_agreement(clips))
 
     production = next(r for r in RULES if r.name == "deployed")
     prod = evaluate(production, production.production_value or 0.1, clips)
