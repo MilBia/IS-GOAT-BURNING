@@ -159,7 +159,7 @@ of 20 inferences (preprocessing included: 1080p frame resized and normalised to 
 | CRITICAL log at startup, classic detector used | Model exists but cannot be loaded (invalid model, wrong `EDGE__INPUT_SIZE`, accelerator or `onnxruntime` unavailable). Read the error line above it; run `tools.check_acceleration --model ...`. |
 | `EDGE__ACCELERATOR=cuda requires onnxruntime-gpu ...` | Extra not installed (`pip install -e .[edge-gpu]`), or running in the Docker `gpu` image, which is not supported for this (see above). |
 | `CUDA is not the active onnxruntime provider` | CUDA 13 libraries / driver >= 580 missing (`onnxruntime-gpu` 1.32.0 needs them). |
-| `Model ... expects a NxN input but EDGE__INPUT_SIZE=...` | Set `EDGE__INPUT_SIZE` to the model's input side. |
+| `Model ... expects a NxN input but EDGE__INPUT_SIZE=...` | Set `EDGE__INPUT_SIZE` to the model's input side. Checked at startup on both backends from the input shape declared in the ONNX file (parsed directly for `cv2.dnn`); models with a dynamic H/W are not checked, so a wrong size there only surfaces as degraded accuracy. |
 | `Test inference ... failed` | Not a 1/2-output classifier, or exported with an opset `cv2.dnn` cannot read (use opset 12). |
 | `opencl requested but OpenCV reports no usable OpenCL runtime` | No ICD/device in the container: pass `--device /dev/dri`, add the `render` group, check `clinfo`. |
 | OpenCL selected but not faster | Expected, see the caveat above; use `cpu`. |

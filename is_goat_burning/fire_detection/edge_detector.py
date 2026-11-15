@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from collections.abc import Iterator
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -179,18 +180,154 @@ def classifier_fire_probability(output: np.ndarray) -> float:
     raise ValueError(f"Unsupported classifier output with {logits.size} values (expected 1 or 2).")
 
 
+def _read_varint(buf: bytes | memoryview, pos: int) -> tuple[int, int]:
+    """Decodes a protobuf varint.
+
+    Args:
+        buf: The buffer.
+        pos: Start offset.
+
+    Returns:
+        ``(value, next_offset)``.
+
+    Raises:
+        ValueError: If the varint is truncated or longer than 10 bytes.
+    """
+    result = 0
+    for i in range(10):
+        if pos + i >= len(buf):
+            raise ValueError("truncated varint")
+        byte = buf[pos + i]
+        result |= (byte & 0x7F) << (7 * i)
+        if not byte & 0x80:
+            return result & ((1 << 64) - 1), pos + i + 1
+    raise ValueError("varint too long")
+
+
+def _pb_fields(buf: bytes | memoryview) -> Iterator[tuple[int, int | memoryview]]:
+    """Iterates over the top-level fields of a protobuf message.
+
+    Args:
+        buf: The serialized message.
+
+    Yields:
+        ``(field_number, value)``: ``int`` for varints, ``memoryview`` (zero-copy) for length-delimited
+        fields (fixed-width fields are skipped).
+
+    Raises:
+        ValueError: If the message is malformed or truncated.
+    """
+    pos = 0
+    while pos < len(buf):
+        key, pos = _read_varint(buf, pos)
+        number, wire = key >> 3, key & 7
+        if wire == 0:
+            value, pos = _read_varint(buf, pos)
+            yield number, value
+        elif wire == 2:
+            length, pos = _read_varint(buf, pos)
+            if pos + length > len(buf):
+                raise ValueError("truncated field")
+            yield number, buf[pos : pos + length]
+            pos += length
+        elif wire in (1, 5):
+            pos += 8 if wire == 1 else 4
+            if pos > len(buf):
+                raise ValueError("truncated field")
+        else:
+            raise ValueError(f"unsupported wire type {wire}")
+
+
+def _first_field(buf: bytes | memoryview, number: int) -> memoryview | None:
+    """Returns the first length-delimited field ``number`` of a message, or ``None``."""
+    for num, value in _pb_fields(buf):
+        if num == number and isinstance(value, memoryview):
+            return value
+    return None
+
+
+def read_onnx_input_shape(model_path: Path | str) -> list[int | str] | None:
+    """Reads the declared shape of the first graph input of an ONNX model without the ``onnx`` package.
+
+    Walks the protobuf wire format by hand: ``ModelProto.graph`` (7) -> ``GraphProto.input`` (11) ->
+    ``ValueInfoProto.type`` (2) -> ``TypeProto.tensor_type`` (1) -> ``Tensor.shape`` (2) -> ``TensorShapeProto.dim`` (1)
+    -> ``Dimension.dim_value`` (1) / ``dim_param`` (2). The first input is used as is (initializers listed among the
+    inputs by old IR versions are not skipped); our classifiers take the image first.
+
+    Args:
+        model_path: Path to the ``.onnx`` file.
+
+    Returns:
+        One entry per dimension (``int`` for static, ``str`` for dynamic or unnamed dims), or ``None`` if the file cannot
+        be read or parsed or declares no shape. Never raises.
+    """
+    try:
+        graph = _first_field(memoryview(Path(model_path).read_bytes()), 7)
+        value_info = _first_field(graph, 11) if graph is not None else None
+        type_proto = _first_field(value_info, 2) if value_info is not None else None
+        tensor_type = _first_field(type_proto, 1) if type_proto is not None else None
+        shape = _first_field(tensor_type, 2) if tensor_type is not None else None
+        if shape is None:
+            return None
+        dims: list[int | str] = []
+        for num, dim in _pb_fields(shape):
+            if num != 1 or not isinstance(dim, memoryview):
+                continue
+            value: int | str = "?"
+            for dnum, dvalue in _pb_fields(dim):
+                if dnum == 1 and isinstance(dvalue, int):
+                    # dim_value is int64: -1 arrives as a 10-byte varint (unsigned 2**64 - 1).
+                    value = dvalue - (1 << 64) if dvalue >= 1 << 63 else dvalue
+                elif dnum == 2 and isinstance(dvalue, memoryview):
+                    value = bytes(dvalue).decode("utf-8", errors="replace")
+            dims.append(value)
+        return dims
+    except Exception:  # best-effort probe: must never break model loading
+        return None
+
+
+def _check_declared_input_size(model_path: Path | str, shape: list[int | str] | None, input_size: int | None) -> None:
+    """Compares a model's declared NCHW input with ``EDGE__INPUT_SIZE``.
+
+    Unknown, non-4-D, dynamic or non-positive (``-1`` / ``0``) shapes are skipped (the warm-up remains the safety net).
+
+    Args:
+        model_path: Path to the model (for the message).
+        shape: Declared input shape, or ``None`` if unknown.
+        input_size: Configured square input side; ``None`` disables the check.
+
+    Raises:
+        EdgeModelError: If the declared static height or width differs from ``input_size``.
+    """
+    if input_size is None or shape is None or len(shape) != 4:
+        return
+    n_dims = [d if isinstance(d, int) and d > 0 else None for d in shape]
+    if n_dims[1] is not None and n_dims[2] is not None and n_dims[3] == 3 and n_dims[1] != 3:
+        raise EdgeModelError(
+            f"Model '{model_path}' declares the input {shape} which looks like an NHWC model; "
+            "only NCHW is supported by the preprocessing contract."
+        )
+    height, width = n_dims[2], n_dims[3]
+    if height is None or width is None:  # unknown, dynamic or non-positive (-1 / 0) dims
+        return
+    if (height, width) != (input_size, input_size):
+        raise EdgeModelError(f"Model '{model_path}' expects a {height}x{width} input but EDGE__INPUT_SIZE={input_size}.")
+
+
 class CvDnnBackend:
     """``cv2.dnn`` backend (default; CPU or experimental OpenCL)."""
 
-    def __init__(self, model_path: Path, accelerator: Accelerator) -> None:
+    def __init__(self, model_path: Path, accelerator: Accelerator, *, input_size: int | None = None) -> None:
         """Loads the model.
 
         Args:
             model_path: Path to the ``.onnx`` model.
             accelerator: ``CPU`` or ``OPENCL``.
+            input_size: Expected square input side; compared with the model's declared static input dims when given
+                (``cv2.dnn`` does not expose them, so the ONNX file is parsed).
 
         Raises:
-            EdgeModelError: If the model cannot be loaded.
+            EdgeModelError: If the model cannot be loaded or its declared input size does not match ``input_size``.
         """
         try:
             self._net = cv2.dnn.readNetFromONNX(str(model_path))
@@ -205,6 +342,8 @@ class CvDnnBackend:
                 self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         except cv2.error as e:
             raise EdgeModelError(f"Failed to load ONNX model '{model_path}' with cv2.dnn: {e}") from e
+        if input_size is not None:
+            _check_declared_input_size(model_path, read_onnx_input_shape(model_path), input_size)
 
     def predict(self, blob: np.ndarray) -> np.ndarray:
         """Runs a forward pass.
@@ -258,10 +397,7 @@ class OnnxRuntimeBackend:
             )
         model_input = self._session.get_inputs()[0]
         self._input_name = model_input.name
-        dims = list(model_input.shape)[2:]
-        static = len(dims) == 2 and all(isinstance(d, int) for d in dims)
-        if input_size is not None and static and tuple(dims) != (input_size, input_size):
-            raise EdgeModelError(f"Model '{model_path}' expects a {dims[0]}x{dims[1]} input but EDGE__INPUT_SIZE={input_size}.")
+        _check_declared_input_size(model_path, list(model_input.shape), input_size)
 
     def predict(self, blob: np.ndarray) -> np.ndarray:
         """Runs inference.
@@ -301,7 +437,7 @@ def _create_backend(
                 raise EdgeModelError(f"EDGE__ACCELERATOR=cuda requested but unusable: {e}") from e
             logger.warning("ONNX Runtime CUDA could not be activated (%s); falling back to cv2.dnn on the CPU.", e)
             plan = BackendPlan("cv2dnn", Accelerator.CPU)
-    return CvDnnBackend(model_path, plan.accelerator), plan
+    return CvDnnBackend(model_path, plan.accelerator, input_size=input_size), plan
 
 
 class EdgeInferenceDetector:

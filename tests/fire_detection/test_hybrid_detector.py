@@ -515,3 +515,30 @@ def test_hybrid_cloud_strategy_unchanged() -> None:
     assert isinstance(detector, HybridFireDetector)
     assert isinstance(detector.local_detector, CPUFireDetector)
     assert detector.verifier is gemini.return_value
+
+
+def test_input_size_mismatch_after_model_swap_falls_back_and_drops_cache(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Real files: a model replaced by one declaring another input size falls back (CRITICAL) and leaves no cache entry."""
+    import os
+
+    from is_goat_burning.fire_detection import detectors
+    from tests.fire_detection.test_edge_detector import _build_classifier_onnx
+
+    model = tmp_path / "m.onnx"
+    model.write_bytes(_build_classifier_onnx(8))
+    with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu", input_size=8)):
+        assert isinstance(_create_edge(), HybridFireDetector)
+        assert len(detectors._edge_verifier_cache) == 1
+
+        model.write_bytes(_build_classifier_onnx(16))  # declares 16x16 while EDGE__INPUT_SIZE stays 8
+        stat = model.stat()
+        os.utime(model, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+        detector = _create_edge()
+
+    assert isinstance(detector, CPUFireDetector)
+    messages = _critical_messages(caplog)
+    assert len(messages) == 1
+    assert "expects a 16x16 input" in messages[0]
+    assert len(detectors._edge_verifier_cache) == 0
