@@ -1,0 +1,344 @@
+"""Offline fire verification with a local image classifier (``hybrid_edge`` building block)."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+import cv2
+import numpy as np
+
+from is_goat_burning.config import Accelerator
+from is_goat_burning.config import EdgeSettings
+from is_goat_burning.logger import get_logger
+
+logger = get_logger("EdgeInferenceDetector")
+
+# Number of consecutive failed inferences after which a CRITICAL message is logged (once per outage).
+CONSECUTIVE_ERRORS_BEFORE_CRITICAL = 5
+
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+_MEAN = np.array(IMAGENET_MEAN, dtype=np.float32).reshape(1, 3, 1, 1)
+_STD = np.array(IMAGENET_STD, dtype=np.float32).reshape(1, 3, 1, 1)
+
+_CUDA_PROVIDER = "CUDAExecutionProvider"
+_CPU_PROVIDER = "CPUExecutionProvider"
+
+
+class EdgeModelError(RuntimeError):
+    """Raised when the edge model cannot be loaded or the requested backend is unavailable."""
+
+
+class EdgeBackend(Protocol):
+    """Runs a preprocessed NCHW blob through the model."""
+
+    def predict(self, blob: np.ndarray) -> np.ndarray:
+        """Runs inference.
+
+        Args:
+            blob: ``float32`` array of shape ``(1, 3, H, W)``.
+
+        Returns:
+            The raw model output.
+        """
+        ...
+
+
+PostProcessor = Callable[[np.ndarray], float]
+
+
+@dataclass(frozen=True)
+class BackendPlan:
+    """Resolved inference engine selection.
+
+    Attributes:
+        engine: ``"cv2dnn"`` or ``"onnxruntime"``.
+        accelerator: The concrete (never ``auto``) accelerator.
+    """
+
+    engine: str
+    accelerator: Accelerator
+
+
+def onnxruntime_has_cuda() -> bool:
+    """Probes whether ONNX Runtime is installed and offers the CUDA execution provider.
+
+    Returns:
+        ``True`` if ``CUDAExecutionProvider`` is available.
+    """
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return False
+    return _CUDA_PROVIDER in ort.get_available_providers()
+
+
+def opencl_available() -> bool:
+    """Probes whether OpenCV reports a usable OpenCL runtime.
+
+    Returns:
+        ``True`` if ``cv2.ocl.haveOpenCL()`` is true.
+    """
+    try:
+        return bool(cv2.ocl.haveOpenCL())
+    except Exception:
+        return False
+
+
+def select_backend(accelerator: Accelerator, *, cuda_available: bool, opencl_available: bool) -> BackendPlan:
+    """Maps the configured accelerator to an inference engine (pure function).
+
+    ``auto`` selects CUDA (ONNX Runtime) when available and CPU (``cv2.dnn``) otherwise. OpenCL is never
+    auto-selected because ``cv2.dnn`` OpenCL gave no gain and was unreliable in the #73 research.
+
+    Args:
+        accelerator: The configured accelerator.
+        cuda_available: Whether the ONNX Runtime CUDA provider is available.
+        opencl_available: Whether OpenCV reports an OpenCL runtime.
+
+    Returns:
+        The resolved plan.
+
+    Raises:
+        EdgeModelError: If an explicitly requested accelerator is unavailable or unsupported.
+    """
+    if accelerator == Accelerator.AUTO:
+        accelerator = Accelerator.CUDA if cuda_available else Accelerator.CPU
+    if accelerator == Accelerator.CPU:
+        return BackendPlan("cv2dnn", Accelerator.CPU)
+    if accelerator == Accelerator.CUDA:
+        if not cuda_available:
+            raise EdgeModelError(
+                "EDGE__ACCELERATOR=cuda requires onnxruntime-gpu with CUDAExecutionProvider, which is not available."
+            )
+        return BackendPlan("onnxruntime", Accelerator.CUDA)
+    if accelerator == Accelerator.OPENCL:
+        if not opencl_available:
+            raise EdgeModelError("EDGE__ACCELERATOR=opencl requested but OpenCV reports no usable OpenCL runtime.")
+        return BackendPlan("cv2dnn", Accelerator.OPENCL)
+    raise EdgeModelError(f"Unsupported EDGE__ACCELERATOR value: {accelerator!r}")
+
+
+def preprocess(frame: np.ndarray, input_size: int) -> np.ndarray:
+    """Converts a BGR frame to the classifier input blob.
+
+    BGR -> RGB, squash-resize (no crop) to ``input_size``, scale to 0-1, ImageNet mean/std, NCHW ``float32``.
+
+    Args:
+        frame: BGR ``uint8`` image of shape ``(H, W, 3)``.
+        input_size: Side of the square model input.
+
+    Returns:
+        Array of shape ``(1, 3, input_size, input_size)`` and dtype ``float32``.
+
+    Raises:
+        ValueError: If the frame is not a 3-channel image.
+    """
+    if frame.ndim != 3 or frame.shape[2] != 3:
+        raise ValueError(f"Expected a 3-channel BGR frame, got shape {frame.shape}.")
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    resized = cv2.resize(rgb, (input_size, input_size), interpolation=cv2.INTER_LINEAR)
+    blob = resized.astype(np.float32).transpose(2, 0, 1)[np.newaxis] / 255.0
+    return np.ascontiguousarray((blob - _MEAN) / _STD, dtype=np.float32)
+
+
+def classifier_fire_probability(output: np.ndarray) -> float:
+    """Converts classifier output to P(fire).
+
+    Two logits -> ``softmax(logits)[1]``; a single logit -> sigmoid.
+
+    Args:
+        output: Raw model output holding one or two logits.
+
+    Returns:
+        P(fire) in ``[0, 1]``.
+
+    Raises:
+        ValueError: If the output does not hold one or two values.
+    """
+    logits = np.asarray(output, dtype=np.float64).reshape(-1)
+    if logits.size == 1:
+        return float(1.0 / (1.0 + np.exp(-logits[0])))
+    if logits.size == 2:
+        exp = np.exp(logits - logits.max())
+        return float(exp[1] / exp.sum())
+    raise ValueError(f"Unsupported classifier output with {logits.size} values (expected 1 or 2).")
+
+
+class CvDnnBackend:
+    """``cv2.dnn`` backend (default; CPU or experimental OpenCL)."""
+
+    def __init__(self, model_path: Path, accelerator: Accelerator) -> None:
+        """Loads the model.
+
+        Args:
+            model_path: Path to the ``.onnx`` model.
+            accelerator: ``CPU`` or ``OPENCL``.
+
+        Raises:
+            EdgeModelError: If the model cannot be loaded.
+        """
+        try:
+            self._net = cv2.dnn.readNetFromONNX(str(model_path))
+            self._net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            if accelerator == Accelerator.OPENCL:
+                logger.warning(
+                    "cv2.dnn OpenCL is experimental and unreliable with OpenCV 5.0.0 (see #73); "
+                    "inference may silently run on the CPU."
+                )
+                self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_OPENCL)
+            else:
+                self._net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        except cv2.error as e:
+            raise EdgeModelError(f"Failed to load ONNX model '{model_path}' with cv2.dnn: {e}") from e
+
+    def predict(self, blob: np.ndarray) -> np.ndarray:
+        """Runs a forward pass.
+
+        Args:
+            blob: ``float32`` NCHW input.
+
+        Returns:
+            The raw network output.
+        """
+        self._net.setInput(blob)
+        return np.asarray(self._net.forward())
+
+
+class OnnxRuntimeBackend:
+    """ONNX Runtime backend (CPU or CUDA execution provider); ``onnxruntime`` is imported lazily."""
+
+    def __init__(self, model_path: Path, accelerator: Accelerator) -> None:
+        """Loads the model.
+
+        Args:
+            model_path: Path to the ``.onnx`` model.
+            accelerator: ``CPU`` or ``CUDA``.
+
+        Raises:
+            EdgeModelError: If onnxruntime is missing, CUDA is unavailable or the model cannot be loaded.
+        """
+        try:
+            import onnxruntime as ort
+        except ImportError as e:
+            raise EdgeModelError(
+                "The 'onnxruntime' package is required for this accelerator (install onnxruntime or onnxruntime-gpu)."
+            ) from e
+        providers = [_CPU_PROVIDER]
+        if accelerator == Accelerator.CUDA:
+            if _CUDA_PROVIDER not in ort.get_available_providers():
+                raise EdgeModelError("onnxruntime has no CUDAExecutionProvider (install onnxruntime-gpu).")
+            providers = [_CUDA_PROVIDER, _CPU_PROVIDER]
+        try:
+            self._session = ort.InferenceSession(str(model_path), providers=providers)
+        except Exception as e:
+            raise EdgeModelError(f"Failed to load ONNX model '{model_path}' with onnxruntime: {e}") from e
+        self._input_name = self._session.get_inputs()[0].name
+
+    def predict(self, blob: np.ndarray) -> np.ndarray:
+        """Runs inference.
+
+        Args:
+            blob: ``float32`` NCHW input.
+
+        Returns:
+            The first model output.
+        """
+        return np.asarray(self._session.run(None, {self._input_name: blob})[0])
+
+
+def _create_backend(plan: BackendPlan, model_path: Path) -> EdgeBackend:
+    """Instantiates the backend for a plan."""
+    if plan.engine == "onnxruntime":
+        return OnnxRuntimeBackend(model_path, plan.accelerator)
+    return CvDnnBackend(model_path, plan.accelerator)
+
+
+class EdgeInferenceDetector:
+    """Confirms fire with a local image classifier (fire / no-fire) running fully offline.
+
+    ``detect()`` never raises (an exception would abort the detection loop): failures are logged at ERROR,
+    treated as "no fire" and counted; after ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive failures a
+    CRITICAL message is logged once.
+    """
+
+    def __init__(
+        self,
+        settings: EdgeSettings,
+        *,
+        backend: EdgeBackend | None = None,
+        postprocess: PostProcessor = classifier_fire_probability,
+    ) -> None:
+        """Initializes the detector and loads the model.
+
+        Args:
+            settings: Edge configuration.
+            backend: Optional pre-built backend (mainly for tests); skips model loading and backend selection.
+            postprocess: Converts the raw model output to P(fire); replaceable for other model heads.
+
+        Raises:
+            EdgeModelError: If the model is missing/invalid or the requested backend is unavailable.
+        """
+        self.threshold = settings.confidence_threshold
+        self.input_size = settings.input_size
+        self._postprocess = postprocess
+        self._consecutive_errors = 0
+        if backend is not None:
+            self._backend = backend
+            return
+        if not settings.model_path:
+            raise EdgeModelError("EDGE__MODEL_PATH must be set to use the edge detector.")
+        model_path = Path(settings.model_path)
+        if not model_path.is_file():
+            raise EdgeModelError(f"Edge model file not found: {model_path}")
+        plan = select_backend(
+            settings.accelerator,
+            cuda_available=onnxruntime_has_cuda() if settings.accelerator in (Accelerator.AUTO, Accelerator.CUDA) else False,
+            opencl_available=opencl_available() if settings.accelerator == Accelerator.OPENCL else False,
+        )
+        self._backend = _create_backend(plan, model_path)
+        logger.info("Edge detector ready: engine=%s accelerator=%s model=%s", plan.engine, plan.accelerator, model_path)
+
+    def _record_error(self) -> None:
+        """Counts a failed inference and escalates to CRITICAL once per outage."""
+        self._consecutive_errors += 1
+        if self._consecutive_errors == CONSECUTIVE_ERRORS_BEFORE_CRITICAL:
+            logger.critical(
+                "Edge inference failed %d times in a row; fire verification is effectively disabled until it recovers.",
+                self._consecutive_errors,
+            )
+
+    def _infer(self, frame: np.ndarray) -> float:
+        """Runs preprocessing, inference and post-processing (blocking)."""
+        blob = preprocess(frame, self.input_size)
+        return float(self._postprocess(self._backend.predict(blob)))
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        """Analyzes a frame for fire with the local model.
+
+        Args:
+            frame: The input video frame (BGR numpy array).
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if fire was detected (``False`` on any error).
+            - The original, unmodified frame.
+        """
+        try:
+            probability = await asyncio.to_thread(self._infer, frame)
+        except Exception:
+            logger.exception("Edge inference failed.")
+            self._record_error()
+            return False, frame
+
+        if self._consecutive_errors:
+            logger.info("Edge inference recovered after %d consecutive errors.", self._consecutive_errors)
+            self._consecutive_errors = 0
+
+        is_fire = probability >= self.threshold
+        logger.debug("Edge result: P(fire)=%.3f threshold=%.2f is_fire=%s", probability, self.threshold, is_fire)
+        return is_fire, frame
