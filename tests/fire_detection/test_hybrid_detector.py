@@ -403,6 +403,46 @@ def test_edge_verifier_rebuilt_when_model_file_changes(tmp_path: Path) -> None:
         assert factory.call_count == 3
 
 
+@pytest.mark.asyncio
+async def test_unhealthy_edge_verifier_is_rebuilt(caplog: pytest.LogCaptureFixture) -> None:
+    """A verifier that failed inference is replaced on the next call; a healthy one is reused."""
+    caplog.set_level(logging.WARNING, logger="create_fire_detector")
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        first = _create_edge()
+        assert _create_edge().verifier is first.verifier  # healthy: reused
+        factory.backend.predict.side_effect = RuntimeError("CUDA context lost")
+        await first.verifier.detect(_fire_frame(150))
+        assert first.verifier.needs_rebuild
+        factory.backend.predict.side_effect = None
+        third = _create_edge()
+
+    assert factory.call_count == 2
+    assert third.verifier is not first.verifier
+    assert not third.verifier.needs_rebuild
+    assert any("Rebuilding the edge verifier" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_failed_rebuild_of_unhealthy_verifier_falls_back_uncached(caplog: pytest.LogCaptureFixture) -> None:
+    """If rebuilding after errors fails, the CRITICAL fallback applies and nothing stays cached."""
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        first = _create_edge()
+        factory.backend.predict.side_effect = RuntimeError("boom")
+        await first.verifier.detect(_fire_frame(150))
+        factory.side_effect = EdgeModelError("cannot rebuild")
+        fallback = _create_edge()
+        factory.side_effect = None
+        factory.backend.predict.side_effect = None
+        again = _create_edge()
+
+    assert isinstance(fallback, CPUFireDetector)
+    assert len(_critical_messages(caplog)) == 1
+    assert isinstance(again, HybridFireDetector)
+    assert again.verifier is not first.verifier
+
+
 def test_clear_edge_verifier_cache_forces_rebuild() -> None:
     """clear_edge_verifier_cache() makes the next call rebuild the verifier."""
     factory = _edge_factory(0.9)

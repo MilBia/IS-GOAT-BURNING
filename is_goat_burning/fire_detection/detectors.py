@@ -599,7 +599,8 @@ def _edge_cache_key(edge_settings: EdgeSettings) -> tuple:
 def _get_edge_verifier(edge_settings: EdgeSettings) -> EdgeInferenceDetector:
     """Returns a cached ``EdgeInferenceDetector`` for these settings, building (and caching) it on a miss.
 
-    A failed build raises and is NOT cached, so the next call retries.
+    A cached verifier that reports ``needs_rebuild`` (inference errors) is replaced. A failed build raises and is
+    NOT cached, so the next call retries.
 
     Args:
         edge_settings: The edge configuration.
@@ -612,9 +613,12 @@ def _get_edge_verifier(edge_settings: EdgeSettings) -> EdgeInferenceDetector:
     key = _edge_cache_key(edge_settings)
     with _edge_verifier_cache_lock:
         verifier = _edge_verifier_cache.get(key)
+        if verifier is not None and verifier.needs_rebuild:
+            _factory_logger.warning("Rebuilding the edge verifier after inference errors.")
+            verifier = None
         if verifier is None:
+            _edge_verifier_cache.clear()  # drop the old session BEFORE building (no two sessions at once)
             verifier = EdgeInferenceDetector(edge_settings)
-            _edge_verifier_cache.clear()  # keep only the current model; stale entries are never reused
             _edge_verifier_cache[key] = verifier
         else:
             _factory_logger.info("Reusing the cached edge verifier (model unchanged).")
