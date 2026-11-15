@@ -4,8 +4,6 @@ Backends: ``cv2.dnn`` (default, CPU; experimental OpenCL) and ONNX Runtime (CUDA
 only when it is actually active and otherwise ``cv2.dnn`` on the CPU; an explicit ``cuda`` never falls back.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable
 from collections.abc import Iterator

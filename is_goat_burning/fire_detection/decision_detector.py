@@ -1,7 +1,5 @@
 """Implements fire detection using the Gemini Decisions API (``gemini-decision-1``)."""
 
-from __future__ import annotations
-
 import asyncio
 import base64
 

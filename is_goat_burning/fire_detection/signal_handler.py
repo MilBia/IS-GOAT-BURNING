@@ -1,7 +1,5 @@
 """Handles application-wide signals for graceful shutdown and custom events."""
 
-from __future__ import annotations
-
 import asyncio
 import signal
 

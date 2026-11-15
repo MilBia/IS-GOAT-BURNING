@@ -6,8 +6,6 @@ video streaming, processes frames at a configurable rate, and uses a
 selected detector implementation (CPU, CUDA, or OpenCL) to check for fire.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
