@@ -145,17 +145,18 @@ def test_edge_settings_defaults() -> None:
     assert edge.accelerator == Accelerator.AUTO
 
 
-@pytest.mark.parametrize("value", ["auto", "cpu", "cuda", "opencl", "ncs2"])
+@pytest.mark.parametrize("value", ["auto", "cpu", "cuda", "opencl"])
 def test_edge_accelerator_accepts_valid_values(value: str) -> None:
     """Verifies every documented accelerator value is accepted."""
     edge = EdgeSettings(accelerator=value)
     assert edge.accelerator == value
 
 
-def test_edge_accelerator_rejects_invalid_value() -> None:
-    """Verifies an unsupported accelerator value fails validation."""
+@pytest.mark.parametrize("value", ["quantum", "ncs2"])
+def test_edge_accelerator_rejects_invalid_value(value: str) -> None:
+    """Verifies an unsupported accelerator value (including the dropped ``ncs2``) fails validation."""
     with pytest.raises(ValidationError):
-        EdgeSettings(accelerator="quantum")
+        EdgeSettings(accelerator=value)
 
 
 @pytest.mark.parametrize("value", [-0.1, 1.1])
