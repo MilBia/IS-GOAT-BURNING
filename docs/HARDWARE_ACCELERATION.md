@@ -23,6 +23,10 @@ the detector factory logs a **CRITICAL** message and falls back to the classic l
 settings): fires are still reported, but **unverified**. At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
 CRITICAL after 5 consecutive failures.
 
+The loaded verifier is reused across stream reconnects: the model is read and warmed up once, not on every reconnect.
+It is rebuilt only when the model file is replaced (mtime/size change) or an `EDGE__*` setting changes. A failed load is
+never cached, so the next reconnect retries it (and logs the CRITICAL fallback again).
+
 ## Configuration
 
 | Variable | Default | Description |

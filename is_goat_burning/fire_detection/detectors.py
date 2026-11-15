@@ -14,6 +14,9 @@ detector based on the application's configuration.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import threading
+from typing import TYPE_CHECKING
 from typing import Protocol
 
 import cv2
@@ -31,7 +34,16 @@ MAX_PIXEL_VALUE = 255
 MIN_WARM_FRACTION = 0.002
 MIN_MOVING_FRACTION = 0.0005
 
+if TYPE_CHECKING:
+    from is_goat_burning.config import EdgeSettings
+    from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+
 _factory_logger = get_logger("create_fire_detector")
+
+# Successfully built edge verifiers, kept across factory calls (i.e. stream reconnects) so the ONNX model is not
+# re-read, re-warmed-up and its CUDA session not recreated each time. Only successes are stored.
+_edge_verifier_cache: dict[tuple, EdgeInferenceDetector] = {}
+_edge_verifier_cache_lock = threading.Lock()
 
 
 def is_fire_by_pixels(
@@ -542,6 +554,73 @@ def _create_local_detector(
     return CPUFireDetector(margin, lower, upper, threshold, relative_threshold)
 
 
+def clear_edge_verifier_cache() -> None:
+    """Drops every cached ``EdgeInferenceDetector`` so the next ``hybrid_edge`` factory call rebuilds it.
+
+    Intended for tests (to prevent state leaking between them) and for callers that need to force a model reload.
+    """
+    with _edge_verifier_cache_lock:
+        _edge_verifier_cache.clear()
+
+
+def _edge_cache_key(edge_settings: EdgeSettings) -> tuple:
+    """Builds the cache key from everything that determines the edge verifier.
+
+    The model file's mtime and size are part of the key, so a replaced model file is picked up on the next call.
+
+    Args:
+        edge_settings: The edge configuration.
+
+    Returns:
+        A hashable key.
+    """
+    model_path = edge_settings.model_path
+    resolved: str | None = None
+    mtime_ns: int | None = None
+    size: int | None = None
+    if model_path:
+        path = Path(model_path)
+        try:
+            resolved = str(path.resolve())
+            stat = path.stat()
+            mtime_ns, size = stat.st_mtime_ns, stat.st_size
+        except OSError:
+            resolved = resolved or str(model_path)
+    return (
+        resolved,
+        mtime_ns,
+        size,
+        str(edge_settings.accelerator),
+        edge_settings.input_size,
+        edge_settings.confidence_threshold,
+    )
+
+
+def _get_edge_verifier(edge_settings: EdgeSettings) -> EdgeInferenceDetector:
+    """Returns a cached ``EdgeInferenceDetector`` for these settings, building (and caching) it on a miss.
+
+    A failed build raises and is NOT cached, so the next call retries.
+
+    Args:
+        edge_settings: The edge configuration.
+
+    Returns:
+        The (possibly shared) verifier.
+    """
+    from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+
+    key = _edge_cache_key(edge_settings)
+    with _edge_verifier_cache_lock:
+        verifier = _edge_verifier_cache.get(key)
+        if verifier is None:
+            verifier = EdgeInferenceDetector(edge_settings)
+            _edge_verifier_cache.clear()  # keep only the current model; stale entries are never reused
+            _edge_verifier_cache[key] = verifier
+        else:
+            _factory_logger.info("Reusing the cached edge verifier (model unchanged).")
+        return verifier
+
+
 def create_fire_detector(
     margin: int,
     lower: np.ndarray,
@@ -583,6 +662,11 @@ def create_fire_detector(
         local detector (classic rule; honours CUDA/OpenCL settings), so fires
         are still reported (unverified) instead of every alert being silently
         suppressed.
+
+        The built edge verifier is cached across calls (keyed by resolved model path, file mtime and size,
+        accelerator, input size and confidence threshold), so a stream reconnect does not reload the model; only
+        successes are cached, a failed build is retried (and re-logged) on the next call. The local detector is
+        always created fresh (its motion baseline must not survive a reconnect).
     """
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
@@ -590,12 +674,11 @@ def create_fire_detector(
     cloud_hybrid_strategies = ("hybrid_cloud", "hybrid")
 
     if selected_strategy == "hybrid_edge":
-        from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
         from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 
         edge_local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
         try:
-            return HybridFireDetector(edge_local_detector, EdgeInferenceDetector(settings.edge))
+            return HybridFireDetector(edge_local_detector, _get_edge_verifier(settings.edge))
         except Exception as exc:  # noqa: BLE001 - any load failure must degrade to the local detector, never abort startup
             _factory_logger.critical(
                 "hybrid_edge verification is unavailable (%s). Falling back to the local detector (classic rule): "

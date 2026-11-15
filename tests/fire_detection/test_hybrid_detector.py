@@ -20,6 +20,7 @@ from is_goat_burning.config import EdgeSettings
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.detectors import CPUFireDetector
 from is_goat_burning.fire_detection.detectors import HybridFireDetector
+from is_goat_burning.fire_detection.detectors import clear_edge_verifier_cache
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
@@ -343,6 +344,116 @@ def test_hybrid_edge_fallback_with_corrupt_model(tmp_path: Path, caplog: pytest.
 
     assert isinstance(detector, CPUFireDetector)
     assert len(_critical_messages(caplog)) == 1
+
+
+# --- edge verifier caching across reconnects (#119) ---
+
+
+def test_edge_verifier_is_cached_across_factory_calls() -> None:
+    """Two consecutive factory calls build the verifier once but return fresh detectors sharing it."""
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        first = _create_edge()
+        second = _create_edge()
+
+    factory.assert_called_once()
+    assert first is not second
+    assert first.local_detector is not second.local_detector  # motion baseline is never shared
+    assert first.verifier is second.verifier
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [{"confidence_threshold": 0.9}, {"input_size": 16}],
+    ids=["confidence_threshold", "input_size"],
+)
+def test_edge_verifier_rebuilt_when_settings_change(changed: dict) -> None:
+    """A changed EDGE__* setting invalidates the cached verifier."""
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        _create_edge()
+        with patch.object(settings, "edge", EdgeSettings(**changed)):
+            _create_edge()
+
+    assert factory.call_count == 2
+
+
+def test_edge_verifier_rebuilt_when_model_file_changes(tmp_path: Path) -> None:
+    """Touching or replacing the model file (mtime/size) invalidates the cached verifier."""
+    import os
+
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"v1")
+    factory = _edge_factory(0.9)
+    with (
+        patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu")),
+        patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory),
+    ):
+        _create_edge()
+        _create_edge()
+        assert factory.call_count == 1
+
+        stat = model.stat()
+        os.utime(model, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))  # touch: same size, new mtime
+        _create_edge()
+        assert factory.call_count == 2
+
+        model.write_bytes(b"version two")  # replaced: new size
+        _create_edge()
+        assert factory.call_count == 3
+
+
+def test_clear_edge_verifier_cache_forces_rebuild() -> None:
+    """clear_edge_verifier_cache() makes the next call rebuild the verifier."""
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        _create_edge()
+        clear_edge_verifier_cache()
+        _create_edge()
+
+    assert factory.call_count == 2
+
+
+def test_failed_edge_build_is_not_cached(caplog: pytest.LogCaptureFixture) -> None:
+    """A failing build is retried (and re-logged CRITICAL) on each call; the first success is then cached."""
+    from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+
+    backend = MagicMock()
+    good = EdgeInferenceDetector(EdgeSettings(input_size=8), backend=backend)
+    factory = MagicMock(side_effect=[EdgeModelError("broken"), EdgeModelError("still broken"), good])
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        first = _create_edge()
+        second = _create_edge()
+        third = _create_edge()
+        fourth = _create_edge()
+
+    assert isinstance(first, CPUFireDetector)
+    assert isinstance(second, CPUFireDetector)
+    assert len(_critical_messages(caplog)) == 2
+    assert isinstance(third, HybridFireDetector)
+    assert third.verifier is good
+    assert fourth.verifier is good
+    assert factory.call_count == 3
+
+
+def test_corrupt_model_replaced_by_valid_one_is_picked_up(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """With real files: a corrupt model falls back, then a valid replacement is loaded and reused."""
+    from tests.fire_detection.test_edge_detector import _build_classifier_onnx
+
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"this is not an onnx model")
+    with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu", input_size=8)):
+        assert isinstance(_create_edge(), CPUFireDetector)
+        assert isinstance(_create_edge(), CPUFireDetector)
+        assert len(_critical_messages(caplog)) == 2
+
+        model.write_bytes(_build_classifier_onnx(8))
+        first = _create_edge()
+        second = _create_edge()
+
+    assert isinstance(first, HybridFireDetector)
+    assert first.verifier is second.verifier
+    assert len(_critical_messages(caplog)) == 2
 
 
 def test_hybrid_cloud_strategy_unchanged() -> None:
