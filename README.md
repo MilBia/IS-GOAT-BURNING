@@ -63,7 +63,10 @@ If you need to add or change a dependency, edit `pyproject.toml` and then run th
 pip-compile --output-file=requirements.txt pyproject.toml
 pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
 pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml  # optional, hybrid_edge on CUDA
 ```
+
+For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured latency) see the [Hardware Acceleration Guide](docs/HARDWARE_ACCELERATION.md).
 
 ## CONFIGURATION
 
