@@ -21,6 +21,7 @@ from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 from is_goat_burning.fire_detection.edge_detector import OnnxRuntimeBackend
 from is_goat_burning.fire_detection.edge_detector import classifier_fire_probability
 from is_goat_burning.fire_detection.edge_detector import preprocess
+from is_goat_burning.fire_detection.edge_detector import read_onnx_input_shape
 from is_goat_burning.fire_detection.edge_detector import select_backend
 
 # --- backend selection ---
@@ -295,6 +296,59 @@ def test_input_size_mismatch_fails_at_construction(tmp_path):
     model.write_bytes(_build_flatten_onnx(8))
     with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
         EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=16))
+
+
+def test_read_onnx_input_shape_static(tmp_path):
+    model = tmp_path / "m.onnx"
+    model.write_bytes(_build_classifier_onnx(8))
+    assert read_onnx_input_shape(model) == [1, 3, 8, 8]
+
+
+def test_read_onnx_input_shape_dynamic_dims(tmp_path):
+    dims = _ld(1, _vi(1, 1)) + _ld(1, _ld(2, b"batch"))
+    graph = _ld(11, _ld(1, b"x") + _ld(2, _ld(1, _vi(1, 1) + _ld(2, dims))))
+    model = tmp_path / "dyn.onnx"
+    model.write_bytes(_vi(1, 8) + _ld(7, graph))
+    assert read_onnx_input_shape(model) == [1, "batch"]
+
+
+@pytest.mark.parametrize("data", [b"", b"this is not an onnx model", b"\xff" * 32, _ld(7, b"\x0a\x05ab")])
+def test_read_onnx_input_shape_garbage_returns_none(tmp_path, data):
+    model = tmp_path / "bad.onnx"
+    model.write_bytes(data)
+    assert read_onnx_input_shape(model) is None
+
+
+def test_read_onnx_input_shape_truncated_returns_none(tmp_path):
+    full = _build_classifier_onnx(8)
+    start = full.index(_value_info("x", [1, 3, 8, 8]))
+    model = tmp_path / "cut.onnx"
+    model.write_bytes(full[: start + 6])  # cut inside the declared input
+    assert read_onnx_input_shape(model) is None
+    model.write_bytes(full[:10])
+    assert read_onnx_input_shape(model) is None
+
+
+def test_read_onnx_input_shape_missing_file_returns_none(tmp_path):
+    assert read_onnx_input_shape(tmp_path / "nope.onnx") is None
+
+
+def test_cvdnn_size_agnostic_model_mismatch_fails_at_construction(tmp_path):
+    model = tmp_path / "tiny.onnx"
+    model.write_bytes(_build_classifier_onnx(8))  # GlobalAveragePool: runs fine at any resolution
+    with pytest.raises(EdgeModelError, match=r"EDGE__INPUT_SIZE=16") as exc:
+        EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=16))
+    assert "8x8" in str(exc.value)
+    assert str(model) in str(exc.value)
+    EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=Accelerator.CPU, input_size=8))
+
+
+def test_cvdnn_unknown_or_dynamic_declared_shape_skips_check(monkeypatch):
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: MagicMock())
+    monkeypatch.setattr(edge_detector, "read_onnx_input_shape", lambda _p: [1, 3, "h", "w"])
+    CvDnnBackend("m.onnx", Accelerator.CPU, input_size=8)
+    monkeypatch.setattr(edge_detector, "read_onnx_input_shape", lambda _p: None)
+    CvDnnBackend("m.onnx", Accelerator.CPU, input_size=8)
 
 
 def test_warm_up_rejects_unusable_output():
