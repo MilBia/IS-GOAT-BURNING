@@ -5,18 +5,23 @@ CV detector as a gatekeeper and a pluggable verifier (Gemini, Decisions API, edg
 """
 
 from collections.abc import Generator
+import logging
+from pathlib import Path
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 from pydantic import SecretStr
 import pytest
 
+from is_goat_burning.config import EdgeSettings
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.detectors import CPUFireDetector
 from is_goat_burning.fire_detection.detectors import HybridFireDetector
 from is_goat_burning.fire_detection.detectors import create_fire_detector
+from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 from is_goat_burning.fire_detection.gemini_detector import GeminiFireDetector
 
 # --- Test Constants ---
@@ -230,3 +235,123 @@ async def test_hybrid_logs_rejection_with_verifier_class_name(mock_local_detecto
     message = get_logger.return_value.info.call_args.args[0]
     assert "_FakeVerifier" in message
     assert "false positive filtered" in message
+
+
+# --- hybrid_edge factory wiring ---
+
+EDGE_STRATEGY = "hybrid_edge"
+FIRE_HSV = (25, 200, 200)
+
+
+def _fire_frame(value: int) -> np.ndarray:
+    """Builds a uniformly fire-coloured BGR frame; differing ``value`` between frames simulates motion."""
+    hsv = np.zeros((TEST_FRAME_HEIGHT, TEST_FRAME_WIDTH, 3), dtype=np.uint8)
+    hsv[:] = (FIRE_HSV[0], FIRE_HSV[1], value)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+
+def _edge_factory(fire_probability: float) -> MagicMock:
+    """Returns a stand-in for ``EdgeInferenceDetector`` built on a fake backend with a fixed P(fire).
+
+    The returned mock records its call arguments and exposes the fake backend as ``.backend``.
+    """
+    from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+
+    backend = MagicMock()
+    backend.predict.return_value = np.array([[np.log(1 - fire_probability), np.log(fire_probability)]], dtype=np.float32)
+
+    def build(_settings: object) -> EdgeInferenceDetector:
+        return EdgeInferenceDetector(EdgeSettings(confidence_threshold=0.5, input_size=8), backend=backend)
+
+    factory = MagicMock(side_effect=build)
+    factory.backend = backend
+    return factory
+
+
+def _create_edge():
+    return create_fire_detector(TEST_MARGIN, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=False, strategy=EDGE_STRATEGY)
+
+
+def _critical_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.CRITICAL]
+
+
+def test_factory_builds_hybrid_edge() -> None:
+    """The factory wraps the local detector with an EdgeInferenceDetector built from settings.edge."""
+    from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+
+    factory = _edge_factory(0.9)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        detector = _create_edge()
+
+    assert isinstance(detector, HybridFireDetector)
+    assert isinstance(detector.local_detector, CPUFireDetector)
+    assert isinstance(detector.verifier, EdgeInferenceDetector)
+    factory.assert_called_once_with(settings.edge)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("probability", "expected"), [(0.9, True), (0.1, False)])
+async def test_hybrid_edge_detect_end_to_end(probability: float, expected: bool) -> None:
+    """Local CV fires on a moving fire-coloured pair; the edge verifier confirms or rejects it."""
+    factory = _edge_factory(probability)
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+        detector = _create_edge()
+
+    await detector.detect(_fire_frame(150))  # first frame: motion baseline only
+    factory.backend.predict.assert_not_called()
+    is_fire, _ = await detector.detect(_fire_frame(250))
+
+    assert is_fire is expected
+    factory.backend.predict.assert_called_once()  # verifier consulted in both the fire and no-fire cases
+
+
+@pytest.mark.parametrize(
+    "error",
+    [EdgeModelError("model missing"), RuntimeError("onnxruntime exploded")],
+    ids=["edge_model_error", "unexpected_error"],
+)
+def test_hybrid_edge_falls_back_to_local_detector_on_load_error(error: Exception, caplog: pytest.LogCaptureFixture) -> None:
+    """Any load failure falls back to the plain local detector and logs CRITICAL."""
+    with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", side_effect=error):
+        detector = _create_edge()
+
+    assert isinstance(detector, CPUFireDetector)
+    messages = _critical_messages(caplog)
+    assert len(messages) == 1
+    assert "hybrid_edge verification is unavailable" in messages[0]
+    assert str(error) in messages[0]
+    critical = next(r for r in caplog.records if r.levelno == logging.CRITICAL)
+    assert bool(critical.exc_info) == (not isinstance(error, EdgeModelError))  # traceback only for unexpected errors
+
+
+def test_hybrid_edge_base_exception_propagates() -> None:
+    """KeyboardInterrupt/CancelledError must not be swallowed by the fallback."""
+    with (
+        patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        _create_edge()
+
+
+def test_hybrid_edge_fallback_with_corrupt_model(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A real model file with garbage bytes triggers the fallback without patching the detector."""
+    model = tmp_path / "corrupt.onnx"
+    model.write_bytes(b"this is not an onnx model")
+    with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu")):
+        detector = _create_edge()
+
+    assert isinstance(detector, CPUFireDetector)
+    assert len(_critical_messages(caplog)) == 1
+
+
+def test_hybrid_cloud_strategy_unchanged() -> None:
+    """hybrid_cloud still pairs the local detector with Gemini."""
+    with patch("is_goat_burning.fire_detection.gemini_detector.GeminiFireDetector") as gemini:
+        detector = create_fire_detector(
+            TEST_MARGIN, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=False, strategy="hybrid_cloud"
+        )
+
+    assert isinstance(detector, HybridFireDetector)
+    assert isinstance(detector.local_detector, CPUFireDetector)
+    assert detector.verifier is gemini.return_value

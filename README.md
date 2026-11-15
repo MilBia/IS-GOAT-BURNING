@@ -90,7 +90,7 @@ pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
 | **Detection Strategy** | | |
-| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
+| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `hybrid_edge` (HSV + local offline classifier, needs `EDGE__MODEL_PATH`; falls back to the local detector (classic rule) if the model fails to load), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
 | `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
 | `GEMINI__MODEL` | Gemini model to use. | `"gemini-3.5-flash-lite"` |
 | `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |
