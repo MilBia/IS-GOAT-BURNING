@@ -378,6 +378,16 @@ def test_onnxruntime_non_positive_dims_skip_check(monkeypatch, shape):
     OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
 
 
+def test_read_onnx_input_shape_overlong_varint_is_masked_to_64_bits(tmp_path):
+    # 10th byte 0x7F would overflow 64 bits; the value must wrap, not become a huge positive "static" dim.
+    bad_varint = b"\xff" * 9 + b"\x7f"
+    shape = _ld(1, _varint(1 << 3) + bad_varint)
+    value_info = _ld(1, b"x") + _ld(2, _ld(1, _vi(1, 1) + _ld(2, shape)))
+    model = tmp_path / "overflow.onnx"
+    model.write_bytes(_vi(1, 8) + _ld(7, _ld(11, value_info)))
+    assert read_onnx_input_shape(model) == [-1]  # wrapped to int64 -1 -> unknown, never a huge positive size
+
+
 def test_nhwc_shape_gets_specific_message():
     with pytest.raises(EdgeModelError, match="NHWC"):
         edge_detector._check_declared_input_size("m.onnx", [1, 224, 224, 3], 224)

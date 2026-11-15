@@ -200,7 +200,7 @@ def _read_varint(buf: bytes | memoryview, pos: int) -> tuple[int, int]:
         byte = buf[pos + i]
         result |= (byte & 0x7F) << (7 * i)
         if not byte & 0x80:
-            return result, pos + i + 1
+            return result & ((1 << 64) - 1), pos + i + 1
     raise ValueError("varint too long")
 
 
@@ -211,9 +211,8 @@ def _pb_fields(buf: bytes | memoryview) -> Iterator[tuple[int, int | memoryview]
         buf: The serialized message.
 
     Yields:
-        ``(field_number, value)``: ``int`` for varints, ``memoryview`` (zero-copy) for length-delimited fields
-        (fixed-width fields are
-        skipped).
+        ``(field_number, value)``: ``int`` for varints, ``memoryview`` (zero-copy) for length-delimited
+        fields (fixed-width fields are skipped).
 
     Raises:
         ValueError: If the message is malformed or truncated.
