@@ -351,6 +351,55 @@ def test_cvdnn_unknown_or_dynamic_declared_shape_skips_check(monkeypatch):
     CvDnnBackend("m.onnx", Accelerator.CPU, input_size=8)
 
 
+def _model_with_input_dims(dims: list[int], *, signed: bool = True) -> bytes:
+    """Minimal model whose first input has the given dims (negative ints encoded as 10-byte int64 varints)."""
+    shape = b"".join(_ld(1, _vi(1, d % (1 << 64) if signed else d)) for d in dims)
+    value_info = _ld(1, b"x") + _ld(2, _ld(1, _vi(1, 1) + _ld(2, shape)))
+    return _vi(1, 8) + _ld(7, _ld(11, value_info))
+
+
+def test_read_onnx_input_shape_negative_and_zero_dims(tmp_path):
+    model = tmp_path / "neg.onnx"
+    model.write_bytes(_model_with_input_dims([1, 3, -1, 0]))
+    assert read_onnx_input_shape(model) == [1, 3, -1, 0]
+
+
+@pytest.mark.parametrize("dims", [[1, 3, -1, -1], [1, 3, 0, 0], [1, 3, -1, 8]])
+def test_cvdnn_non_positive_declared_dims_skip_check(tmp_path, monkeypatch, dims):
+    model = tmp_path / "neg.onnx"
+    model.write_bytes(_model_with_input_dims(dims))
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: MagicMock())
+    CvDnnBackend(model, Accelerator.CPU, input_size=8)
+
+
+@pytest.mark.parametrize("shape", [(1, 3, -1, -1), (1, 3, 0, 0)])
+def test_onnxruntime_non_positive_dims_skip_check(monkeypatch, shape):
+    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=shape)
+    OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
+
+
+def test_nhwc_shape_gets_specific_message():
+    with pytest.raises(EdgeModelError, match="NHWC"):
+        edge_detector._check_declared_input_size("m.onnx", [1, 224, 224, 3], 224)
+
+
+@pytest.mark.parametrize("wire_type", [3, 4])
+def test_read_onnx_input_shape_group_wire_types_return_none(tmp_path, wire_type):
+    model = tmp_path / "grp.onnx"
+    model.write_bytes(_varint((7 << 3) | wire_type) + b"\x00\x00")
+    assert read_onnx_input_shape(model) is None
+
+
+def test_read_onnx_input_shape_uses_first_of_several_inputs(tmp_path):
+    def vi(name, dims):
+        shape = b"".join(_ld(1, _vi(1, d)) for d in dims)
+        return _ld(11, _ld(1, name) + _ld(2, _ld(1, _vi(1, 1) + _ld(2, shape))))
+
+    model = tmp_path / "multi.onnx"
+    model.write_bytes(_vi(1, 8) + _ld(7, vi(b"img", [1, 3, 8, 8]) + vi(b"other", [1, 3, 99, 99])))
+    assert read_onnx_input_shape(model) == [1, 3, 8, 8]
+
+
 def test_warm_up_rejects_unusable_output():
     backend = MagicMock()
     backend.predict.return_value = np.zeros((1, 5))

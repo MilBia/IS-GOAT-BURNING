@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from collections.abc import Iterator
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -179,7 +180,7 @@ def classifier_fire_probability(output: np.ndarray) -> float:
     raise ValueError(f"Unsupported classifier output with {logits.size} values (expected 1 or 2).")
 
 
-def _read_varint(buf: bytes, pos: int) -> tuple[int, int]:
+def _read_varint(buf: bytes | memoryview, pos: int) -> tuple[int, int]:
     """Decodes a protobuf varint.
 
     Args:
@@ -203,14 +204,15 @@ def _read_varint(buf: bytes, pos: int) -> tuple[int, int]:
     raise ValueError("varint too long")
 
 
-def _pb_fields(buf: bytes):
+def _pb_fields(buf: bytes | memoryview) -> Iterator[tuple[int, int | memoryview]]:
     """Iterates over the top-level fields of a protobuf message.
 
     Args:
         buf: The serialized message.
 
     Yields:
-        ``(field_number, value)``: ``int`` for varints, ``bytes`` for length-delimited fields (fixed-width fields are
+        ``(field_number, value)``: ``int`` for varints, ``memoryview`` (zero-copy) for length-delimited fields
+        (fixed-width fields are
         skipped).
 
     Raises:
@@ -237,10 +239,10 @@ def _pb_fields(buf: bytes):
             raise ValueError(f"unsupported wire type {wire}")
 
 
-def _first_field(buf: bytes, number: int) -> bytes | None:
+def _first_field(buf: bytes | memoryview, number: int) -> memoryview | None:
     """Returns the first length-delimited field ``number`` of a message, or ``None``."""
     for num, value in _pb_fields(buf):
-        if num == number and isinstance(value, bytes):
+        if num == number and isinstance(value, memoryview):
             return value
     return None
 
@@ -261,7 +263,7 @@ def read_onnx_input_shape(model_path: Path | str) -> list[int | str] | None:
         be read or parsed or declares no shape. Never raises.
     """
     try:
-        graph = _first_field(Path(model_path).read_bytes(), 7)
+        graph = _first_field(memoryview(Path(model_path).read_bytes()), 7)
         value_info = _first_field(graph, 11) if graph is not None else None
         type_proto = _first_field(value_info, 2) if value_info is not None else None
         tensor_type = _first_field(type_proto, 1) if type_proto is not None else None
@@ -270,14 +272,15 @@ def read_onnx_input_shape(model_path: Path | str) -> list[int | str] | None:
             return None
         dims: list[int | str] = []
         for num, dim in _pb_fields(shape):
-            if num != 1 or not isinstance(dim, bytes):
+            if num != 1 or not isinstance(dim, memoryview):
                 continue
             value: int | str = "?"
             for dnum, dvalue in _pb_fields(dim):
                 if dnum == 1 and isinstance(dvalue, int):
-                    value = dvalue
-                elif dnum == 2 and isinstance(dvalue, bytes):
-                    value = dvalue.decode("utf-8", errors="replace")
+                    # dim_value is int64: -1 arrives as a 10-byte varint (unsigned 2**64 - 1).
+                    value = dvalue - (1 << 64) if dvalue >= 1 << 63 else dvalue
+                elif dnum == 2 and isinstance(dvalue, memoryview):
+                    value = bytes(dvalue).decode("utf-8", errors="replace")
             dims.append(value)
         return dims
     except Exception:  # best-effort probe: must never break model loading
@@ -287,7 +290,7 @@ def read_onnx_input_shape(model_path: Path | str) -> list[int | str] | None:
 def _check_declared_input_size(model_path: Path | str, shape: list[int | str] | None, input_size: int | None) -> None:
     """Compares a model's declared NCHW input with ``EDGE__INPUT_SIZE``.
 
-    Unknown, non-4-D or dynamic shapes are skipped (the warm-up inference remains the safety net).
+    Unknown, non-4-D, dynamic or non-positive (``-1`` / ``0``) shapes are skipped (the warm-up remains the safety net).
 
     Args:
         model_path: Path to the model (for the message).
@@ -299,8 +302,14 @@ def _check_declared_input_size(model_path: Path | str, shape: list[int | str] | 
     """
     if input_size is None or shape is None or len(shape) != 4:
         return
-    height, width = shape[2], shape[3]
-    if not (isinstance(height, int) and isinstance(width, int)):
+    n_dims = [d if isinstance(d, int) and d > 0 else None for d in shape]
+    if n_dims[1] is not None and n_dims[2] is not None and n_dims[3] == 3 and n_dims[1] != 3:
+        raise EdgeModelError(
+            f"Model '{model_path}' declares the input {shape} which looks like an NHWC model; "
+            "only NCHW is supported by the preprocessing contract."
+        )
+    height, width = n_dims[2], n_dims[3]
+    if height is None or width is None:  # unknown, dynamic or non-positive (-1 / 0) dims
         return
     if (height, width) != (input_size, input_size):
         raise EdgeModelError(f"Model '{model_path}' expects a {height}x{width} input but EDGE__INPUT_SIZE={input_size}.")
