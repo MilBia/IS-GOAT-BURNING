@@ -374,6 +374,11 @@ class EdgeInferenceDetector:
                 "matches the model and that it is a fire classifier with 1 or 2 outputs."
             ) from e
 
+    @property
+    def needs_rebuild(self) -> bool:
+        """Whether the last inference failed, i.e. the backend session may be broken and should be rebuilt."""
+        return self._consecutive_errors > 0
+
     def _record_error(self) -> None:
         """Counts a failed inference and escalates to CRITICAL once per outage."""
         self._consecutive_errors += 1
