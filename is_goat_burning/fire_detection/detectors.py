@@ -617,7 +617,8 @@ def _get_edge_verifier(edge_settings: EdgeSettings) -> EdgeInferenceDetector:
             _factory_logger.warning("Rebuilding the edge verifier after inference errors.")
             verifier = None
         if verifier is None:
-            _edge_verifier_cache.clear()  # drop the old session BEFORE building (no two sessions at once)
+            # Drop our reference first so the old session can be freed as soon as no detector uses it.
+            _edge_verifier_cache.clear()
             verifier = EdgeInferenceDetector(edge_settings)
             _edge_verifier_cache[key] = verifier
         else:

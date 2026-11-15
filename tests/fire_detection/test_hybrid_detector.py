@@ -364,15 +364,24 @@ def test_edge_verifier_is_cached_across_factory_calls() -> None:
 
 @pytest.mark.parametrize(
     "changed",
-    [{"confidence_threshold": 0.9}, {"input_size": 16}],
-    ids=["confidence_threshold", "input_size"],
+    [{"confidence_threshold": 0.9}, {"input_size": 16}, {"accelerator": "opencl"}, {"model_path": "OTHER"}],
+    ids=["confidence_threshold", "input_size", "accelerator", "model_path"],
 )
-def test_edge_verifier_rebuilt_when_settings_change(changed: dict) -> None:
-    """A changed EDGE__* setting invalidates the cached verifier."""
+def test_edge_verifier_rebuilt_when_settings_change(changed: dict, tmp_path: Path) -> None:
+    """Every field of the cache key invalidates the cached verifier when it changes."""
+    model_a = tmp_path / "a.onnx"
+    model_a.write_bytes(b"model")
+    model_b = tmp_path / "b.onnx"
+    model_b.write_bytes(b"model")  # same size and content: only the path differs
+    base = {"model_path": str(model_a), "accelerator": "cpu", "input_size": 8, "confidence_threshold": 0.5}
+    changed = {k: (str(model_b) if v == "OTHER" else v) for k, v in changed.items()}
     factory = _edge_factory(0.9)
     with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
-        _create_edge()
-        with patch.object(settings, "edge", EdgeSettings(**changed)):
+        with patch.object(settings, "edge", EdgeSettings(**base)):
+            _create_edge()
+            _create_edge()
+            assert factory.call_count == 1
+        with patch.object(settings, "edge", EdgeSettings(**{**base, **changed})):
             _create_edge()
 
     assert factory.call_count == 2
