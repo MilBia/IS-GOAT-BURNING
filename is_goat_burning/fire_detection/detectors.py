@@ -31,6 +31,8 @@ MAX_PIXEL_VALUE = 255
 MIN_WARM_FRACTION = 0.002
 MIN_MOVING_FRACTION = 0.0005
 
+_factory_logger = get_logger("create_fire_detector")
+
 
 def is_fire_by_pixels(
     moving_warm: int,
@@ -563,15 +565,21 @@ def create_fire_detector(
         use_cuda: Explicitly request the CUDA detector. If None, uses
                   the global `settings.cuda`.
         strategy: The detection strategy to use ("classic", "gemini",
-                  "hybrid_cloud", "gemini_decision", "hybrid_decision", or the
-                  legacy alias "hybrid"). If None, uses `settings.detection_strategy`.
+                  "hybrid_cloud", "hybrid_edge", "gemini_decision",
+                  "hybrid_decision", or the legacy alias "hybrid"). If None,
+                  uses `settings.detection_strategy`.
 
     Returns:
-        An instance of a class that conforms to the FireDetector protocol.
+        An instance of a class that conforms to the FireDetector protocol. For
+        ``hybrid_edge`` this is a ``HybridFireDetector``, or, if the edge model
+        cannot be loaded at startup, the plain local detector (see below).
 
-    Raises:
-        NotImplementedError: If the ``hybrid_edge`` strategy is requested, as the
-            local edge inference detector is not yet available.
+    Note:
+        ``hybrid_edge`` never raises on a bad edge model: an ``EdgeModelError``
+        (missing/invalid model, input-size mismatch, unavailable accelerator) is
+        logged at CRITICAL and the factory falls back to the classic local
+        detector, so fires are still reported (unverified) instead of every
+        alert being silently suppressed.
     """
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
@@ -579,9 +587,19 @@ def create_fire_detector(
     cloud_hybrid_strategies = ("hybrid_cloud", "hybrid")
 
     if selected_strategy == "hybrid_edge":
-        raise NotImplementedError(
-            "The 'hybrid_edge' strategy is not yet implemented; use 'classic', 'gemini', or 'hybrid_cloud'."
-        )
+        from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
+        from is_goat_burning.fire_detection.edge_detector import EdgeModelError
+
+        edge_local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
+        try:
+            return HybridFireDetector(edge_local_detector, EdgeInferenceDetector(settings.edge))
+        except EdgeModelError as exc:
+            _factory_logger.critical(
+                "hybrid_edge verification is unavailable (%s). Falling back to the classic local detector: "
+                "fires will still be reported, but WITHOUT edge-model verification.",
+                exc,
+            )
+            return edge_local_detector
 
     if selected_strategy in ("gemini_decision", "hybrid_decision"):
         from is_goat_burning.fire_detection.decision_detector import DecisionFireDetector
