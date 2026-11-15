@@ -126,6 +126,15 @@ RUN ldconfig
 COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt setuptools==${SETUPTOOLS_VERSION}
 
+# Optional (hybrid_edge, EDGE__ACCELERATOR=cuda): install ONNX Runtime with the CUDA execution provider.
+# Opt-in so that default builds are unchanged: docker build --target gpu --build-arg EDGE_GPU=true ...
+# requirements-edge-gpu.txt is the pip-compile lock of the 'edge-gpu' extra (a superset of requirements.txt).
+ARG EDGE_GPU=false
+COPY requirements-edge-gpu.txt .
+RUN if [ "${EDGE_GPU}" = "true" ]; then \
+        python3 -m pip install --no-cache-dir -r requirements-edge-gpu.txt; \
+    fi
+
 # Copy the application code.
 COPY pyproject.toml burning_goat_detection.py ./
 COPY is_goat_burning/ ./is_goat_burning/
