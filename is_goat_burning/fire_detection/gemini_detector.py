@@ -1,7 +1,5 @@
 """Implements fire detection using Google's Gemini API."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING
 

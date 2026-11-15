@@ -5,8 +5,6 @@ that is loaded from environment variables and `.env` files. It includes custom
 validators to ensure that the configuration is consistent and complete.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 import os
 from pathlib import Path

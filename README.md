@@ -339,6 +339,16 @@ This is the recommended way to validate changes in a clean, production-like envi
     *   Check the application logs within the container for any CUDA-related errors.
 *   **"Could not load cuDNN" Error:** This indicates that the cuDNN libraries are not correctly installed or configured in the Docker image.  Verify that the base image in your `Dockerfile_cuda` includes cuDNN (e.g., `nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04`).
 
+## Diagnosing a Running Process
+
+Python 3.14 ships introspection tools that work on a live process without code changes (Linux/macOS; the target process must run the same Python version):
+
+*   `python -m asyncio ps <PID>` — list all asyncio tasks of the process (useful when the detector/reconnect loop seems stuck).
+*   `python -m asyncio pstree <PID>` — show the task tree (the `TaskGroup` in `Application`, the detector task, ...).
+*   `python -m pdb -p <PID>` — attach the debugger to the running process.
+
+Attaching may require elevated privileges (`ptrace` scope); see the Python docs for "remote debugging attachment protocol".
+
 ## SOURCES
 
 -   [Gävle Goat](https://en.wikipedia.org/wiki/G%C3%A4vle_goat) - Information about the Gävle Goat.

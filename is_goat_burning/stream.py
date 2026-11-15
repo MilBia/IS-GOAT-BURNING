@@ -5,8 +5,6 @@ direct pipeline using `yt-dlp` to resolve stream URLs and `OpenCV` for
 frame grabbing and processing.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncGenerator
 from functools import partial

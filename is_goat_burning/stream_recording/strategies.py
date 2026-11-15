@@ -7,8 +7,6 @@ different buffering methods, such as writing to disk continuously
 (`MemoryBufferStrategy`).
 """
 
-from __future__ import annotations
-
 from abc import ABC
 from abc import abstractmethod
 import asyncio

@@ -11,8 +11,6 @@ A factory function `create_fire_detector` is provided to select the appropriate
 detector based on the application's configuration.
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 import threading
