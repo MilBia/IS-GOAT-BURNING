@@ -283,11 +283,14 @@ class EdgeSettings(BaseModel):
         confidence_threshold: Minimum confidence above which a detection is
             confirmed as fire.
         accelerator: The hardware backend to run inference on.
+        input_size: Side length (pixels) of the square model input; frames are
+            squash-resized to ``input_size x input_size``.
     """
 
     model_path: str | None = Field(default=None)
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     accelerator: Accelerator = Field(default=Accelerator.AUTO)
+    input_size: int = Field(default=224, gt=0)
 
 
 class Settings(BaseSettings):
