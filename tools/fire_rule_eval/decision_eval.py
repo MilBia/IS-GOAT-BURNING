@@ -11,12 +11,14 @@ from tools.fire_rule_eval.decision import FIXED_THRESHOLDS
 from tools.fire_rule_eval.decision import N_PERM
 from tools.fire_rule_eval.decision import Candidate
 from tools.fire_rule_eval.decision import build_candidates
+from tools.fire_rule_eval.decision import chain_stream
 from tools.fire_rule_eval.decision import conformal_threshold
 from tools.fire_rule_eval.decision import debounce_candidate
 from tools.fire_rule_eval.decision import goat_chains
 from tools.fire_rule_eval.decision import goat_day
 from tools.fire_rule_eval.decision import operating_point
 from tools.fire_rule_eval.decision import positive_results
+from tools.fire_rule_eval.decision import saturated_response
 from tools.fire_rule_eval.decision import summarise
 from tools.fire_rule_eval.decision import verdict
 from tools.fire_rule_eval.protocol import FIXED_CAMERA_EXCLUDED
@@ -249,6 +251,7 @@ def run(clips: list[Clip], label: str) -> str:  # noqa: C901
         _table(["Rule", "E", "Real clips detected", "Entries", "Exits", "Re-entries (repeat alerts)", "Real recall"], erows)
     )
 
+    out.append(_post_hoc(cands, points, comp, clips))
     out.append("\n## Simplified P6: split-conformal threshold, leave-one-day-out on the goat clips\n")
     out.append(_conformal(clips, negatives))
     return "\n".join(out)
@@ -304,3 +307,109 @@ def _conformal(clips: list[Clip], negatives: list[Clip]) -> str:
         "guarantee). Nominal per-check false-alarm level alpha vs the observed held-out rate shows whether "
         "day-to-day shift breaks exchangeability."
     )
+
+
+def _post_hoc(cands: list[Candidate], points: dict, comp: dict, clips: list[Clip]) -> str:
+    """Sections added after the first run (post hoc, not pre-registered): glitch protection, hold, equal-hold, per clip."""
+    out = ["\n## POST HOC: glitch protection (N_min) and hold of every rule at its safe point\n"]
+    out.append(
+        "N_min = consecutive saturated checks (score 1) needed from a quiet start; hold = checks the rule's own alarm "
+        "stays on after 5 saturated checks followed by silence.\n"
+    )
+    resp = {c.name: saturated_response(c, points[c.name].t_safe) for c in cands}
+    out.append(
+        _table(
+            ["Rule", "N_min", "Hold after 5 hits (checks)"],
+            [[c.name, *("-" if v is None else v for v in resp[c.name])] for c in cands],
+        )
+    )
+
+    out.append("\n## POST HOC: verdict against the debounce with matched glitch protection (D = N_min - 1, capped at 10)\n")
+    rows = []
+    for c in cands:
+        if c.family == "debounce":
+            continue
+        n_min = resp[c.name][0]
+        d = 10 if n_min is None else min(max(n_min - 1, 0), 10)
+        d = max(x for x in DEBOUNCE_SECONDS if x <= d)
+        res = positive_results(c, points[c.name].t_safe, EXTINGUISH_DEFAULT, clips)
+        label, detail = verdict(res, comp[d])
+        rows.append([c.name, f"N_min={n_min}", f"D={d}s", label, detail])
+    out.append(_table(["Candidate", "N_min", "Comparator", "Verdict (E=5 both)", "Detail"], rows))
+
+    out.append("\n## POST HOC: leave-one-day-out safety of the zero-alarm threshold (threshold from the other 9 days)\n")
+    out.append(_lodo(cands, negatives_of(clips)))
+
+    out.append("\n## POST HOC: real-clip check recall vs the extinguish hold E (cold start; hold equalisation)\n")
+    es = (0, 5, 10, 20, 40)
+    erows = []
+    for c in cands:
+        if c.family == "debounce" and c.mode == "ff":
+            continue
+        cells = []
+        for e in es:
+            s = summarise(positive_results(c, points[c.name].t_safe, float(e), clips))
+            cells.append(f"{s['real_recall']:.2f}")
+        erows.append([c.name, *cells])
+    out.append(_table(["Rule", *[f"E={e}s" for e in es]], erows))
+    out.append("\nHold-equalised verdict: candidate at E=0 against each debounce comparator at E=10.\n")
+    hrows = []
+    for c in cands:
+        if c.family == "debounce":
+            continue
+        res0 = positive_results(c, points[c.name].t_safe, 0.0, clips)
+        cells = []
+        for d in DEBOUNCE_SECONDS:
+            base = positive_results(
+                next(x for x in cands if x.name == f"ar_deb{d}s"), points[f"ar_deb{d}s"].t_safe, 10.0, clips
+            )
+            cells.append(verdict(res0, base)[0])
+        hrows.append([c.name, *cells])
+    out.append(_table(["Candidate (E=0)", *[f"vs D={d}s (E=10)" for d in DEBOUNCE_SECONDS]], hrows))
+
+    out.append(
+        "\n## POST HOC: time to alarm per positive clip (s from the first check with motion information; - = not detected)\n"
+    )
+    names = ["ar_deb0s", "ar_deb2s", "ar_deb3s", "cusum_q99", "cusum_half", "sprt_q99"]
+    by = {c.name: c for c in cands}
+    per = {n: positive_results(by[n], points[n].t_safe, EXTINGUISH_DEFAULT, clips) for n in names}
+    prows = []
+    for i, r in enumerate(per[names[0]]):
+        prows.append(
+            [
+                r.name.split("__", 1)[-1][:42],
+                f"{r.available:.0f}",
+                *[("-" if per[n][i].ttfa is None else f"{per[n][i].ttfa:.0f}") for n in names],
+            ]
+        )
+    out.append(_table(["Clip", "Max measurable (s)", *names], prows))
+    return "\n".join(out)
+
+
+def negatives_of(clips: list[Clip]) -> list[Clip]:
+    """Goat clips with at least one counted check."""
+    return [c for c in clips if c.label == "neg" and c.mask.any()]
+
+
+def _lodo(cands: list[Candidate], negatives: list[Clip]) -> str:
+    """Per rule: held-out days that alarm when parameters and threshold come from the other days only (clip + chain)."""
+    days = sorted({goat_day(c.name) for c in negatives})
+    folds = {}
+    for day in days:
+        rest = [x for x in negatives if goat_day(x.name) != day]
+        folds[day] = (rest, [x for x in negatives if goat_day(x.name) == day], {f.name: f for f in build_candidates(rest)})
+    rows = []
+    for c in cands:
+        if c.family == "debounce" and c.mode == "ff":
+            continue
+        alarmed, ratios = [], []
+        for day, (rest, held, fold) in folds.items():
+            fc = fold[c.name]  # goat-derived parameters (k, gate) recomputed from the other days only
+            feats, mask = chain_stream(sorted(rest, key=lambda x: x.name))
+            t_rest = max(max(float(fc.score(x.features)[x.mask].max()) for x in rest), float(fc.score(feats)[mask].max()))
+            t_held = max(float(fc.score(x.features)[x.mask].max()) for x in held)
+            if t_held > t_rest:
+                alarmed.append(day[5:])
+            ratios.append(t_held / t_rest if t_rest > 0 else float("inf") if t_held > 0 else 0.0)
+        rows.append([c.name, f"{len(alarmed)}/{len(days)}", ", ".join(alarmed) or "-", f"{max(ratios):.2f}"])
+    return _table(["Rule", "Days alarming", "Which", "Largest held-out max / threshold"], rows)

@@ -454,6 +454,35 @@ def bench_decision(checks: int = 200_000, repeats: int = 5) -> dict[str, float]:
     return results
 
 
+# ---- post hoc additions (after the first run, see the report): glitch protection and hold --------------------------
+
+
+def saturated_response(cand: Candidate, p: float, hits: int = 5, length: int = 80) -> tuple[int | None, int]:
+    """Response of a rule to a saturated gate (score 1) after a quiet start.
+
+    Returns:
+        ``(n_min, hold)``: the number of consecutive saturated checks needed for the rule to alarm (None when it never
+        does within ``length``), and the number of further checks the rule's own alarm stays on after ``hits`` saturated
+        checks followed by zeros (0 for a plain run-length debounce).
+    """
+    n = length
+    f = {
+        "first": np.zeros(n, dtype=int),
+        "area": np.full(n, 100.0),
+        "warm": np.full(n, 50.0),
+        "wm25": np.concatenate([np.full(hits, 50.0), np.zeros(n - hits)]),
+        "t": np.arange(n, dtype=float),
+    }
+    f["first"][0] = 1  # the first check of a stream has no motion information
+    f["wm25"][0] = 0.0
+    on = cand.alarm(f, p)
+    saturated = dict(f, wm25=np.where(np.arange(n) >= 1, 50.0, 0.0))
+    first = np.flatnonzero(cand.alarm(saturated, p))
+    n_min = int(first[0]) if len(first) else None
+    last = int(np.flatnonzero(on)[-1]) if on.any() else -1
+    return n_min, max(last - (hits - 1), 0)
+
+
 __all__ = [
     "HARD_NEGATIVE",
     "Candidate",

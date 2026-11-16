@@ -72,3 +72,12 @@ PYTHONPATH=. pytest tests/tools
 ```
 
 `test_features_match_production_detector` guards parity with `CPUFireDetector`.
+
+## Decision layer (#137, #130)
+
+`python -m tools.fire_rule_eval decision --manifest M --features F [--label NAME]` compares the production debounce
+(`FIRE_DETECTED_DEBOUNCE_SECONDS` D = 0/1/2/3/5/10 s; at `CHECKS_PER_SECOND=1` an alarm needs D+1 consecutive alarmed checks, so
+the "debounce 3" controls of #134-#136 are D=2) with CUSUM and a Bernoulli-LLR SPRT on the `area_relative` score, a simplified
+split-conformal threshold (leave-one-day-out) and the state machine with `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`. Candidate rules are
+also available to `compare` (`ar_deb<D>s`, `ff_deb<D>s`, `cusum_*`, `sprt_*`); `bench --decision` measures their per-check cost.
+Design, frozen parameters and the verdict criterion are in the docstring of `decision.py`.

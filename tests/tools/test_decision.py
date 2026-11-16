@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from tools.fire_rule_eval.decision import GATES
+from tools.fire_rule_eval.decision import Candidate
 from tools.fire_rule_eval.decision import PositiveResult
 from tools.fire_rule_eval.decision import bench_decision
 from tools.fire_rule_eval.decision import conformal_threshold
@@ -12,6 +13,7 @@ from tools.fire_rule_eval.decision import debounce_candidate
 from tools.fire_rule_eval.decision import debounce_checks
 from tools.fire_rule_eval.decision import llr_series
 from tools.fire_rule_eval.decision import replay_production
+from tools.fire_rule_eval.decision import saturated_response
 from tools.fire_rule_eval.decision import verdict
 from tools.fire_rule_eval.rules import debounced
 
@@ -94,3 +96,11 @@ def test_verdict_pass_i_and_ii_and_fail() -> None:
 def test_bench_decision_runs() -> None:
     result = bench_decision(checks=2000, repeats=1)
     assert set(result) >= {"cusum", "sprt (LLR cusum)", "debounce (run counter)"}
+
+
+def test_saturated_response_of_debounce_and_cusum() -> None:
+    assert saturated_response(debounce_candidate("ar", 3), 0.1) == (4, 0)  # D=3 needs 4 consecutive checks, no hold
+    cusum = Candidate("c", "cusum", "ar", "", lambda f: cusum_series(GATES["ar"](f), 0.1), GATES["ar"])
+    n_min, hold = saturated_response(cusum, 0.5)
+    assert n_min == 1
+    assert hold > 0  # S = 5 * 0.9 decays by 0.1 per silent check
