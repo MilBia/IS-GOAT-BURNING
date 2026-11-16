@@ -114,3 +114,96 @@ def run(path: Path, checks: int, scale: float, repeats: int, threads: int) -> di
         "p8_ms": _median_ms(p8, n, repeats),
         "p15_p8_ms": _median_ms(p15p8, n, repeats),
     }
+
+
+def run_invariance(path: Path, checks: int, scale: float, repeats: int, threads: int) -> dict[str, float]:
+    """Measures the per-check cost of the #135 motion masks on real frames (decode excluded).
+
+    Every figure is the incremental time of one method over the production colour + ``absdiff`` mask: the mask
+    itself plus the AND with the warm mask and the pixel count, with the method's own state (previous census,
+    EMA accumulators) kept as in streaming use.
+
+    Args:
+        path: Video file.
+        checks: Number of 1 Hz checks to decode up front.
+        scale: Resize factor applied to every frame before anything is timed.
+        repeats: Timing passes (the median is reported).
+        threads: OpenCV thread count.
+
+    Returns:
+        Milliseconds per check by method, plus the frame size.
+    """
+    from tools.fire_rule_eval.invariance import EMA_FAST_TAU
+    from tools.fire_rule_eval.invariance import EMA_SLOW_TAUS
+    from tools.fire_rule_eval.invariance import InvarianceMasks
+    from tools.fire_rule_eval.invariance import census_codes
+    from tools.fire_rule_eval.invariance import census_distance
+    from tools.fire_rule_eval.invariance import gain_compensated_motion
+    from tools.fire_rule_eval.invariance import shift_compensated_motion
+    from tools.fire_rule_eval.invariance import tile_compensated_motion
+
+    cv2.setNumThreads(threads)
+    frames = [f for _, f in iter_check_frames(path, ExtractOptions(1.0, 0.0, checks, scale))]
+    blurs = [cv2.GaussianBlur(f, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X) for f in frames]
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    colors = [cv2.inRange(cv2.cvtColor(b, cv2.COLOR_BGR2HSV), DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE) for b in blurs]
+    motions = [None] + [
+        cv2.threshold(cv2.absdiff(grays[i], grays[i - 1]), 25, 255, cv2.THRESH_BINARY)[1] for i in range(1, len(frames))
+    ]
+    n = len(frames) - 1
+
+    def baseline(i: int) -> None:
+        k = i + 1
+        cv2.countNonZero(
+            cv2.bitwise_and(colors[k], cv2.threshold(cv2.absdiff(grays[k], grays[i]), 25, 255, cv2.THRESH_BINARY)[1])
+        )
+
+    def stateless(function: Callable) -> Callable[[int], None]:
+        def step(i: int) -> None:
+            cv2.countNonZero(cv2.bitwise_and(colors[i + 1], function(grays[i + 1], grays[i])))
+
+        return step
+
+    previous_census = census_codes(grays[0])
+
+    def p11(i: int) -> None:
+        nonlocal previous_census
+        census = census_codes(grays[i + 1])
+        mask = cv2.threshold(census_distance(census, previous_census), 3, 255, cv2.THRESH_BINARY)[1]
+        previous_census = census
+        cv2.countNonZero(cv2.bitwise_and(colors[i + 1], mask))
+
+    fast = grays[0].astype(np.float32)
+    slow = grays[0].astype(np.float32)
+    alpha_fast = 1 - float(np.exp(-1 / EMA_FAST_TAU))
+    alpha_slow = 1 - float(np.exp(-1 / EMA_SLOW_TAUS[0]))
+
+    def p12(i: int) -> None:
+        cv2.accumulateWeighted(grays[i + 1], fast, alpha_fast)
+        cv2.accumulateWeighted(grays[i + 1], slow, alpha_slow)
+        mask = (cv2.absdiff(fast, slow) > 25).astype(np.uint8) * 255
+        cv2.countNonZero(cv2.bitwise_and(colors[i + 1], mask))
+
+    chroma = InvarianceMasks()
+
+    def p4c(i: int) -> None:
+        cv2.countNonZero(chroma._normalised_colour(blurs[i + 1]))  # noqa: SLF001 - timing the colour part only
+
+    everything = InvarianceMasks()
+    everything.update(blurs[0], colors[0], grays[0], None)
+
+    def all_variants(i: int) -> None:
+        everything.update(blurs[i + 1], colors[i + 1], grays[i + 1], motions[i + 1])
+
+    return {
+        "height": float(frames[0].shape[0]),
+        "width": float(frames[0].shape[1]),
+        "baseline_mask_ms": _median_ms(baseline, n, repeats),
+        "p4s_ms": _median_ms(stateless(shift_compensated_motion), n, repeats),
+        "p4g_ms": _median_ms(stateless(gain_compensated_motion), n, repeats),
+        "p4t_ms": _median_ms(stateless(tile_compensated_motion), n, repeats),
+        "p4c_colour_ms": _median_ms(p4c, n, repeats),
+        "p11_ms": _median_ms(p11, n, repeats),
+        "p12_ms": _median_ms(p12, n, repeats),
+        "all_variants_ms": _median_ms(all_variants, n, repeats),
+    }

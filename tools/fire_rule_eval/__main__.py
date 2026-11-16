@@ -18,6 +18,8 @@ from tools.fire_rule_eval.flicker import extract_flicker_features
 from tools.fire_rule_eval.flicker import iter_frames_30fps
 from tools.fire_rule_eval.protocol import evaluate_rule
 from tools.fire_rule_eval.protocol import render
+from tools.fire_rule_eval.protocol import render_continuous
+from tools.fire_rule_eval.protocol import render_hard_detail
 from tools.fire_rule_eval.report import load_clips
 from tools.fire_rule_eval.report import render_markdown
 from tools.fire_rule_eval.rules import FLICKER_RULES
@@ -127,7 +129,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         return 1
     clips = [c for c in clips if not (c.label == "neg" and any(token in c.name for token in args.exclude_neg))]
     rules = [RULES_BY_NAME[name] for name in args.rules]
-    print(render([evaluate_rule(rule, clips) for rule in rules], args.warmup, len(rules)))
+    outcomes = [evaluate_rule(rule, clips) for rule in rules]
+    print(render(outcomes, args.warmup, len(rules)))
+    if args.continuous:
+        grid_params = {o.rule: o.param for o in outcomes}
+        print("\n" + render_continuous(rules, clips, grid_params))
+        print("\n" + render_hard_detail(rules, clips, grid_params))
     return 0
 
 
@@ -137,6 +144,17 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
     for path in args.video:
         for scale in args.scale:
+            if args.invariance:
+                r = bench.run_invariance(Path(path), args.checks, scale, args.repeats, args.threads)
+                print(
+                    f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: "
+                    f"baseline mask {r['baseline_mask_ms']:.2f} ms; "
+                    + "; ".join(
+                        f"{k} {r[f'{k}_ms']:.2f} ms" for k in ("p4s", "p4g", "p4t", "p4c_colour", "p11", "p12", "all_variants")
+                    ),
+                    flush=True,
+                )
+                continue
             r = bench.run(Path(path), args.checks, scale, args.repeats, args.threads)
             print(
                 f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: "
@@ -204,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--checks", type=int, default=21)
     bench.add_argument("--repeats", type=int, default=7)
     bench.add_argument("--threads", type=int, default=1)
+    bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.set_defaults(func=_cmd_bench)
 
     compare = sub.add_parser("compare", help="common #132 comparison table at each rule's best safe point")
@@ -213,6 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--warmup", type=int, default=5, help="leading checks of every clip that do not count (default 5)")
     compare.add_argument(
         "--exclude-neg", nargs="*", default=[], help="drop negative clips whose name contains one of these (sensitivity runs)"
+    )
+    compare.add_argument(
+        "--continuous", action="store_true", help="also print the continuous-margin table and the per-hard-clip breakdown"
     )
     compare.set_defaults(func=_cmd_compare)
     return parser

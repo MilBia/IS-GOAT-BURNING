@@ -13,6 +13,7 @@ import numpy as np
 
 from tools.fire_rule_eval.features import FINE_GRID
 from tools.fire_rule_eval.features import TILE_GRID
+from tools.fire_rule_eval.invariance import VARIANTS as INVARIANCE_VARIANTS
 from tools.fire_rule_eval.tracking import BlobTracker
 from tools.fire_rule_eval.tracking import LeakyIntegrator
 from tools.fire_rule_eval.tracking import TrackGate
@@ -38,6 +39,10 @@ class Rule:
         grid: Parameter values to sweep (ascending = more conservative).
         decide: Callable returning a boolean alarm array for a given parameter value.
         production_value: The production default of the swept parameter, if the rule is deployed.
+        score: Optional continuous per-check score such that ``decide(f, p) == score(f) > p`` (zero where the rule's
+            gates fail); enables the continuous margin analysis of the comparison protocol.
+        chain: Whether chaining the negative clips into one stream is meaningful (False when the feature state is
+            computed per clip at extraction time and therefore not carried across clip joins).
     """
 
     name: str
@@ -45,6 +50,8 @@ class Rule:
     grid: tuple[float, ...]
     decide: Callable[[Features, float], np.ndarray]
     production_value: float | None = None
+    score: Callable[[Features], np.ndarray] | None = None
+    chain: bool = True
 
 
 def _not_first(f: Features) -> np.ndarray:
@@ -70,6 +77,27 @@ def _area_relative(f: Features, p: float) -> np.ndarray:
     warm_enough = f["warm"] >= MIN_WARM_FRACTION * f["area"]
     moving_enough = f["wm25"] > MIN_MOVING_FRACTION * f["area"]
     return warm_enough & moving_enough & (f["wm25"] > p * f["warm"]) & _not_first(f)
+
+
+def area_relative_score(wm_key: str = "wm25", warm_key: str = "warm") -> Callable[[Features], np.ndarray]:
+    """Continuous score of the ``area_relative`` family: share of the warm region that moves (0 where a gate fails)."""
+
+    def score(f: Features) -> np.ndarray:
+        warm_enough = f[warm_key] >= MIN_WARM_FRACTION * f["area"]
+        moving_enough = f[wm_key] > MIN_MOVING_FRACTION * f["area"]
+        share = f[wm_key] / np.maximum(f[warm_key], 1)
+        return np.where(warm_enough & moving_enough & _not_first(f), share, 0.0)
+
+    return score
+
+
+def _area_relative_family(wm_key: str, warm_key: str = "warm") -> Callable[[Features, float], np.ndarray]:
+    score = area_relative_score(wm_key, warm_key)
+
+    def decide(f: Features, p: float) -> np.ndarray:
+        return score(f) > p
+
+    return decide
 
 
 def _tiled(f: Features, p: float) -> np.ndarray:
@@ -163,6 +191,20 @@ def _p8_rule(grid_name: str, decay: float, gated: bool) -> Callable[[Features, f
     return decide
 
 
+def debounced_score(score: Callable[[Features], np.ndarray], checks: int) -> Callable[[Features], np.ndarray]:
+    """Score of the debounced rule: the minimum over the last ``checks`` scores (``> p`` iff all of them are)."""
+
+    def wrapped(f: Features) -> np.ndarray:
+        values = score(f)
+        out = values.copy()
+        for shift in range(1, checks):
+            lagged = np.concatenate([np.zeros(shift), values[:-shift]]) if shift < len(values) else np.zeros(len(values))
+            out = np.minimum(out, lagged)
+        return out
+
+    return wrapped
+
+
 def debounced(decide: Callable[[Features, float], np.ndarray], checks: int) -> Callable[[Features, float], np.ndarray]:
     """Wraps a rule so that it alarms only after ``checks`` consecutive alarmed checks (the production debounce)."""
 
@@ -203,13 +245,38 @@ TRACKING_RULES: tuple[Rule, ...] = (
     ),
 )
 
+# ---- #135: illumination-invariant motion masks (P4, P11, P12; see ``invariance.py``) --------------------------------
+# Every variant has a "replace" rule (warm AND mask_v) and an "AND" rule (warm AND motion25 AND mask_v), both in the
+# ``area_relative`` form (share of the warm region that moves). P4c also normalises the warm mask (``warm_p4c``).
+# P12 state is computed per clip at extraction time, so the chained-goat stream is not meaningful for it.
+
+INVARIANCE_RULES: tuple[Rule, ...] = tuple(
+    Rule(
+        f"{variant}{suffix}",
+        f"#135 {variant}: share of the warm region that is {'AND-ed with motion25 and ' if suffix else ''}"
+        f"flagged by the {variant} mask > p",
+        RATIO_GRID,
+        _area_relative_family(f"{kind}_{variant}", "warm_p4c" if variant == "p4c" else "warm"),
+        score=area_relative_score(f"{kind}_{variant}", "warm_p4c" if variant == "p4c" else "warm"),
+        chain=not variant.startswith("p12"),
+    )
+    for variant in INVARIANCE_VARIANTS
+    for suffix, kind in (("", "wm"), ("_and", "and"))
+)
+
 RULES: tuple[Rule, ...] = (
     Rule("deployed", "production: warm AND motion(25) > p * area; first check is colour only", FRACTION_GRID, _deployed, 0.1),
     Rule("skip_first", "deployed, but never alarm on the first check after (re)start", FRACTION_GRID, _skip_first, 0.1),
     Rule("motion15", "skip_first with motion threshold 15", FRACTION_GRID, _threshold("wm15")),
     Rule("motion40", "skip_first with motion threshold 40", FRACTION_GRID, _threshold("wm40")),
     Rule("avg_motion", "motion vs the mean of the last 3 checks, not the previous one", FRACTION_GRID, _threshold("wm_avg25")),
-    Rule("area_relative", "share of the warm region that moves > p (min warm / moving area)", RATIO_GRID, _area_relative),
+    Rule(
+        "area_relative",
+        "share of the warm region that moves > p (min warm / moving area)",
+        RATIO_GRID,
+        _area_relative,
+        score=area_relative_score(),
+    ),
     Rule("tiled", "max over 8x4 tiles of the tile fraction that is warm AND moving > p", TILE_GRID_VALUES, _tiled),
     Rule("component", "largest connected warm-AND-moving component > p * frame area", FRACTION_GRID, _threshold("cc_max")),
     Rule("component_closed", "as component, after a 5x5 morphological close", FRACTION_GRID, _threshold("cc_close_max")),
@@ -266,8 +333,9 @@ CONTROL_RULES: tuple[Rule, ...] = (
         "control: area_relative alarmed on 3 consecutive checks",
         RATIO_GRID,
         debounced(_area_relative, 3),
+        score=debounced_score(area_relative_score(), 3),
     ),
     Rule("skip_first_deb3", "control: skip_first alarmed on 3 consecutive checks", FRACTION_GRID, debounced(_skip_first, 3)),
 )
 
-RULES_BY_NAME = {rule.name: rule for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *CONTROL_RULES)}
+RULES_BY_NAME = {rule.name: rule for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *CONTROL_RULES)}

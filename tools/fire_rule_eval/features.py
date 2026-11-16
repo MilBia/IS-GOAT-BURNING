@@ -15,6 +15,8 @@ from is_goat_burning.fire_detection.detector_core import DEFAULT_UPPER_HSV_FIRE
 from is_goat_burning.fire_detection.detectors import GAUSSIAN_BLUR_KERNEL_SIZE
 from is_goat_burning.fire_detection.detectors import GAUSSIAN_BLUR_SIGMA_X
 from is_goat_burning.fire_detection.detectors import MAX_PIXEL_VALUE
+from tools.fire_rule_eval.invariance import INVARIANCE_NAMES
+from tools.fire_rule_eval.invariance import InvarianceMasks
 
 MOTION_THRESHOLDS = (15, 25, 40)
 TILE_GRID = (8, 4)  # (columns, rows)
@@ -40,6 +42,7 @@ FEATURE_NAMES = (
     "white_wm25",
     "blobs",
     "fine_wm25",
+    *INVARIANCE_NAMES,
 )
 
 BLOB_SLOTS = 8  # largest components kept per check
@@ -156,6 +159,11 @@ def blob_table(mask: np.ndarray) -> np.ndarray:
     return table
 
 
+def _append(rows: dict[str, list], values: dict[str, int]) -> None:
+    for name, value in values.items():
+        rows[name].append(value)
+
+
 def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np.ndarray]:
     """Computes per-check features from a stream of sampled frames.
 
@@ -173,6 +181,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
     history: deque[np.ndarray] = deque(maxlen=AVERAGE_WINDOW_CHECKS)
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (WHITE_NEIGHBOURHOOD, WHITE_NEIGHBOURHOOD))
     tiles = TILE_GRID[0] * TILE_GRID[1]
+    invariance = InvarianceMasks()
 
     for t, frame in frames:
         blur = cv2.GaussianBlur(frame, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X)
@@ -182,6 +191,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
         area = frame.shape[0] * frame.shape[1]
         warm = cv2.countNonZero(color)
         first = previous_gray is None
+        motion25 = None
 
         rows["t"].append(t)
         rows["area"].append(area)
@@ -224,6 +234,8 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
             near_warm = cv2.dilate(color, dilate_kernel)
             _, motion25 = cv2.threshold(diff, 25, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)
             rows["white_wm25"].append(cv2.countNonZero(cv2.bitwise_and(cv2.bitwise_and(white, near_warm), motion25)))
+
+        _append(rows, invariance.update(blur, color, gray, motion25))
 
         previous_gray = gray
         history.append(gray)

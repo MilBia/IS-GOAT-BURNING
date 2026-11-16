@@ -20,6 +20,7 @@ from tools.fire_rule_eval.rules import Rule
 
 SYNTH_GROUP = "synth_goat"
 FIXED_CAMERA_EXCLUDED = ("tunnel", "Ropeway")  # moving-camera hard negatives (excluded from the #104 set)
+TIMELAPSE_TOKENS = ("Sunrise", "Sunset", "sunset")  # accelerated day/night time-lapses (the #135 "stress test" subset)
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,14 @@ class Outcome:
     hard_clips: int
     hard_fixed_alarmed: int
     hard_fixed_clips: int
+    hard_timelapse_alarmed: int = 0
+    hard_timelapse_clips: int = 0
+    chain_meaningful: bool = True
+
+
+def is_timelapse(name: str) -> bool:
+    """Whether a clip name belongs to the accelerated time-lapse hard negatives."""
+    return any(token in name for token in TIMELAPSE_TOKENS)
 
 
 def chain(clips: list[Clip]) -> Clip | None:
@@ -109,6 +118,7 @@ def evaluate_rule(rule: Rule, clips: list[Clip]) -> Outcome:
     hard = [c for c in clips if c.label == HARD_NEGATIVE]
     hard_hits = [bool((rule.decide(c.features, param) & c.mask).any()) for c in hard]
     fixed = [h for c, h in zip(hard, hard_hits, strict=True) if not any(k in c.name for k in FIXED_CAMERA_EXCLUDED)]
+    timelapse = [h for c, h in zip(hard, hard_hits, strict=True) if is_timelapse(c.name)]
     return Outcome(
         rule.name,
         param,
@@ -126,6 +136,9 @@ def evaluate_rule(rule: Rule, clips: list[Clip]) -> Outcome:
         len(hard),
         sum(fixed),
         len(fixed),
+        sum(timelapse),
+        len(timelapse),
+        rule.chain,
     )
 
 
@@ -135,21 +148,112 @@ def render(outcomes: list[Outcome], warmup: int, configs: int) -> str:
     head = (
         "| Rule | Param | Margin | Goat alarms | Chained goat | Real clips | Real recall | "
         + " | ".join(f"Synth {float(f) * 100:g}% (recall, hit)" for f in fractions)
-        + " | TTFA real / synth (s) | Hard (all) | Hard (fixed cam) |"
+        + " | TTFA real / synth (s) | Hard (all) | Hard (fixed cam) | Hard (time-lapse) |"
     )
     lines = [f"Warm-up: first {warmup} checks of every clip do not count. Rules/configurations swept: {configs}.\n", head]
     lines.append("|" + "---|" * (head.count("|") - 1))
     for o in outcomes:
         if o.param is None:
-            lines.append(f"| {o.rule} | no safe point | | | | | | " + "| " * len(fractions) + "| | | |")
+            lines.append(f"| {o.rule} | no safe point | | | | | | " + "| " * len(fractions) + "| | | | |")
             continue
         margin = "n/a" if o.margin is None else f"x{o.margin:.2f}"
         synth = " | ".join(f"{o.synth[f][0]:.2f}, {o.synth[f][1]}" if f in o.synth else "-" for f in fractions)
         ttfa_real = "-" if o.ttfa_real is None else f"{o.ttfa_real:.0f}"
         ttfa_synth = "-" if o.ttfa_synth is None else f"{o.ttfa_synth:.0f}"
+        chained = o.chain_alarms if o.chain_meaningful else "n/a"
         lines.append(
-            f"| {o.rule} | {o.param:.4g} | {margin} | {o.goat_alarms}/{o.goat_checks} | {o.chain_alarms} | "
+            f"| {o.rule} | {o.param:.4g} | {margin} | {o.goat_alarms}/{o.goat_checks} | {chained} | "
             f"{o.real_detected}/{o.real_clips} | {o.real_recall:.2f} | {synth} | {ttfa_real} / {ttfa_synth} | "
-            f"{o.hard_alarmed}/{o.hard_clips} | {o.hard_fixed_alarmed}/{o.hard_fixed_clips} |"
+            f"{o.hard_alarmed}/{o.hard_clips} | {o.hard_fixed_alarmed}/{o.hard_fixed_clips} | "
+            f"{o.hard_timelapse_alarmed}/{o.hard_timelapse_clips} |"
         )
+    return "\n".join(lines)
+
+
+def _scores(rule: Rule, clip: Clip) -> np.ndarray:
+    """Per-check scores of the checks that count (empty when the clip has none)."""
+    return rule.score(clip.features)[clip.mask]
+
+
+def continuous_row(rule: Rule, clips: list[Clip], grid_param: float | None) -> str | None:
+    """One row of the continuous-margin table: the rule evaluated at exactly the maximum goat score.
+
+    The threshold ``t`` is the largest score of any counted goat check, so the goat negatives never alarm
+    (``score > t`` is false everywhere); the grid of the main table only coarsens this point.
+    """
+    if rule.score is None:
+        return None
+    negatives = [c for c in clips if c.label == "neg"]
+    t = max((float(_scores(rule, c).max()) for c in negatives if c.mask.any()), default=0.0)
+    real = [c for c in clips if c.is_positive and c.group.startswith("commons_fire")]
+    real_max = [float(_scores(rule, c).max()) for c in real]
+    real_recall = float(np.mean([(_scores(rule, c) > t).mean() for c in real])) if real else float("nan")
+    detected = sum(m > t for m in real_max)
+    synth = []
+    for c in sorted((c for c in clips if c.is_positive and c.group == SYNTH_GROUP), key=lambda c: c.name):
+        values = _scores(rule, c)
+        synth.append(f"{(values > t).mean():.2f}, {int(bool((values > t).any()))}")
+    hard = [c for c in clips if c.label == HARD_NEGATIVE and c.mask.any()]
+    hard_max = {c.name: float(_scores(rule, c).max()) for c in hard}
+    hits = {name: value > t for name, value in hard_max.items()}
+    fixed = sum(h for c in hard for h in [hits[c.name]] if not any(k in c.name for k in FIXED_CAMERA_EXCLUDED))
+    lapse = sum(hits[c.name] for c in hard if is_timelapse(c.name))
+    ratio = lambda x: "inf" if t == 0 else f"{x / t:.2f}"  # noqa: E731
+    grid = "-" if grid_param is None or t == 0 else f"x{grid_param / t:.2f}"
+    return (
+        f"| {rule.name} | {t:.4f} | {grid} | {detected}/{len(real)} | {real_recall:.2f} | {' | '.join(synth)} | "
+        f"{sum(hits.values())}/{len(hard)} | {fixed} | {lapse} | {ratio(max(hard_max.values(), default=0.0))} | "
+        f"{ratio(min(real_max, default=0.0))} |"
+    )
+
+
+def render_continuous(rules: list[Rule], clips: list[Clip], grid_params: dict[str, float | None]) -> str:
+    """Markdown table of the continuous-margin analysis (see :func:`continuous_row`)."""
+    fractions = sorted({re.search(r"(\d\.\d+)$", c.name).group(1) for c in clips if c.is_positive and c.group == SYNTH_GROUP})
+    head = (
+        "| Rule | max goat score t | grid p / t | Real clips (score > t) | Real recall | "
+        + " | ".join(f"Synth {float(f) * 100:g}% (recall, hit)" for f in fractions)
+        + " | Hard (all) | Hard (fixed cam) | Hard (time-lapse) | max hard score / t | weakest real clip / t |"
+    )
+    lines = [
+        "Continuous margin: threshold = largest goat score (alarm iff score > t), so goat alarms are 0 by construction.\n",
+        head,
+    ]
+    lines.append("|" + "---|" * (head.count("|") - 1))
+    lines.extend(row for rule in rules if (row := continuous_row(rule, clips, grid_params.get(rule.name))) is not None)
+    return "\n".join(lines)
+
+
+def render_hard_detail(rules: list[Rule], clips: list[Clip], grid_params: dict[str, float | None]) -> str:
+    """Per hard-negative clip: alarmed checks at the best safe point (and max score relative to the max goat score)."""
+    hard = sorted((c for c in clips if c.label == HARD_NEGATIVE and c.mask.any()), key=lambda c: c.name)
+    negatives = [c for c in clips if c.label == "neg"]
+    head = "| Hard clip (kind) | " + " | ".join(r.name for r in rules) + " |"
+    lines = [
+        "Hard negatives at each rule's best safe point: alarmed checks / counted checks (max score / max goat score).\n",
+        head,
+    ]
+    lines.append("|" + "---|" * (head.count("|") - 1))
+    goat_max = {
+        r.name: max((float(_scores(r, c).max()) for c in negatives if c.mask.any()), default=0.0) if r.score else 0.0
+        for r in rules
+    }
+    for clip in hard:
+        kind = (
+            "time-lapse"
+            if is_timelapse(clip.name)
+            else "moving camera"
+            if any(k in clip.name for k in FIXED_CAMERA_EXCLUDED)
+            else "fixed"
+        )
+        cells = []
+        for r in rules:
+            p = grid_params.get(r.name)
+            if p is None:
+                cells.append("-")
+                continue
+            alarms = int((r.decide(clip.features, p) & clip.mask).sum())
+            extra = f" ({_scores(r, clip).max() / goat_max[r.name]:.2f})" if r.score and goat_max[r.name] > 0 else ""
+            cells.append(f"{alarms}/{int(clip.mask.sum())}{extra}")
+        lines.append(f"| {clip.name.split('__', 1)[-1][:40]} ({kind}) | " + " | ".join(cells) + " |")
     return "\n".join(lines)
