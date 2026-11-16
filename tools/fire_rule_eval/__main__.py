@@ -157,6 +157,19 @@ def _cmd_decision(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gates(args: argparse.Namespace) -> int:
+    """Prints the #138 global-gate report (per hard clip, least-global alarms, real-fire cost, scene-cut audit)."""
+    from tools.fire_rule_eval.gateeval import load_cuts
+    from tools.fire_rule_eval.gateeval import run
+
+    clips = load_clips(Path(args.manifest), Path(args.features), None, args.warmup)
+    if not clips:
+        print("no clips with features found", file=sys.stderr)
+        return 1
+    print(run(clips, args.label or args.features, load_cuts(Path(args.cuts) if args.cuts else None)))
+    return 0
+
+
 def _cmd_bench(args: argparse.Namespace) -> int:
     """Measures the per-check cost of the P15 / P8 candidates on real frames."""
     if args.decision:
@@ -302,6 +315,14 @@ def build_parser() -> argparse.ArgumentParser:
     decision.add_argument("--warmup", type=int, default=5)
     decision.add_argument("--label", help="title of the feature set in the report")
     decision.set_defaults(func=_cmd_decision)
+
+    gates = sub.add_parser("gates", help="#138: global-change gates, per hard clip, real-fire cost, scene-cut audit")
+    gates.add_argument("--manifest", required=True)
+    gates.add_argument("--features", required=True)
+    gates.add_argument("--warmup", type=int, default=5)
+    gates.add_argument("--label", help="title of the feature set in the report")
+    gates.add_argument("--cuts", help="JSON from cuts.py (POST HOC scene-cut audit of the real clips)")
+    gates.set_defaults(func=_cmd_gates)
     return parser
 
 
