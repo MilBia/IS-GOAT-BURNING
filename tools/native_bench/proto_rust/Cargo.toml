@@ -1,0 +1,19 @@
+[package]
+name = "rs_fused"
+version = "0.1.0"
+edition = "2021"
+description = "Fused HSV-warm-mask + gray-motion kernel for the goat fire detector (research prototype, #133)"
+
+[lib]
+name = "rs_fused"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py311"] }
+numpy = "0.30"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
