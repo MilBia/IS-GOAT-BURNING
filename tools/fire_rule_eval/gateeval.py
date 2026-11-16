@@ -181,8 +181,80 @@ def run(clips: list[Clip], title: str, cuts: dict[str, set[int]]) -> str:  # noq
             out.append(f"| {r.name} | {np.mean(all_r):.3f} | {nc:.3f} | {100 * (nc - base_nc):+.1f} | {det}/{len(nc_r)} |")
         counts = sum(len(v) for v in cuts.values())
         out.append(f"\nCut checks labelled in the 9 real clips: {counts}.")
+    out.append(oracle_section(goat, hard, real, cuts, t["area_relative"]))
     # 7. gate also versus the hard clips excluding cuts is not applicable (hard clips are one continuous shot)
     out.append(
         "\nTime-lapse = stress test (accelerated day/night); real time is NOT measured (no goat stream until December 2026, #109)."  # noqa: E501
     )
     return "\n".join(out)
+
+
+def oracle_section(goat: list[Clip], hard: list[Clip], real: list[Clip], cuts: dict[str, set[int]], t: float) -> str:
+    """POST HOC oracle sweep: is ANY threshold of a single gl_* feature good enough? (tuned on the evaluation clips).
+
+    For every feature the threshold is swept over all values the feature takes on the baseline-alarmed checks of the hard and
+    real clips; the baseline alarm (score > t) is blocked where the feature is >= the threshold. Reports the best hard-negative
+    count under a recall drop of at most 5 pp, and the best hard count regardless of recall, each with the recall it costs.
+    This is an upper bound on what a gate of that form can do on these 8 + 9 clips (the threshold is chosen with the answer
+    in view), not a result.
+    """
+    base = RULES_BY_NAME["area_relative"]
+    scored = {c.name: (base.score(c.features) > t) & c.mask for c in (*hard, *real)}
+    base_recall = float(np.mean([scored[c.name][c.mask].mean() for c in real]))
+
+    def recall(c: Clip, blocked: np.ndarray, drop_cuts: bool) -> float:
+        keep = c.mask.copy()
+        if drop_cuts:
+            keep &= ~np.isin(np.arange(len(c.mask)), list(cuts.get(c.name, set())))
+        return float((scored[c.name] & ~blocked)[keep].mean()) if keep.any() else float("nan")
+
+    lines = [
+        "\n## 7. POST HOC oracle: best single-feature threshold, tuned on the evaluation clips (upper bound, NOT a result)\n",
+        f"Baseline recall {base_recall:.3f} at t={t:.4f}; recall must stay >= {base_recall - 0.05:.3f}. "
+        "A hard clip is silenced "
+        "when the gate blocks every one of its baseline alarms. Hard negatives that alarm in the baseline: "
+        f"{sum(bool(scored[c.name].any()) for c in hard)}/{len(hard)}.\n",
+        "| Feature | best hard with recall drop <= 5 pp (threshold; recall; recall w/o cuts) "
+        "| best hard at any recall (threshold; recall; recall w/o cuts) |",
+        "|---|---|---|",
+    ]
+    for label, key in GATE_FEATURES:
+        alarmed = np.concatenate([_value(c.features, key)[scored[c.name]] for c in (*hard, *real)])
+        candidates = sorted({float(x) for x in alarmed})
+        rows = []
+        for threshold in candidates:
+            blocked = {c.name: _value(c.features, key) >= threshold for c in (*hard, *real)}
+            n_hard = sum(bool((scored[c.name] & ~blocked[c.name]).any()) for c in hard)
+            r_all = float(np.mean([recall(c, blocked[c.name], False) for c in real]))
+            r_nc = float(np.nanmean([recall(c, blocked[c.name], True) for c in real]))
+            rows.append((n_hard, -r_all, threshold, r_all, r_nc))
+        ok = [r for r in rows if r[3] >= base_recall - 0.05]
+        best_ok = min(ok) if ok else None
+        best_any = min(rows)
+        fmt = lambda r: "-" if r is None else f"{r[0]}/{len(hard)} (>= {r[2]:.4g}; {r[3]:.3f}; {r[4]:.3f})"  # noqa: E731
+        lines.append(f"| {label} | {fmt(best_ok)} | {fmt(best_any)} |")
+    lines.append("\nMedian feature value on the baseline-alarmed checks (hard clips by kind vs real fires):\n")
+    lines.append(
+        "| Feature | goat (all counted) | time-lapse | moving camera | fixed hard | real fires | real fires w/o cut checks |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    for label, key in (*GATE_FEATURES, ("wg", "gl_wg")):
+
+        def med(group: list[Clip], drop_cuts: bool = False, key: str = key) -> str:
+            values = []
+            for c in group:
+                keep = scored[c.name].copy()
+                if drop_cuts:
+                    keep &= ~np.isin(np.arange(len(c.mask)), list(cuts.get(c.name, set())))
+                values.append(_value(c.features, key)[keep])
+            values = np.concatenate(values) if values else np.array([])
+            return f"{np.median(values):.3f}" if len(values) else "-"
+
+        goat_values = np.concatenate([_value(c.features, key)[c.mask] for c in goat])
+        lines.append(
+            f"| {label} | {np.median(goat_values):.3f} | {med([c for c in hard if _kind(c.name) == 'time-lapse'])} | "
+            f"{med([c for c in hard if _kind(c.name) == 'moving camera'])} | "
+            f"{med([c for c in hard if _kind(c.name) == 'fixed'])} | "
+            f"{med(real)} | {med(real, True)} |"
+        )
+    return "\n".join(lines)
