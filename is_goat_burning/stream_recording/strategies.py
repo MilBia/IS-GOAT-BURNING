@@ -413,6 +413,7 @@ class SegmentsBufferStrategy(BufferStrategy):
                 logger.info("Segment archiver (ffmpeg -c copy) started.")
                 code = await self._ffmpeg.wait()
                 logger.warning(f"Segment archiver exited with code {code}.")
+                self._drop_truncated_segment()
             except OSError:
                 logger.exception("Could not start the segment archiver (is ffmpeg installed?).")
             if time.monotonic() - started >= self.STABLE_RUN_SECONDS:
@@ -420,6 +421,19 @@ class SegmentsBufferStrategy(BufferStrategy):
             logger.info(f"Restarting segment archiver in {delay:.0f}s.")
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.RESTART_DELAY_MAX)
+
+    def _drop_truncated_segment(self) -> None:
+        """Deletes the newest segment after an ffmpeg exit: it was being written and may be cut off mid-frame."""
+        newest: tuple[float, Path] | None = None
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            try:
+                candidate = (path.stat().st_mtime, path)
+            except OSError:
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+        if newest is not None:
+            newest[1].unlink(missing_ok=True)
 
     async def _stop_ffmpeg(self) -> None:
         if self._supervisor and not self._supervisor.done():

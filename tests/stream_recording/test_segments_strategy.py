@@ -239,3 +239,13 @@ def test_prepare_ring_warns_when_tmpfs_is_too_small(ring: Path, context: MagicMo
     assert not list(ring.glob("seg*.ts"))  # stale segments are cleared
     warn.assert_called_once()
     assert "--shm-size" in warn.call_args.args[0]
+
+
+def test_drop_truncated_segment_removes_only_the_newest(ring: Path, context: MagicMock) -> None:
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 3)
+    _segment(ring, "seg002.ts", 0.1)
+
+    SegmentsBufferStrategy(context)._drop_truncated_segment()
+
+    assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
