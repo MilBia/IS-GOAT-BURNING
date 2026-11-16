@@ -217,7 +217,15 @@ def _cmd_bench(args: argparse.Namespace) -> int:  # noqa: C901
 
         for path in args.video:
             for scale in args.scale:
-                r = bench.run_bg(Path(path), args.checks, scale, args.repeats, args.threads, lowrank=args.lowrank)
+                r = bench.run_bg(
+                    Path(path),
+                    args.checks,
+                    scale,
+                    args.repeats,
+                    args.threads,
+                    lowrank=args.lowrank,
+                    only=tuple(args.only_models or ()),
+                )
                 print(
                     f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: baseline mask "
                     f"{r['baseline_mask_ms']:.2f} ms; "
@@ -369,6 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
     bench.add_argument("--global-change", action="store_true", help="measure the #138 global-change features")
+    bench.add_argument("--only-models", nargs="*", help="with --lowrank / --bg-model: restrict to these model names")
     bench.add_argument("--lowrank", action="store_true", help="measure the #140 low-rank + sparse masks (increment per model)")
     bench.add_argument("--bg-model", action="store_true", help="measure the #139 background-model masks (increment per model)")
     bench.add_argument("--decision", action="store_true", help="measure the #137 decision layers (no video needed)")

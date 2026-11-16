@@ -1,0 +1,9 @@
+WARNING: Your kernel does not support memory limit capabilities or the cgroup is not mounted. Limitation discarded.
+convert + shift (astype, subtract reference)                     0.414 ms
+window matvec X @ g (Gram row)                                   1.732 ms
+eigh of the 9x9 centred Gram matrix                              0.104 ms
+background matvec a @ X                                          2.915 ms
+threshold mask |g - b| > 25 (np.where + astype)                  1.562 ms
+warm AND fg + countNonZero + 8x4 tiles                           1.572 ms
+whole model.apply (all of the above + ring buffer write)         8.230 ms
+products shape (9,)

@@ -338,7 +338,9 @@ def run_global(path: Path, checks: int, scale: float, repeats: int, threads: int
     }
 
 
-def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int, lowrank: bool = False) -> dict[str, float]:  # noqa: C901
+def run_bg(
+    path: Path, checks: int, scale: float, repeats: int, threads: int, lowrank: bool = False, only: tuple[str, ...] = ()
+) -> dict[str, float]:  # noqa: C901
     """Measures the per-check cost of the #139 background-model masks on real frames (decode excluded).
 
     Each model is timed on its own: ``model.apply`` plus the work that turns the mask into the stored counts (warm AND fg,
@@ -352,6 +354,7 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int, lo
         scale: Resize factor applied to every frame before anything is timed.
         repeats: Timing passes (the median is reported).
         threads: OpenCV thread count.
+        only: Restrict to these model names (all when empty).
         lowrank: Measure the #140 low-rank models (``LowRankModels``) instead of the #139 set; adds ``<name>_iters`` (mean RPCA
             iterations) and ``<name>_apply`` is then the mask only.
 
@@ -398,7 +401,7 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int, lo
         "width": float(frames[0].shape[1]),
         "baseline_mask_ms": _median_ms(baseline, n, repeats),
     }
-    for name in ALL_VARIANTS:
+    for name in [v for v in ALL_VARIANTS if not only or v in only]:
         state = BgModels((name,))
         for i in range(n):  # warm-up pass: the model has seen the clip once
             state.update(grays[i], colors[i], motions[i])
@@ -409,5 +412,5 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int, lo
         out[f"{name}_apply"] = _median_ms(lambda i, s=bare: s.masks(grays[i % n]), n, repeats)
         if lowrank:
             out[f"{name}_iters"] = float(state._models[name].iterations_used)
-    out["all_candidates"] = sum(out[name] for name in CANDIDATE_VARIANTS)
+    out["all_candidates"] = sum(out[name] for name in CANDIDATE_VARIANTS if name in out)
     return out
