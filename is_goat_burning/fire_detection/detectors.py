@@ -485,6 +485,7 @@ class HybridFireDetector:
         self._last_call_time: float | None = None
         self._last_verdict = False
         self._call_times: deque[float] = deque()
+        self._limit_warned = False
         self._logger = get_logger("HybridFireDetector")
         self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
 
@@ -529,8 +530,11 @@ class HybridFireDetector:
             while self._call_times and now - self._call_times[0] >= 3600:
                 self._call_times.popleft()
             if len(self._call_times) >= self.max_calls_per_hour:
-                self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
+                if not self._limit_warned:
+                    self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
+                    self._limit_warned = True
                 return False, annotated_frame
+            self._limit_warned = False
             self._call_times.append(now)
         self._last_call_time = now
 

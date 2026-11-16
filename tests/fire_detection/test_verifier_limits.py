@@ -55,3 +55,15 @@ async def test_no_limits_calls_every_time() -> None:
         assert (await detector.detect(FRAME))[0] is True
 
     assert call.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_cap_warning_is_logged_once(mocker: MockerFixture) -> None:
+    mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[0.0, 1.0, 2.0, 3.0])))
+    detector, _ = _hybrid([True], cooldown_seconds=0, max_calls_per_hour=1)
+    warn = mocker.patch.object(detector._logger, "warning")
+
+    for _ in range(4):
+        await detector.detect(FRAME)
+
+    assert warn.call_count == 1
