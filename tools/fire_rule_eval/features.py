@@ -17,6 +17,9 @@ from is_goat_burning.fire_detection.detectors import GAUSSIAN_BLUR_SIGMA_X
 from is_goat_burning.fire_detection.detectors import MAX_PIXEL_VALUE
 from tools.fire_rule_eval.invariance import INVARIANCE_NAMES
 from tools.fire_rule_eval.invariance import InvarianceMasks
+from tools.fire_rule_eval.localcontrast import LOCAL_CONTRAST_NAMES
+from tools.fire_rule_eval.localcontrast import local_contrast_scores
+from tools.fire_rule_eval.localcontrast import zero_scores
 
 MOTION_THRESHOLDS = (15, 25, 40)
 TILE_GRID = (8, 4)  # (columns, rows)
@@ -43,6 +46,7 @@ FEATURE_NAMES = (
     "blobs",
     "fine_wm25",
     *INVARIANCE_NAMES,
+    *LOCAL_CONTRAST_NAMES,
 )
 
 BLOB_SLOTS = 8  # largest components kept per check
@@ -159,12 +163,14 @@ def blob_table(mask: np.ndarray) -> np.ndarray:
     return table
 
 
-def _append(rows: dict[str, list], values: dict[str, int]) -> None:
+def _append(rows: dict[str, list], values: dict[str, float]) -> None:
     for name, value in values.items():
         rows[name].append(value)
 
 
-def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np.ndarray]:
+def extract_features(  # noqa: C901
+    frames: Iterator[tuple[float, np.ndarray]], blur_kernel: tuple[int, int] = GAUSSIAN_BLUR_KERNEL_SIZE
+) -> dict[str, np.ndarray]:
     """Computes per-check features from a stream of sampled frames.
 
     The first check of a stream has no previous frame; production used to treat every pixel as moving
@@ -172,6 +178,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
 
     Args:
         frames: Iterator of ``(time_s, frame)`` pairs.
+        blur_kernel: Gaussian blur of the colour mask (production (21, 21); (5, 5) is the equivalent at 480x270).
 
     Returns:
         A mapping of feature name to a NumPy array with one row per check.
@@ -184,7 +191,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
     invariance = InvarianceMasks()
 
     for t, frame in frames:
-        blur = cv2.GaussianBlur(frame, GAUSSIAN_BLUR_KERNEL_SIZE, GAUSSIAN_BLUR_SIGMA_X)
+        blur = cv2.GaussianBlur(frame, blur_kernel, GAUSSIAN_BLUR_SIGMA_X)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -199,6 +206,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
         rows["warm"].append(warm)
 
         if first:
+            _append(rows, zero_scores())
             for name in ("wm15", "wm25", "wm40", "wm_avg25"):
                 rows[name].append(warm)
             rows["white_wm25"].append(0)
@@ -217,6 +225,7 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
                 masks[threshold] = cv2.bitwise_and(color, motion)
                 rows[f"wm{threshold}"].append(cv2.countNonZero(masks[threshold]))
             joint = masks[25]
+            _append(rows, local_contrast_scores(frame, blur, joint))
             rows["tile_warm"].append(_tile_fractions(color))
             rows["tile_wm25"].append(_tile_fractions(joint))
             rows["cc_max"].append(_largest_component(joint, close=False))
@@ -248,6 +257,8 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
             out[name] = np.stack(values).astype(np.float32) if values else np.zeros((0, BLOB_SLOTS, BLOB_COLUMNS), np.float32)
         elif name == "fine_wm25":
             out[name] = np.array(values, dtype=np.float32).reshape(-1, FINE_GRID[0] * FINE_GRID[1])
+        elif name.startswith("lc_"):
+            out[name] = np.array(values, dtype=np.float32)
         elif name == "t":
             out[name] = np.array(values, dtype=np.float64)
         else:

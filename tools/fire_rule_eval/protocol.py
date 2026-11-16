@@ -257,3 +257,34 @@ def render_hard_detail(rules: list[Rule], clips: list[Clip], grid_params: dict[s
             cells.append(f"{alarms}/{int(clip.mask.sum())}{extra}")
         lines.append(f"| {clip.name.split('__', 1)[-1][:40]} ({kind}) | " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+def render_per_day(rules: list[Rule], clips: list[Clip]) -> str:
+    """Maximum score per goat recording day, next to the maximum score of every synthetic composite.
+
+    Shows which day sets the continuous threshold ``t`` (the largest goat score) and how far each composite is above or
+    below it (ratio to ``t``), i.e. whether a rule separates the small fire from the goat's worst day.
+    """
+    scored = [r for r in rules if r.score is not None]
+    negatives = [c for c in clips if c.label == "neg" and c.mask.any()]
+    days = sorted(
+        {re.search(r"(\d{4}-\d{2}-\d{2})", c.name).group(1) for c in negatives if re.search(r"\d{4}-\d{2}-\d{2}", c.name)}
+    )
+    synth = sorted((c for c in clips if c.is_positive and c.group == SYNTH_GROUP and c.mask.any()), key=lambda c: c.name)
+    head = "| | " + " | ".join(r.name for r in scored) + " |"
+    lines = ["Per-day maximum goat score and synthetic maxima (ratio to the largest goat score t in brackets).\n", head]
+    lines.append("|" + "---|" * (head.count("|") - 1))
+    goat_t = {r.name: max(float(_scores(r, c).max()) for c in negatives) for r in scored}
+    for day in days:
+        day_clips = [c for c in negatives if day in c.name]
+        cells = [f"{max(float(_scores(r, c).max()) for c in day_clips):.4g}" for r in scored]
+        lines.append(f"| goat {day} | " + " | ".join(cells) + " |")
+    lines.append("| **t (max goat)** | " + " | ".join(f"{goat_t[r.name]:.4g}" for r in scored) + " |")
+    for clip in synth:
+        cells = []
+        for r in scored:
+            values = _scores(r, clip)
+            ratio = float(values.max()) / goat_t[r.name] if goat_t[r.name] > 0 else float("inf")
+            cells.append(f"{float(values.max()):.4g} (x{ratio:.2f}; {(values > goat_t[r.name]).mean():.2f})")
+        lines.append(f"| {clip.name.split('__', 1)[-1]} max (x t; share of checks > t) | " + " | ".join(cells) + " |")
+    return "\n".join(lines)

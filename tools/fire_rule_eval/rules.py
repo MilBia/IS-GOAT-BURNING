@@ -264,6 +264,85 @@ INVARIANCE_RULES: tuple[Rule, ...] = tuple(
     for suffix, kind in (("", "wm"), ("_and", "and"))
 )
 
+# ---- #136: local-contrast small-target scores (P9 CFAR, P10 top-hat / LCM, P1 Haar; see ``localcontrast.py``) --------
+# PRE-REGISTERED before the first comparison of any candidate (variants, windows and rank orders are fixed in
+# ``localcontrast.py``; nothing is tuned). 6 variants x 2 forms + 1 control = 13 configurations (+ the 2 baseline controls
+# ``area_relative`` / ``area_relative_deb3`` recomputed on the same 480x270 features = 15):
+#   * ``<variant>_and``: gate AND score. The gate is the production warm-AND-moving pixel mask (the scores are built from
+#     it) plus the ``area_relative`` minimum warm / moving areas; alarm iff score > p.
+#   * ``<variant>_or``: ``area_relative`` at ``OR_PARTNER_THRESHOLD`` (the baseline's own best safe point at 480x270,
+#     fixed from the baseline control run before any candidate was compared) OR (the ``_and`` rule), p swept under zero goat
+#     alarms of the combination. Tests whether the small-target channel adds anything to the baseline.
+#   * ``ctl_peak_and``: control without the local reference (N-th largest cell density), i.e. "is a local peak enough?".
+# All scores are order statistics normalised by frame area / in absolute units (no division by the total warm area).
+
+OR_PARTNER_THRESHOLD = (
+    0.11  # grid best safe point of area_relative on the 480x270 features (baseline run, before any candidate)
+)
+LC_GRID = tuple(float(x) for x in np.geomspace(1e-4, 1e3, 220))
+LC_VARIANTS = ("p9_cfar_z", "p9_cfar_diff", "p10_tophat", "p10_lcm", "p1_global", "p1_local")
+LC_DESCRIPTIONS = {
+    "p9_cfar_z": "CA-CFAR z-score of the warm-AND-moving density (guard 25, outer 61)",
+    "p9_cfar_diff": "CA-CFAR difference (cell density minus ring mean, no noise normalisation)",
+    "p10_tophat": "top-hat (31x31) of the heat map R-B inside warm-AND-moving",
+    "p10_lcm": "local contrast measure (cell 15 vs the brightest of 8 neighbours) of the heat map",
+    "p1_global": "Haar level-1 detail energy over the whole warm-AND-moving region (Toreyin)",
+    "p1_local": "Haar level-1 detail energy, windowed (18 px) region mean, 16th largest",
+}
+OR_FLAG = 1e9  # score of a check where the OR partner alarms (any p below it alarms)
+
+
+def lc_gate(f: Features) -> np.ndarray:
+    """Minimum-area gate shared with ``area_relative`` (warm >= 0.2 %, moving > 0.05 %) and no first check."""
+    return (f["warm"] >= MIN_WARM_FRACTION * f["area"]) & (f["wm25"] > MIN_MOVING_FRACTION * f["area"]) & _not_first(f)
+
+
+def lc_and_score(key: str) -> Callable[[Features], np.ndarray]:
+    """Score of the AND form: the stored local-contrast value where the gate holds, else 0."""
+
+    def score(f: Features) -> np.ndarray:
+        return np.where(lc_gate(f), f[f"lc_{key}"], 0.0)
+
+    return score
+
+
+def lc_or_score(key: str) -> Callable[[Features], np.ndarray]:
+    """Score of the OR form: flagged (``OR_FLAG``) where the ``area_relative`` partner alarms, else the AND score."""
+    and_score = lc_and_score(key)
+
+    def score(f: Features) -> np.ndarray:
+        return np.where(_area_relative(f, OR_PARTNER_THRESHOLD), OR_FLAG, and_score(f))
+
+    return score
+
+
+def _score_rule(score: Callable[[Features], np.ndarray]) -> Callable[[Features, float], np.ndarray]:
+    def decide(f: Features, p: float) -> np.ndarray:
+        return score(f) > p
+
+    return decide
+
+
+def _lc_rule(name: str, description: str, score: Callable[[Features], np.ndarray]) -> Rule:
+    return Rule(name, description, LC_GRID, _score_rule(score), score=score)
+
+
+LOCAL_CONTRAST_RULES: tuple[Rule, ...] = (
+    *(_lc_rule(f"{key}_and", f"#136 AND: {LC_DESCRIPTIONS[key]} > p (gated)", lc_and_score(key)) for key in LC_VARIANTS),
+    *(
+        _lc_rule(
+            f"{key}_or", f"#136 OR: area_relative({OR_PARTNER_THRESHOLD}) OR [{LC_DESCRIPTIONS[key]} > p]", lc_or_score(key)
+        )
+        for key in LC_VARIANTS
+    ),
+    _lc_rule(
+        "ctl_peak_and",
+        "#136 control: N-th largest 9x9 cell density of warm-AND-moving > p (no local reference)",
+        lc_and_score("ctl_peak"),
+    ),
+)
+
+
 RULES: tuple[Rule, ...] = (
     Rule("deployed", "production: warm AND motion(25) > p * area; first check is colour only", FRACTION_GRID, _deployed, 0.1),
     Rule("skip_first", "deployed, but never alarm on the first check after (re)start", FRACTION_GRID, _skip_first, 0.1),
@@ -338,4 +417,7 @@ CONTROL_RULES: tuple[Rule, ...] = (
     Rule("skip_first_deb3", "control: skip_first alarmed on 3 consecutive checks", FRACTION_GRID, debounced(_skip_first, 3)),
 )
 
-RULES_BY_NAME = {rule.name: rule for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *CONTROL_RULES)}
+RULES_BY_NAME = {
+    rule.name: rule
+    for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *LOCAL_CONTRAST_RULES, *CONTROL_RULES)
+}

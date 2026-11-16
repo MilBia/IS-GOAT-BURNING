@@ -207,3 +207,82 @@ def run_invariance(path: Path, checks: int, scale: float, repeats: int, threads:
         "p12_ms": _median_ms(p12, n, repeats),
         "all_variants_ms": _median_ms(all_variants, n, repeats),
     }
+
+
+def run_local_contrast(path: Path, checks: int, scale: float, repeats: int, threads: int) -> dict[str, float]:
+    """Measures the per-check cost of the #136 local-contrast scores on real frames (decode excluded).
+
+    Every figure is the stand-alone cost of one score given the frame, its blur and the warm-AND-moving mask (the
+    production mask itself is reported separately as ``baseline_mask_ms``): it includes the reduction of the masks, the
+    maps and the order statistic. ``dense_p1_ms`` is the wavelet score on a mask that is set everywhere (worst case of
+    the region-only evaluation).
+
+    Args:
+        path: Video file.
+        checks: Number of 1 Hz checks to decode up front.
+        scale: Resize factor applied to every frame before anything is timed (0.25 gives the 480x270 working frame).
+        repeats: Timing passes (the median is reported).
+        threads: OpenCV thread count.
+
+    Returns:
+        Milliseconds per check by score, plus the frame size.
+    """
+    from tools.fire_rule_eval import localcontrast as lc
+
+    cv2.setNumThreads(threads)
+    kernel = (5, 5) if scale < 0.5 else GAUSSIAN_BLUR_KERNEL_SIZE
+    frames = [f for _, f in iter_check_frames(path, ExtractOptions(1.0, 0.0, checks, scale))]
+    blurs = [cv2.GaussianBlur(f, kernel, GAUSSIAN_BLUR_SIGMA_X) for f in frames]
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    colors = [cv2.inRange(cv2.cvtColor(b, cv2.COLOR_BGR2HSV), DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE) for b in blurs]
+    joints = [
+        cv2.bitwise_and(colors[i], cv2.threshold(cv2.absdiff(grays[i], grays[i - 1]), 25, 255, cv2.THRESH_BINARY)[1])
+        for i in range(1, len(frames))
+    ]
+    n = len(joints)
+
+    def baseline(i: int) -> None:
+        k = i + 1
+        hsv = cv2.cvtColor(cv2.GaussianBlur(frames[k], kernel, GAUSSIAN_BLUR_SIGMA_X), cv2.COLOR_BGR2HSV)
+        color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
+        motion = cv2.threshold(cv2.absdiff(cv2.cvtColor(frames[k], cv2.COLOR_BGR2GRAY), grays[i]), 25, 255, cv2.THRESH_BINARY)[
+            1
+        ]
+        cv2.countNonZero(cv2.bitwise_and(color, motion))
+
+    def cfar(i: int) -> None:
+        density = lc.reduce_map(joints[i]).astype(np.float32) * np.float32(1 / 255)
+        _, z, _ = lc.cfar_maps(density)
+        lc.nth_largest(z, lc.CFAR_RANK)
+
+    def tophat(i: int) -> None:
+        heat = lc.reduce_map(lc.heat_map(blurs[i + 1], joints[i]))
+        lc.nth_largest(lc.tophat_map(heat), lc.TOPHAT_RANK)
+
+    def lcm(i: int) -> None:
+        heat = lc.reduce_map(lc.heat_map(blurs[i + 1], joints[i]))
+        lc.nth_largest(lc.lcm_map(heat), lc.LCM_RANK)
+
+    def wavelet(i: int) -> None:
+        lc.wavelet_scores(frames[i + 1], joints[i])
+
+    dense = np.full_like(joints[0], 255)
+
+    def dense_wavelet(i: int) -> None:
+        lc.wavelet_scores(frames[i + 1], dense)
+
+    def everything(i: int) -> None:
+        lc.local_contrast_scores(frames[i + 1], blurs[i + 1], joints[i])
+
+    return {
+        "height": float(frames[0].shape[0]),
+        "width": float(frames[0].shape[1]),
+        "baseline_mask_ms": _median_ms(baseline, n, repeats),
+        "p9_cfar_ms": _median_ms(cfar, n, repeats),
+        "p10_tophat_ms": _median_ms(tophat, n, repeats),
+        "p10_lcm_ms": _median_ms(lcm, n, repeats),
+        "p1_wavelet_ms": _median_ms(wavelet, n, repeats),
+        "dense_p1_ms": _median_ms(dense_wavelet, n, repeats),
+        "all_ms": _median_ms(everything, n, repeats),
+        "joint_share": float(np.mean([cv2.countNonZero(j) / j.size for j in joints])),
+    }

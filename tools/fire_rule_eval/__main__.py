@@ -20,6 +20,7 @@ from tools.fire_rule_eval.protocol import evaluate_rule
 from tools.fire_rule_eval.protocol import render
 from tools.fire_rule_eval.protocol import render_continuous
 from tools.fire_rule_eval.protocol import render_hard_detail
+from tools.fire_rule_eval.protocol import render_per_day
 from tools.fire_rule_eval.report import load_clips
 from tools.fire_rule_eval.report import render_markdown
 from tools.fire_rule_eval.rules import FLICKER_RULES
@@ -60,7 +61,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         if args.skip_existing and target.exists():
             continue
         started = time.time()
-        features = extract_features(iter_check_frames(Path(entry["path"]), options))
+        features = extract_features(iter_check_frames(Path(entry["path"]), options), (args.blur, args.blur))
         np.savez_compressed(target, **features)
         print(f"{entry['name']}: {len(features['t'])} checks in {time.time() - started:.0f}s", flush=True)
     return 0
@@ -135,6 +136,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         grid_params = {o.rule: o.param for o in outcomes}
         print("\n" + render_continuous(rules, clips, grid_params))
         print("\n" + render_hard_detail(rules, clips, grid_params))
+        print("\n" + render_per_day(rules, clips))
     return 0
 
 
@@ -144,6 +146,18 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
     for path in args.video:
         for scale in args.scale:
+            if args.local_contrast:
+                r = bench.run_local_contrast(Path(path), args.checks, scale, args.repeats, args.threads)
+                print(
+                    f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads} "
+                    f"(warm-AND-moving share {r['joint_share']:.4f}): baseline mask {r['baseline_mask_ms']:.2f} ms; "
+                    + "; ".join(
+                        f"{k} {r[f'{k}_ms']:.2f} ms"
+                        for k in ("p9_cfar", "p10_tophat", "p10_lcm", "p1_wavelet", "dense_p1", "all")
+                    ),
+                    flush=True,
+                )
+                continue
             if args.invariance:
                 r = bench.run_invariance(Path(path), args.checks, scale, args.repeats, args.threads)
                 print(
@@ -184,6 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--start", type=float, default=0.0)
     extract.add_argument("--max-checks", type=int, default=None)
     extract.add_argument("--scale", type=float, default=1.0, help="resize factor; 1.0 keeps production parity")
+    extract.add_argument(
+        "--blur", type=int, default=21, help="Gaussian blur kernel of the colour mask (production 21; 5 at --scale 0.25)"
+    )
     extract.add_argument("--only", nargs="*")
     extract.add_argument("--skip-existing", action="store_true")
     extract.set_defaults(func=_cmd_extract)
@@ -223,6 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--repeats", type=int, default=7)
     bench.add_argument("--threads", type=int, default=1)
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
+    bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
     bench.set_defaults(func=_cmd_bench)
 
     compare = sub.add_parser("compare", help="common #132 comparison table at each rule's best safe point")
