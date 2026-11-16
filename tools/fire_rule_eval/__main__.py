@@ -181,6 +181,14 @@ def _cmd_bench(args: argparse.Namespace) -> int:
                     flush=True,
                 )
                 continue
+            if args.global_change:
+                r = bench.run_global(Path(path), args.checks, scale, args.repeats, args.threads)
+                print(
+                    f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: "
+                    f"baseline mask {r['baseline_mask_ms']:.2f} ms; global features +{r['global_ms']:.2f} ms",
+                    flush=True,
+                )
+                continue
             if args.invariance:
                 r = bench.run_invariance(Path(path), args.checks, scale, args.repeats, args.threads)
                 print(
@@ -269,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--threads", type=int, default=1)
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
+    bench.add_argument("--global-change", action="store_true", help="measure the #138 global-change features")
     bench.add_argument("--decision", action="store_true", help="measure the #137 decision layers (no video needed)")
     bench.set_defaults(func=_cmd_bench)
 

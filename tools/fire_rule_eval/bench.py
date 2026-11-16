@@ -286,3 +286,53 @@ def run_local_contrast(path: Path, checks: int, scale: float, repeats: int, thre
         "all_ms": _median_ms(everything, n, repeats),
         "joint_share": float(np.mean([cv2.countNonZero(j) / j.size for j in joints])),
     }
+
+
+def run_global(path: Path, checks: int, scale: float, repeats: int, threads: int) -> dict[str, float]:
+    """Measures the per-check cost of the #138 global-change features on real frames (decode excluded).
+
+    ``global_ms`` is the stand-alone cost of ``GlobalChange.update`` given the HSV frame, the grey frame, their
+    ``absdiff`` and the warm mask (it includes its own motion threshold, which production already has: a conservative
+    over-count); ``baseline_mask_ms`` is the production colour + motion mask on the same frames.
+
+    Args:
+        path: Video file.
+        checks: Number of 1 Hz checks to decode up front.
+        scale: Resize factor applied to every frame before anything is timed (0.25 gives the 480x270 working frame).
+        repeats: Timing passes (the median is reported).
+        threads: OpenCV thread count.
+
+    Returns:
+        Milliseconds per check, plus the frame size.
+    """
+    from tools.fire_rule_eval.globalchange import GlobalChange
+
+    cv2.setNumThreads(threads)
+    kernel = (5, 5) if scale < 0.5 else GAUSSIAN_BLUR_KERNEL_SIZE
+    frames = [f for _, f in iter_check_frames(path, ExtractOptions(1.0, 0.0, checks, scale))]
+    hsvs = [cv2.cvtColor(cv2.GaussianBlur(f, kernel, GAUSSIAN_BLUR_SIGMA_X), cv2.COLOR_BGR2HSV) for f in frames]
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    colors = [cv2.inRange(h, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE) for h in hsvs]
+    diffs = [cv2.absdiff(grays[i + 1], grays[i]) for i in range(len(frames) - 1)]
+    n = len(diffs)
+    state = GlobalChange()
+    state.update(hsvs[0], grays[0], None, colors[0])
+
+    def baseline(i: int) -> None:
+        k = i + 1
+        hsv = cv2.cvtColor(cv2.GaussianBlur(frames[k], kernel, GAUSSIAN_BLUR_SIGMA_X), cv2.COLOR_BGR2HSV)
+        color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
+        motion = cv2.threshold(cv2.absdiff(cv2.cvtColor(frames[k], cv2.COLOR_BGR2GRAY), grays[i]), 25, 255, cv2.THRESH_BINARY)[
+            1
+        ]
+        cv2.countNonZero(cv2.bitwise_and(color, motion))
+
+    def features(i: int) -> None:
+        state.update(hsvs[i + 1], grays[i + 1], diffs[i], colors[i + 1])
+
+    return {
+        "height": float(frames[0].shape[0]),
+        "width": float(frames[0].shape[1]),
+        "baseline_mask_ms": _median_ms(baseline, n, repeats),
+        "global_ms": _median_ms(features, n, repeats),
+    }

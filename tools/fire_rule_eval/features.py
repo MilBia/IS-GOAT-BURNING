@@ -15,6 +15,8 @@ from is_goat_burning.fire_detection.detector_core import DEFAULT_UPPER_HSV_FIRE
 from is_goat_burning.fire_detection.detectors import GAUSSIAN_BLUR_KERNEL_SIZE
 from is_goat_burning.fire_detection.detectors import GAUSSIAN_BLUR_SIGMA_X
 from is_goat_burning.fire_detection.detectors import MAX_PIXEL_VALUE
+from tools.fire_rule_eval.globalchange import GLOBAL_NAMES
+from tools.fire_rule_eval.globalchange import GlobalChange
 from tools.fire_rule_eval.invariance import INVARIANCE_NAMES
 from tools.fire_rule_eval.invariance import InvarianceMasks
 from tools.fire_rule_eval.localcontrast import LOCAL_CONTRAST_NAMES
@@ -52,6 +54,7 @@ FEATURE_NAMES = (
     "fine_wm25",
     *INVARIANCE_NAMES,
     *LOCAL_CONTRAST_NAMES,
+    *GLOBAL_NAMES,
 )
 
 BLOB_SLOTS = 8  # largest components kept per check
@@ -206,18 +209,22 @@ def extract_features(  # noqa: C901
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (WHITE_NEIGHBOURHOOD, WHITE_NEIGHBOURHOOD))
     tiles = TILE_GRID[0] * TILE_GRID[1]
     invariance = InvarianceMasks()
+    global_change = GlobalChange()
 
     for t, frame in frames:
         blur = cv2.GaussianBlur(frame, blur_kernel, GAUSSIAN_BLUR_SIGMA_X)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
+        color_raw = color  # the gl_* features always see the unmasked warm mask (pre-registered, see globalchange.py)
         if exclude_regions:
+            color = color.copy()
             color[_region_mask(frame.shape[:2], exclude_regions) > 0] = 0
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         area = frame.shape[0] * frame.shape[1]
         warm = cv2.countNonZero(color)
         first = previous_gray is None
         motion25 = None
+        diff = None
 
         rows["t"].append(t)
         rows["area"].append(area)
@@ -264,6 +271,7 @@ def extract_features(  # noqa: C901
             rows["white_wm25"].append(cv2.countNonZero(cv2.bitwise_and(cv2.bitwise_and(white, near_warm), motion25)))
 
         _append(rows, invariance.update(blur, color, gray, motion25))
+        _append(rows, global_change.update(hsv, gray, diff, color_raw))
 
         previous_gray = gray
         history.append(gray)
@@ -276,7 +284,7 @@ def extract_features(  # noqa: C901
             out[name] = np.stack(values).astype(np.float32) if values else np.zeros((0, BLOB_SLOTS, BLOB_COLUMNS), np.float32)
         elif name == "fine_wm25":
             out[name] = np.array(values, dtype=np.float32).reshape(-1, FINE_GRID[0] * FINE_GRID[1])
-        elif name.startswith("lc_"):
+        elif name.startswith(("lc_", "gl_")):
             out[name] = np.array(values, dtype=np.float32)
         elif name == "t":
             out[name] = np.array(values, dtype=np.float64)

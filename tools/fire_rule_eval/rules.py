@@ -343,6 +343,101 @@ LOCAL_CONTRAST_RULES: tuple[Rule, ...] = (
 )
 
 
+# ---- #138: global-change gate on ``area_relative`` (features in ``globalchange.py``) ---------------------------------
+# PRE-REGISTERED before any ``gl_*`` feature was extracted and before any ``compare``: 6 single gates x 2 fixed thresholds
+# + 2 combined gates (strict / loose) = 14 gate configurations at D=0, + the 2 combined gates with the 3-checks debounce
+# = 16 candidates (+ 2 controls ``area_relative`` / ``area_relative_deb3``). Thresholds are physical constants, not derived
+# from any clip; nothing is tuned afterwards. The rule is ``area_relative`` whose score is zeroed where the gate says that
+# the whole scene changed ("blocked"); the swept parameter ``p`` is the ``area_relative`` threshold, as for the baseline.
+# Pre-stated expectation (so that a 3/8 reads as predicted, not as bad luck): the best a global gate can do is silence the
+# two tunnels, the Ropeway and the two time-lapses that alarm today (Funchal, Norway); Ljubljana (local blinking lights)
+# and Falling leaves (local motion) are not global changes and are expected to survive, i.e. the floor is about 2-3/8.
+
+GATE_THRESHOLDS: dict[str, tuple[float, float]] = {
+    "dv": (3.0, 6.0),  # |change of the mean V| in grey levels
+    "out": (0.25, 0.5),  # share of the frame that changes outside the warm mask
+    "tiles": (0.4, 0.7),  # share of 16x9 tiles that changed
+    "coh": (0.5, 0.75),  # share of tiles that brightened / darkened together
+    "tileswg": (0.4, 0.7),  # as ``tiles`` but only blocking while < 50 % of the changed tiles contain warm pixels
+    "shift": (0.02, 0.05),  # phase-correlation shift, fraction of the width
+}
+GATE_WARM_GUARD = 0.5
+GATE_LEVELS = ("strict", "loose")  # the first / second threshold of every single gate, combined with OR
+COMBINED_GATES = ("dv", "out", "tiles", "coh", "shift")  # ``tileswg`` is evaluated alone (it is the guarded ``tiles``)
+
+
+def gate_blocked(f: Features, kind: str, threshold: float) -> np.ndarray:
+    """Per check: whether the single gate ``kind`` says that the whole scene changed (the alarm is suppressed)."""
+    if kind == "dv":
+        return np.abs(f["gl_dv"]) >= threshold
+    if kind == "out":
+        return f["gl_out"] >= threshold
+    if kind == "tiles":
+        return f["gl_tiles"] >= threshold
+    if kind == "coh":
+        return f["gl_coh"] >= threshold
+    if kind == "tileswg":
+        return (f["gl_tiles"] >= threshold) & (f["gl_wg"] < GATE_WARM_GUARD)
+    if kind == "shift":
+        return f["gl_shift"] >= threshold
+    raise KeyError(kind)
+
+
+def combined_blocked(f: Features, level: str) -> np.ndarray:
+    """Per check: any of the combined single gates (at the ``strict`` or ``loose`` thresholds) blocks."""
+    index = GATE_LEVELS.index(level)
+    blocked = np.zeros(len(f["t"]), dtype=bool)
+    for kind in COMBINED_GATES:
+        blocked |= gate_blocked(f, kind, GATE_THRESHOLDS[kind][index])
+    return blocked
+
+
+def gated_score(blocked: Callable[[Features], np.ndarray]) -> Callable[[Features], np.ndarray]:
+    """``area_relative`` score that is zero wherever ``blocked`` holds."""
+    base = area_relative_score()
+
+    def score(f: Features) -> np.ndarray:
+        return np.where(blocked(f), 0.0, base(f))
+
+    return score
+
+
+def _gate_rule(name: str, description: str, score: Callable[[Features], np.ndarray], checks: int = 1) -> Rule:
+    if checks > 1:
+        score = debounced_score(score, checks)
+    return Rule(name, description, RATIO_GRID, _score_rule(score), score=score)
+
+
+def _single_gate_rules() -> tuple[Rule, ...]:
+    rules = []
+    for kind, thresholds in GATE_THRESHOLDS.items():
+        for level, threshold in zip(GATE_LEVELS, thresholds, strict=True):
+            rules.append(
+                _gate_rule(
+                    f"gate_{kind}_{level}",
+                    f"#138: area_relative, blocked where the {kind} global-change gate fires at {threshold}",
+                    gated_score(lambda f, k=kind, t=threshold: gate_blocked(f, k, t)),
+                )
+            )
+    return tuple(rules)
+
+
+GATE_RULES: tuple[Rule, ...] = (
+    *_single_gate_rules(),
+    *(
+        _gate_rule(
+            f"gate_all_{level}{suffix}",
+            f"#138: area_relative, blocked where any of {COMBINED_GATES} fires ({level} thresholds)"
+            + (", alarmed on 3 consecutive checks" if checks > 1 else ""),
+            gated_score(lambda f, lv=level: combined_blocked(f, lv)),
+            checks,
+        )
+        for checks, suffix in ((1, ""), (3, "_deb3"))
+        for level in GATE_LEVELS
+    ),
+)
+
+
 RULES: tuple[Rule, ...] = (
     Rule("deployed", "production: warm AND motion(25) > p * area; first check is colour only", FRACTION_GRID, _deployed, 0.1),
     Rule("skip_first", "deployed, but never alarm on the first check after (re)start", FRACTION_GRID, _skip_first, 0.1),
@@ -419,5 +514,5 @@ CONTROL_RULES: tuple[Rule, ...] = (
 
 RULES_BY_NAME = {
     rule.name: rule
-    for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *LOCAL_CONTRAST_RULES, *CONTROL_RULES)
+    for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *LOCAL_CONTRAST_RULES, *GATE_RULES, *CONTROL_RULES)
 }
