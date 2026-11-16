@@ -321,6 +321,8 @@ class Settings(BaseSettings):
         default="frame_fraction", validation_alias="FIRE_DETECTION_MODE"
     )
     area_relative_threshold: float = Field(default=0.23, gt=0.0, le=1.0, validation_alias="AREA_RELATIVE_THRESHOLD")
+    verifier_cooldown_seconds: float = Field(default=60.0, ge=0.0, validation_alias="VERIFIER_COOLDOWN_SECONDS")
+    verifier_max_calls_per_hour: int = Field(default=0, ge=0, validation_alias="VERIFIER_MAX_CALLS_PER_HOUR")
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)

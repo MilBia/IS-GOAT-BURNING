@@ -12,8 +12,10 @@ detector based on the application's configuration.
 """
 
 import asyncio
+from collections import deque
 from pathlib import Path
 import threading
+import time
 from typing import TYPE_CHECKING
 from typing import Protocol
 
@@ -462,15 +464,27 @@ class HybridFireDetector:
         self,
         local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector,
         verifier: FireVerifier,
+        cooldown_seconds: float | None = None,
+        max_calls_per_hour: int | None = None,
     ) -> None:
         """Initializes the HybridFireDetector.
 
         Args:
             local_detector: A local CV-based detector for the fast first pass.
             verifier: The second-stage verifier (any `FireVerifier`) used to confirm detections.
+            cooldown_seconds: Minimum time between verifier calls. While it runs, the last verdict is reused (so the
+                debounce is not reset by a gap). Defaults to ``settings.verifier_cooldown_seconds``; 0 disables it.
+            max_calls_per_hour: Hard cap of verifier calls in a rolling hour; once reached the verifier is not called
+                and the result is "no fire" (a cost guard). Defaults to ``settings.verifier_max_calls_per_hour``;
+                0 means unlimited.
         """
         self.local_detector = local_detector
         self.verifier = verifier
+        self.cooldown_seconds = settings.verifier_cooldown_seconds if cooldown_seconds is None else cooldown_seconds
+        self.max_calls_per_hour = settings.verifier_max_calls_per_hour if max_calls_per_hour is None else max_calls_per_hour
+        self._last_call_time: float | None = None
+        self._last_verdict = False
+        self._call_times: deque[float] = deque()
         self._logger = get_logger("HybridFireDetector")
         self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
 
@@ -508,7 +522,20 @@ class HybridFireDetector:
         else:
             numpy_frame = frame
 
+        now = time.monotonic()
+        if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
+            return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
+        if self.max_calls_per_hour:
+            while self._call_times and now - self._call_times[0] >= 3600:
+                self._call_times.popleft()
+            if len(self._call_times) >= self.max_calls_per_hour:
+                self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
+                return False, annotated_frame
+            self._call_times.append(now)
+        self._last_call_time = now
+
         verified, _ = await self.verifier.detect(numpy_frame)
+        self._last_verdict = verified
 
         if not verified:
             self._logger.info(

@@ -87,6 +87,8 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
 | `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
 | `CHECKS_PER_SECOND` | How many times per second to analyze the video. | `1.0` |
+| `VERIFIER_COOLDOWN_SECONDS` | `hybrid_*` only: minimum seconds between verifier (API) calls; the last verdict is reused meanwhile. `0` disables. | `60` |
+| `VERIFIER_MAX_CALLS_PER_HOUR` | `hybrid_*` only: hard cap of verifier calls per rolling hour; at the cap the result is "no fire". `0` = unlimited. | `0` |
 | `OPEN_CL` | Enable OpenCL for acceleration (experimental). | `false` |
 | `CUDA` | Enable CUDA for NVIDIA GPU acceleration. | `false` |
 | `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
