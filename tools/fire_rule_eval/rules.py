@@ -16,6 +16,9 @@ from tools.fire_rule_eval.bgmodel import SENSITIVITY_VARIANTS
 from tools.fire_rule_eval.features import FINE_GRID
 from tools.fire_rule_eval.features import TILE_GRID
 from tools.fire_rule_eval.invariance import VARIANTS as INVARIANCE_VARIANTS
+from tools.fire_rule_eval.lowrank import CANDIDATE_VARIANTS as LR_CANDIDATE_VARIANTS
+from tools.fire_rule_eval.lowrank import CONTROL_VARIANTS as LR_CONTROL_VARIANTS
+from tools.fire_rule_eval.lowrank import SENSITIVITY_VARIANTS as LR_SENSITIVITY_VARIANTS
 from tools.fire_rule_eval.tracking import BlobTracker
 from tools.fire_rule_eval.tracking import LeakyIntegrator
 from tools.fire_rule_eval.tracking import TrackGate
@@ -531,6 +534,17 @@ BG_CONTROL_RULES: tuple[Rule, ...] = (
 )
 
 
+# ---- #140: low-rank + sparse masks (eigenbackground / GoDec / RPCA; see ``lowrank.py``) --------------------------------
+# PRE-REGISTERED (``lowrank.py`` docstring) before any ``lr_*`` feature was extracted and before any ``compare``: 8 candidate
+# models x 3 forms (``area_relative`` share, ``tiled``, absolute area) + 8 debounced (D=2) = 32 candidate configurations;
+# controls: the mean-of-window model (same forms + debounce), ``bg_med5`` / ``bg_med9`` of #139 (re-extracted in the same pass)
+# and the baselines on the same features. Sensitivity models get the three forms but are reported separately.
+
+LR_CANDIDATE_RULES: tuple[Rule, ...] = _bg_rules(tuple(LR_CANDIDATE_VARIANTS), True)
+LR_CONTROL_RULES: tuple[Rule, ...] = _bg_rules(tuple(LR_CONTROL_VARIANTS), True)
+LR_SENSITIVITY_RULES: tuple[Rule, ...] = _bg_rules(tuple(LR_SENSITIVITY_VARIANTS), False)
+
+
 RULES: tuple[Rule, ...] = (
     Rule("deployed", "production: warm AND motion(25) > p * area; first check is colour only", FRACTION_GRID, _deployed, 0.1),
     Rule("skip_first", "deployed, but never alarm on the first check after (re)start", FRACTION_GRID, _skip_first, 0.1),
@@ -623,6 +637,9 @@ RULES_BY_NAME = {
         *BG_CANDIDATE_RULES,
         *BG_SENSITIVITY_RULES,
         *BG_CONTROL_RULES,
+        *LR_CANDIDATE_RULES,
+        *LR_CONTROL_RULES,
+        *LR_SENSITIVITY_RULES,
         *CONTROL_RULES,
     )
 }

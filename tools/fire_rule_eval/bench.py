@@ -338,7 +338,7 @@ def run_global(path: Path, checks: int, scale: float, repeats: int, threads: int
     }
 
 
-def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) -> dict[str, float]:
+def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int, lowrank: bool = False) -> dict[str, float]:  # noqa: C901
     """Measures the per-check cost of the #139 background-model masks on real frames (decode excluded).
 
     Each model is timed on its own: ``model.apply`` plus the work that turns the mask into the stored counts (warm AND fg,
@@ -352,6 +352,8 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) ->
         scale: Resize factor applied to every frame before anything is timed.
         repeats: Timing passes (the median is reported).
         threads: OpenCV thread count.
+        lowrank: Measure the #140 low-rank models (``LowRankModels``) instead of the #139 set; adds ``<name>_iters`` (mean RPCA
+            iterations) and ``<name>_apply`` is then the mask only.
 
     Returns:
         Milliseconds per check by model (plus ``all_candidates``, the sum of the pre-registered candidates), and the frame size.
@@ -359,6 +361,11 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) ->
     from tools.fire_rule_eval.bgmodel import ALL_VARIANTS
     from tools.fire_rule_eval.bgmodel import CANDIDATE_VARIANTS
     from tools.fire_rule_eval.bgmodel import BgModels
+
+    if lowrank:
+        from tools.fire_rule_eval.lowrank import ALL_VARIANTS
+        from tools.fire_rule_eval.lowrank import CANDIDATE_VARIANTS
+        from tools.fire_rule_eval.lowrank import LowRankModels as BgModels
 
     cv2.setNumThreads(threads)
     kernel = (5, 5) if scale < 0.5 else GAUSSIAN_BLUR_KERNEL_SIZE
@@ -400,5 +407,7 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) ->
         for i in range(n):
             bare.masks(grays[i])
         out[f"{name}_apply"] = _median_ms(lambda i, s=bare: s.masks(grays[i % n]), n, repeats)
+        if lowrank:
+            out[f"{name}_iters"] = float(state._models[name].iterations_used)
     out["all_candidates"] = sum(out[name] for name in CANDIDATE_VARIANTS)
     return out

@@ -1,4 +1,4 @@
-"""Report of the #139 background-model experiment: what the models mark on the goat, on the baseline's alarms and on fire."""
+"""Report of the #139 / #140 background-model experiments: what the models mark on the goat, on the baseline alarms, on fire."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import numpy as np
 
 from tools.fire_rule_eval.bgmodel import ALL_VARIANTS
 from tools.fire_rule_eval.bgmodel import CANDIDATE_VARIANTS
+from tools.fire_rule_eval.lowrank import ALL_VARIANTS as LR_ALL_VARIANTS
 from tools.fire_rule_eval.protocol import FIXED_CAMERA_EXCLUDED as FIXED_CAMERA_EXCLUDED_KEYS
 from tools.fire_rule_eval.protocol import SYNTH_GROUP
 from tools.fire_rule_eval.protocol import is_timelapse
@@ -15,8 +16,10 @@ from tools.fire_rule_eval.rules import area_relative_score
 
 
 def _variants(clips: list[Clip]) -> list[str]:
-    present = [v for v in ALL_VARIANTS if all(f"bgwm_{v}" in c.features for c in clips)]
-    return [v for v in CANDIDATE_VARIANTS if v in present] + [v for v in present if v not in CANDIDATE_VARIANTS]
+    present = [v for v in (*LR_ALL_VARIANTS, *ALL_VARIANTS) if all(f"bgwm_{v}" in c.features for c in clips)]
+    lowrank = [v for v in LR_ALL_VARIANTS if v in present]
+    known = (*lowrank, *CANDIDATE_VARIANTS)
+    return lowrank + [v for v in CANDIDATE_VARIANTS if v in present] + [v for v in present if v not in known]
 
 
 def _kind(name: str) -> str:
@@ -84,4 +87,5 @@ def retention_table(clips: list[Clip], variants: list[str]) -> str:
 def run(clips: list[Clip], label: str) -> str:
     """Builds the whole report."""
     variants = _variants(clips)
-    return f"# #139 background-model report: {label}\n\n{goat_table(clips, variants)}\n\n{retention_table(clips, variants)}\n"
+    head = f"# #139 / #140 background-model report: {label}"
+    return f"{head}\n\n{goat_table(clips, variants)}\n\n{retention_table(clips, variants)}\n"

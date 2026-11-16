@@ -96,7 +96,7 @@ def test_godec_and_rpca_recover_rank_one_plus_sparse() -> None:
     sparse = np.zeros_like(data)
     sparse[7, 100:120] = 80.0
     observed = data + sparse
-    low = godec_low_rank(observed.astype(np.float32), 1, 5, rng.standard_normal((500, 1)).astype(np.float32))
+    low = godec_low_rank(observed.astype(np.float32), 5, rng.standard_normal((500, 1)).astype(np.float32))
     assert np.abs(low[-1] - data[-1]).mean() < 3.0
     low_rpca, iterations = rpca_low_rank(observed)
     assert np.abs(low_rpca[-1] - data[-1]).mean() < 3.0
@@ -125,3 +125,33 @@ def test_update_columns() -> None:
 def test_variant_registry() -> None:
     assert len(CANDIDATE_VARIANTS) == 8
     assert set(CANDIDATE_VARIANTS) <= set(ALL_VARIANTS)
+
+
+def test_extraction_with_second_mask_matches_two_separate_runs() -> None:
+    from tools.fire_rule_eval.bgmodel import extract_bg_features
+
+    rng = np.random.default_rng(8)
+    frames = []
+    for i in range(8):
+        frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+        frame[...] = (rng.normal(60, 3, (HEIGHT, WIDTH, 1))).clip(0, 255).astype(np.uint8)
+        frame[10:30, 10:70] = (0, 120 + 8 * i, 255)  # warm patch
+        frames.append((float(i), frame))
+    regions = ((0.0, 0.0, 0.5, 1.0),)
+    both = extract_bg_features(
+        iter(frames), (5, 5), (), ("lr_eig1_n5", "lr_godec1_n5"), LowRankModels(("lr_eig1_n5", "lr_godec1_n5")), regions
+    )
+    plain = extract_bg_features(
+        iter(frames), (5, 5), (), ("lr_eig1_n5", "lr_godec1_n5"), LowRankModels(("lr_eig1_n5", "lr_godec1_n5"))
+    )
+    roi = extract_bg_features(
+        iter(frames), (5, 5), regions, ("lr_eig1_n5", "lr_godec1_n5"), LowRankModels(("lr_eig1_n5", "lr_godec1_n5"))
+    )
+    for name, value in plain.items():
+        assert np.array_equal(both[name], value), name
+    for name, value in roi.items():
+        if name in ("t", "area", "first", "mv25") or name.startswith(("bgmv_", "lriter_")):
+            continue
+        assert np.array_equal(both[f"roi__{name}"], value), name
+    assert (both["roi__warm"] <= both["warm"]).all()
+    assert (both["roi__warm"] < both["warm"]).any()

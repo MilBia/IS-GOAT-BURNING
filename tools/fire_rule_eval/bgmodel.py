@@ -183,12 +183,13 @@ class BgModels:
         return out
 
 
-def extract_bg_features(
+def extract_bg_features(  # noqa: C901
     frames: Iterator[tuple[float, np.ndarray]],
     blur_kernel: tuple[int, int] = GAUSSIAN_BLUR_KERNEL_SIZE,
     exclude_regions: tuple[tuple[float, float, float, float], ...] = (),
     variants: tuple[str, ...] = tuple(CANDIDATE_VARIANTS),
     models: BgModels | None = None,
+    second_regions: tuple[tuple[float, float, float, float], ...] = (),
 ) -> dict[str, np.ndarray]:
     """Minimal per-check extraction: the baseline columns the rules need plus the background-model columns.
 
@@ -200,6 +201,8 @@ def extract_bg_features(
         exclude_regions: Fractional regions whose warm pixels are ignored (post hoc mosaic run).
         variants: Models to run (ignored when ``models`` is given).
         models: Optional model state carried over from a previous clip (the ``--carry-state`` sensitivity run).
+        second_regions: #140: when given, the model counts are also stored for the warm mask with these regions excluded, under
+            ``roi__<column>`` (needs ``models.update_dual``); the models run once, so the mosaic run costs no second pass.
 
     Returns:
         Feature name to array, one row per check.
@@ -226,6 +229,15 @@ def extract_bg_features(
             else cv2.threshold(cv2.absdiff(gray, previous), MOTION_THRESHOLD, MAX_PIXEL_VALUE, cv2.THRESH_BINARY)[1]
         )
         joint = color if first else cv2.bitwise_and(color, motion)
+        color_roi = None
+        if second_regions:
+            color_roi = color.copy()
+            color_roi[_region_mask(frame.shape[:2], second_regions) > 0] = 0
+            warm_roi = cv2.countNonZero(color_roi)
+            joint_roi = color_roi if first else cv2.bitwise_and(color_roi, motion)
+            rows.setdefault("roi__warm", []).append(warm_roi)
+            rows.setdefault("roi__wm25", []).append(warm_roi if first else cv2.countNonZero(joint_roi))
+            rows.setdefault("roi__tile_wm25", []).append(_tile_fractions(joint_roi))
         rows["t"].append(t)
         rows["area"].append(frame.shape[0] * frame.shape[1])
         rows["first"].append(int(first))
@@ -233,13 +245,20 @@ def extract_bg_features(
         rows["wm25"].append(warm if first else cv2.countNonZero(joint))
         rows["mv25"].append(0 if first else cv2.countNonZero(motion))
         rows["tile_wm25"].append(_tile_fractions(joint))
-        for name, value in state.update(gray, color, motion).items():
-            rows[name].append(value)
+        if second_regions:
+            plain, roi = state.update_dual(gray, color, color_roi, motion)
+            for name, value in plain.items():
+                rows.setdefault(name, []).append(value)
+            for name, value in roi.items():
+                rows.setdefault(f"roi__{name}", []).append(value)
+        else:
+            for name, value in state.update(gray, color, motion).items():
+                rows.setdefault(name, []).append(value)
         previous = gray
     tiles = TILE_GRID[0] * TILE_GRID[1]
     out: dict[str, np.ndarray] = {}
     for name, values in rows.items():
-        if name.startswith("tile_"):
+        if name.startswith("tile_") or name.startswith("roi__tile_"):
             out[name] = np.array(values, dtype=np.float32).reshape(-1, tiles)
         elif name == "t":
             out[name] = np.array(values, dtype=np.float64)

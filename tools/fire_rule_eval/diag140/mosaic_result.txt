@@ -1,0 +1,56 @@
+WARNING: Your kernel does not support memory limit capabilities or the cgroup is not mounted. Limitation discarded.
+event_2025-12-17_13-00-33 goat-cam_2025-12-17_13-02-22.mp4 14 checks
+  diff25           all 0.0291 (max 0.0532)  mosaic 0.0483  outside 0.0169  ratio   2.9  removes=False
+  med5             all 0.0235 (max 0.0460)  mosaic 0.0368  outside 0.0151  ratio   2.4  removes=False
+  mog2_h30         all 0.0210 (max 0.0395)  mosaic 0.0336  outside 0.0130  ratio   2.6  removes=False
+  lr_eig1_n5       all 0.0287 (max 0.0510)  mosaic 0.0514  outside 0.0143  ratio   3.6  removes=False
+  lr_eig1_n9       all 0.0289 (max 0.0495)  mosaic 0.0518  outside 0.0142  ratio   3.6  removes=False
+  lr_eig2_n9       all 0.0288 (max 0.0500)  mosaic 0.0526  outside 0.0136  ratio   3.9  removes=False
+  lr_godec1_n5     all 0.0209 (max 0.0401)  mosaic 0.0377  outside 0.0103  ratio   3.7  removes=False
+  lr_godec1_n9     all 0.0246 (max 0.0428)  mosaic 0.0453  outside 0.0115  ratio   3.9  removes=False
+  lr_godec2_n9     all 0.0197 (max 0.0432)  mosaic 0.0362  outside 0.0093  ratio   3.9  removes=False
+  lr_rpca_n5       all 0.0232 (max 0.0447)  mosaic 0.0380  outside 0.0138  ratio   2.7  removes=False
+  lr_rpca_n9       all 0.0241 (max 0.0424)  mosaic 0.0405  outside 0.0136  ratio   3.0  removes=False
+  lr_mean_n9       all 0.0290 (max 0.0474)  mosaic 0.0521  outside 0.0143  ratio   3.6  removes=False
+  lr_eig1_n15      all 0.0291 (max 0.0479)  mosaic 0.0520  outside 0.0145  ratio   3.6  removes=False
+  lr_godec1_n15    all 0.0256 (max 0.0442)  mosaic 0.0467  outside 0.0122  ratio   3.8  removes=False
+  lr_godec1_n9_t6  all 0.0244 (max 0.0424)  mosaic 0.0448  outside 0.0114  ratio   3.9  removes=False
+  lr_rpca_n9_c5    all 0.0222 (max 0.0395)  mosaic 0.0395  outside 0.0112  ratio   3.5  removes=False
+event_2025-12-22_13-00-35 goat-cam_pre-fire-buffer_2025-12-22_13-00-35.mp4 5 checks
+  diff25           all 0.0217 (max 0.0305)  mosaic 0.0494  outside 0.0040  ratio  12.4  removes=False
+  med5             all 0.0176 (max 0.0203)  mosaic 0.0410  outside 0.0027  ratio  15.1  removes=False
+  mog2_h30         all 0.0143 (max 0.0175)  mosaic 0.0321  outside 0.0031  ratio  10.4  removes=False
+  lr_eig1_n5       all 0.0269 (max 0.0327)  mosaic 0.0625  outside 0.0043  ratio  14.5  removes=False
+  lr_eig1_n9       all 0.0268 (max 0.0327)  mosaic 0.0622  outside 0.0043  ratio  14.6  removes=False
+  lr_eig2_n9       all 0.0259 (max 0.0311)  mosaic 0.0599  outside 0.0042  ratio  14.1  removes=False
+  lr_godec1_n5     all 0.0196 (max 0.0245)  mosaic 0.0459  outside 0.0028  ratio  16.2  removes=False
+  lr_godec1_n9     all 0.0205 (max 0.0245)  mosaic 0.0481  outside 0.0029  ratio  16.4  removes=False
+  lr_godec2_n9     all 0.0191 (max 0.0234)  mosaic 0.0447  outside 0.0028  ratio  16.0  removes=False
+  lr_rpca_n5       all 0.0187 (max 0.0234)  mosaic 0.0438  outside 0.0027  ratio  16.3  removes=False
+  lr_rpca_n9       all 0.0180 (max 0.0234)  mosaic 0.0422  outside 0.0026  ratio  15.9  removes=False
+  lr_mean_n9       all 0.0261 (max 0.0333)  mosaic 0.0613  outside 0.0038  ratio  16.3  removes=False
+  lr_eig1_n15      all 0.0268 (max 0.0327)  mosaic 0.0622  outside 0.0043  ratio  14.6  removes=False
+  lr_godec1_n15    all 0.0205 (max 0.0245)  mosaic 0.0481  outside 0.0029  ratio  16.4  removes=False
+  lr_godec1_n9_t6  all 0.0201 (max 0.0244)  mosaic 0.0473  outside 0.0029  ratio  16.4  removes=False
+  lr_rpca_n9_c5    all 0.0175 (max 0.0217)  mosaic 0.0408  outside 0.0026  ratio  15.8  removes=False
+event_2025-12-27_13-00-33 goat-cam_2025-12-27_13-01-11.mp4 15 checks
+  diff25           all 0.0302 (max 0.0454)  mosaic 0.0438  outside 0.0215  ratio   2.0  removes=False
+  med5             all 0.0256 (max 0.0373)  mosaic 0.0341  outside 0.0202  ratio   1.7  removes=False
+  mog2_h30         all 0.0172 (max 0.0303)  mosaic 0.0277  outside 0.0105  ratio   2.6  removes=False
+  lr_eig1_n5       all 0.0321 (max 0.0469)  mosaic 0.0535  outside 0.0184  ratio   2.9  removes=False
+  lr_eig1_n9       all 0.0326 (max 0.0469)  mosaic 0.0501  outside 0.0214  ratio   2.3  removes=False
+  lr_eig2_n9       all 0.0306 (max 0.0469)  mosaic 0.0488  outside 0.0190  ratio   2.6  removes=False
+  lr_godec1_n5     all 0.0222 (max 0.0299)  mosaic 0.0391  outside 0.0115  ratio   3.4  removes=False
+  lr_godec1_n9     all 0.0253 (max 0.0300)  mosaic 0.0399  outside 0.0160  ratio   2.5  removes=False
+  lr_godec2_n9     all 0.0240 (max 0.0304)  mosaic 0.0403  outside 0.0136  ratio   3.0  removes=False
+  lr_rpca_n5       all 0.0266 (max 0.0364)  mosaic 0.0377  outside 0.0196  ratio   1.9  removes=False
+  lr_rpca_n9       all 0.0254 (max 0.0364)  mosaic 0.0315  outside 0.0216  ratio   1.5  removes=False
+  lr_mean_n9       all 0.0336 (max 0.0467)  mosaic 0.0502  outside 0.0231  ratio   2.2  removes=False
+  lr_eig1_n15      all 0.0322 (max 0.0469)  mosaic 0.0466  outside 0.0230  ratio   2.0  removes=False
+  lr_godec1_n15    all 0.0240 (max 0.0310)  mosaic 0.0344  outside 0.0175  ratio   2.0  removes=False
+  lr_godec1_n9_t6  all 0.0248 (max 0.0295)  mosaic 0.0391  outside 0.0158  ratio   2.5  removes=False
+  lr_rpca_n9_c5    all 0.0219 (max 0.0301)  mosaic 0.0310  outside 0.0161  ratio   1.9  removes=False
+
+real	5m0,668s
+user	0m0,078s
+sys	0m0,030s

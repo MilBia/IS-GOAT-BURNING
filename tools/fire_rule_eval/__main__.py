@@ -21,6 +21,9 @@ from tools.fire_rule_eval.features import extract_features
 from tools.fire_rule_eval.features import iter_check_frames
 from tools.fire_rule_eval.flicker import extract_flicker_features
 from tools.fire_rule_eval.flicker import iter_frames_30fps
+from tools.fire_rule_eval.lowrank import ALL_VARIANTS as LR_ALL_VARIANTS
+from tools.fire_rule_eval.lowrank import DEFAULT_VARIANTS as LR_DEFAULT_VARIANTS
+from tools.fire_rule_eval.lowrank import LowRankModels
 from tools.fire_rule_eval.protocol import evaluate_rule
 from tools.fire_rule_eval.protocol import render
 from tools.fire_rule_eval.protocol import render_continuous
@@ -59,7 +62,11 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     options = ExtractOptions(args.interval, args.start, args.max_checks, args.scale)
-    variants = tuple(ALL_VARIANTS) if args.bg_variants == ["all"] else tuple(args.bg_variants or CANDIDATE_VARIANTS)
+    if args.lowrank:  # #140: low-rank models + the #139 median controls in the same pass
+        everything = (*LR_ALL_VARIANTS, "med5", "med9")
+        variants = everything if args.bg_variants == ["all"] else tuple(args.bg_variants or LR_DEFAULT_VARIANTS)
+    else:
+        variants = tuple(ALL_VARIANTS) if args.bg_variants == ["all"] else tuple(args.bg_variants or CANDIDATE_VARIANTS)
     carried: dict[str, BgModels] = {}
     for entry in manifest["clips"]:
         if args.only and entry["name"] not in args.only:
@@ -72,7 +79,17 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         frames = iter_check_frames(Path(entry["path"]), options)
         if args.bg_only:
             state = carried.setdefault(entry.get("group", ""), BgModels(variants)) if args.carry_state else None
-            features = extract_bg_features(frames, (args.blur, args.blur), regions, variants, state)
+            if args.lowrank:
+                state = LowRankModels(variants)  # fresh state per clip
+            second = MOSAIC_REGIONS if args.also_mosaic and entry.get("group", "").startswith(("goat_", "synth")) else ()
+            features = extract_bg_features(frames, (args.blur, args.blur), regions, variants, state, second)
+            if args.also_mosaic:
+                roi_dir = Path(args.also_mosaic)
+                roi_dir.mkdir(parents=True, exist_ok=True)
+                roi_features = {k[5:]: v for k, v in features.items() if k.startswith("roi__")}
+                shared = {k: v for k, v in features.items() if not k.startswith("roi__")}
+                np.savez_compressed(roi_dir / f"{entry['name']}.npz", **{**shared, **roi_features})
+                features = shared
         else:
             features = extract_features(frames, (args.blur, args.blur), regions)
         np.savez_compressed(target, **features)
@@ -195,12 +212,12 @@ def _cmd_bgreport(args: argparse.Namespace) -> int:
 
 def _cmd_bench(args: argparse.Namespace) -> int:  # noqa: C901
     """Measures the per-check cost of the P15 / P8 candidates on real frames."""
-    if args.bg_model:
+    if args.bg_model or args.lowrank:
         from tools.fire_rule_eval import bench
 
         for path in args.video:
             for scale in args.scale:
-                r = bench.run_bg(Path(path), args.checks, scale, args.repeats, args.threads)
+                r = bench.run_bg(Path(path), args.checks, scale, args.repeats, args.threads, lowrank=args.lowrank)
                 print(
                     f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: baseline mask "
                     f"{r['baseline_mask_ms']:.2f} ms; "
@@ -301,6 +318,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --bg-only: carry the model state over the clips of one manifest group (goat days), POST HOC run",
     )
+    extract.add_argument(
+        "--also-mosaic",
+        metavar="DIR",
+        help="#140, with --bg-only --lowrank: also write the mosaic-excluded columns (goat / synth) to DIR in the same pass",
+    )
+    extract.add_argument(
+        "--lowrank",
+        action="store_true",
+        help="#140: with --bg-only, run the low-rank + sparse models (eigenbackground / GoDec / RPCA) instead of the #139 set",
+    )
     extract.add_argument("--only", nargs="*")
     extract.add_argument("--skip-existing", action="store_true")
     extract.set_defaults(func=_cmd_extract)
@@ -342,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
     bench.add_argument("--global-change", action="store_true", help="measure the #138 global-change features")
+    bench.add_argument("--lowrank", action="store_true", help="measure the #140 low-rank + sparse masks (increment per model)")
     bench.add_argument("--bg-model", action="store_true", help="measure the #139 background-model masks (increment per model)")
     bench.add_argument("--decision", action="store_true", help="measure the #137 decision layers (no video needed)")
     bench.set_defaults(func=_cmd_bench)
