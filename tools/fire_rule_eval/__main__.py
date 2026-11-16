@@ -131,7 +131,10 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         print("no clips with features found", file=sys.stderr)
         return 1
     clips = [c for c in clips if not (c.label == "neg" and any(token in c.name for token in args.exclude_neg))]
-    rules = [RULES_BY_NAME[name] for name in args.rules]
+    from tools.fire_rule_eval.decision import build_candidates
+
+    lookup = {**RULES_BY_NAME, **{cand.name: cand.rule for cand in build_candidates(clips)}}
+    rules = [lookup[name] for name in args.rules]
     outcomes = [evaluate_rule(rule, clips) for rule in rules]
     print(render(outcomes, args.warmup, len(rules)))
     if args.continuous:
@@ -142,8 +145,26 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_decision(args: argparse.Namespace) -> int:
+    """Prints the #137 decision-layer report (debounce vs CUSUM / SPRT, #130 table, conformal threshold)."""
+    from tools.fire_rule_eval.decision_eval import run
+
+    clips = load_clips(Path(args.manifest), Path(args.features), None, args.warmup)
+    if not clips:
+        print("no clips with features found", file=sys.stderr)
+        return 1
+    print(run(clips, args.label or args.features))
+    return 0
+
+
 def _cmd_bench(args: argparse.Namespace) -> int:
     """Measures the per-check cost of the P15 / P8 candidates on real frames."""
+    if args.decision:
+        from tools.fire_rule_eval.decision import bench_decision
+
+        for name, microseconds in bench_decision().items():
+            print(f"{name}: {microseconds:.3f} us/check")
+        return 0
     from tools.fire_rule_eval import bench
 
     for path in args.video:
@@ -241,13 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
     report.set_defaults(func=_cmd_report)
 
     bench = sub.add_parser("bench", help="per-check cost of the P15 / P8 candidates on real frames (decode excluded)")
-    bench.add_argument("--video", nargs="+", required=True)
+    bench.add_argument("--video", nargs="*", default=[])
     bench.add_argument("--scale", nargs="+", type=float, default=[1.0, 0.25])
     bench.add_argument("--checks", type=int, default=21)
     bench.add_argument("--repeats", type=int, default=7)
     bench.add_argument("--threads", type=int, default=1)
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
+    bench.add_argument("--decision", action="store_true", help="measure the #137 decision layers (no video needed)")
     bench.set_defaults(func=_cmd_bench)
 
     compare = sub.add_parser("compare", help="common #132 comparison table at each rule's best safe point")
@@ -262,6 +284,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--continuous", action="store_true", help="also print the continuous-margin table and the per-hard-clip breakdown"
     )
     compare.set_defaults(func=_cmd_compare)
+
+    decision = sub.add_parser(
+        "decision", help="#137: debounce vs CUSUM / SPRT on the gate score, #130 debounce table, conformal"
+    )
+    decision.add_argument("--manifest", required=True)
+    decision.add_argument("--features", required=True)
+    decision.add_argument("--warmup", type=int, default=5)
+    decision.add_argument("--label", help="title of the feature set in the report")
+    decision.set_defaults(func=_cmd_decision)
     return parser
 
 
