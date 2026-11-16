@@ -396,5 +396,9 @@ def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) ->
         for i in range(n):  # warm-up pass: the model has seen the clip once
             state.update(grays[i], colors[i], motions[i])
         out[name] = _median_ms(lambda i, s=state: s.update(grays[i % n], colors[i % n], motions[i % n]), n, repeats)
+        bare = BgModels((name,))
+        for i in range(n):
+            bare.masks(grays[i])
+        out[f"{name}_apply"] = _median_ms(lambda i, s=bare: s.masks(grays[i % n]), n, repeats)
     out["all_candidates"] = sum(out[name] for name in CANDIDATE_VARIANTS)
     return out
