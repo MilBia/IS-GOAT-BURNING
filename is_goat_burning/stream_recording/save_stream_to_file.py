@@ -87,10 +87,15 @@ class AsyncVideoChunkSaver:
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
     FRAME_WRITE_BATCH_SIZE: ClassVar[int] = 30
+    #: Bound of `frame_queue`; when the writer falls behind, the newest frames are dropped instead of growing RAM
+    #: without limit (raw 1080p frames are ~6 MB each, so 60 of them are ~370 MB).
+    FRAME_QUEUE_MAX_FRAMES: ClassVar[int] = 60
     STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
 
     # --- Internal State ---
-    frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(init=False, default_factory=asyncio.Queue)
+    frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(
+        init=False, default_factory=lambda: asyncio.Queue(maxsize=AsyncVideoChunkSaver.FRAME_QUEUE_MAX_FRAMES)
+    )
     archive_queue: asyncio.Queue[tuple[str, str] | None] = field(init=False, default_factory=asyncio.Queue)
     writer: cv2.VideoWriter | None = field(init=False, default=None, repr=False)
     chunk_start_time: float = field(init=False, default=0.0)

@@ -159,6 +159,9 @@ class CPUFireDetector:
         self.motion_threshold = motion_threshold
         self.relative_threshold = relative_threshold
         self._previous_frame: np.ndarray | cv2.UMat | None = None
+        #: When False the masked "annotated" frame is not built and the input frame is returned instead
+        #: (saves ~7 ms per check on a Raspberry Pi 4). Only the debug window (`VIDEO_OUTPUT`) needs the real one.
+        self.annotate: bool = True
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         """Core fire detection logic with temporal motion verification.
@@ -240,6 +243,8 @@ class CPUFireDetector:
             frame_area = gray_shape[0] * gray_shape[1]
         is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
         self._logger.debug("Detection result: pixels=%d, warm=%d, margin=%d, fire=%s", no_red, warm, self.margin, is_fire)
+        if not self.annotate:
+            return is_fire, frame
         return is_fire, cv2.bitwise_and(frame, frame, mask=final_mask)
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:

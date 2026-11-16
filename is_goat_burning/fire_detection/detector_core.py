@@ -108,6 +108,11 @@ class StreamFireDetector:
             upper=upper,
             strategy=settings.detection_strategy,
         )
+        if not video_output:
+            # Nobody reads the annotated frame (verifiers get the original), so do not build it.
+            local = getattr(instance.fire_detector, "local_detector", instance.fire_detector)
+            if isinstance(getattr(local, "annotate", None), bool):
+                local.annotate = False
         return instance
 
     async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
