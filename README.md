@@ -122,7 +122,9 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
 | `VIDEO__VIDEO_OUTPUT_DIRECTORY` | Directory to save video files. | `"./recordings"` |
-| `VIDEO__BUFFER_MODE` | Buffering strategy: `memory` (default) or `disk`. | `"memory"` |
+| `VIDEO__BUFFER_MODE` | Buffering strategy: `memory` (default), `disk` or `segments`. | `"memory"` |
+| `VIDEO__SEGMENTS_DIRECTORY` | Ring directory for `segments` mode; must be a tmpfs (RAM) path. | `/dev/shm/goat-ring` |
+| `VIDEO__SEGMENT_SECONDS` | Minimum duration of one ring segment in `segments` mode (cut on keyframes). | `2` |
 | `VIDEO__MEMORY_BUFFER_SECONDS`| Duration (seconds) of pre-fire footage to keep in RAM in `memory` mode. | `60` |
 | `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` | Length of each video chunk in seconds. | `300` |
 | `VIDEO__MAX_VIDEO_CHUNKS` | Max number of `disk` mode chunks to keep (old ones are deleted). | `20` |
@@ -141,6 +143,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 -   **CUDA:** `CUDA=true` requires a compatible NVIDIA GPU and properly installed drivers. See the Docker section for setup instructions.
 -   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
     -   `memory` (default): Holds a buffer of recent, compressed video frames in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and video resolution/framerate.
+    -   `segments`: One supervised `ffmpeg -c copy` process writes the original stream (no decoding, no re-encoding) into a ring of short segments in a tmpfs directory (`VIDEO__SEGMENTS_DIRECTORY`), sized by `VIDEO__MEMORY_BUFFER_SECONDS`. Frames are decoded only for analysis (`grab()` skips the rest), so CPU and RAM stay low (measured on Raspberry Pi 4, 1080p: ~0.55 core vs ~1.46 for `memory`, with a ~25 MB ring vs ~1.6 GB). On fire the segments are joined with `-c copy` into the pre-fire clip and recording continues until the fire is out. Needs `ffmpeg`; in Docker give the container enough shared memory (e.g. `--shm-size=256m`; a 60 s ring of 1080p needs ~40 MB).
     -   `disk`: Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
 -   **Sending Video Chunks to Discord (`DISCORD__SEND_VIDEO_CHUNKS`):** When enabled (alongside `DISCORD__USE_DISCORD=true` and `VIDEO__SAVE_VIDEO_CHUNKS=true`), each video chunk archived around a fire event—starting with the pre-fire buffer and continuing with the post-fire chunks—is uploaded to the configured Discord webhook(s) as it is written. This gives you an instant, playable clip of the moments around the event. Discord webhooks reject uploads larger than ~25 MB; any chunk at or above the ~24 MB limit is not uploaded, and a fallback text message pointing to the chunk's local path is sent instead (`Goat on fire! A video chunk was saved but is too large to upload to Discord. You can find it at: <path>`). To keep individual chunks small enough to upload, lower `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` and/or `VIDEO__MEMORY_BUFFER_SECONDS`.
 
