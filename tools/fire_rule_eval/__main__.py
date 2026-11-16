@@ -11,6 +11,7 @@ import time
 import cv2
 import numpy as np
 
+from tools.fire_rule_eval.features import MOSAIC_REGIONS
 from tools.fire_rule_eval.features import ExtractOptions
 from tools.fire_rule_eval.features import extract_features
 from tools.fire_rule_eval.features import iter_check_frames
@@ -61,7 +62,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         if args.skip_existing and target.exists():
             continue
         started = time.time()
-        features = extract_features(iter_check_frames(Path(entry["path"]), options), (args.blur, args.blur))
+        regions = MOSAIC_REGIONS if args.exclude_mosaic and entry.get("group", "").startswith(("goat_", "synth")) else ()
+        features = extract_features(iter_check_frames(Path(entry["path"]), options), (args.blur, args.blur), regions)
         np.savez_compressed(target, **features)
         print(f"{entry['name']}: {len(features['t'])} checks in {time.time() - started:.0f}s", flush=True)
     return 0
@@ -200,6 +202,11 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--scale", type=float, default=1.0, help="resize factor; 1.0 keeps production parity")
     extract.add_argument(
         "--blur", type=int, default=21, help="Gaussian blur kernel of the colour mask (production 21; 5 at --scale 0.25)"
+    )
+    extract.add_argument(
+        "--exclude-mosaic",
+        action="store_true",
+        help="post hoc sensitivity run: ignore warm pixels in the privacy mosaic of the goat / synth clips",
     )
     extract.add_argument("--only", nargs="*")
     extract.add_argument("--skip-existing", action="store_true")

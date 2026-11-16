@@ -29,6 +29,11 @@ WHITE_LOWER = np.array([0, 0, 200], dtype=np.uint8)
 WHITE_UPPER = np.array([179, 49, 255], dtype=np.uint8)
 WHITE_NEIGHBOURHOOD = 25
 
+# Regions (x0, y0, x1, y1 as fractions of the frame) of the privacy mosaic of the goat recordings: left / right of the goat
+# below the horizon and the bottom band. Measured by eye on a frame (not from any score); used only by the post hoc
+# ``extract --exclude-mosaic`` sensitivity run, never by the protocol.
+MOSAIC_REGIONS = ((0.0, 0.52, 0.385, 1.0), (0.66, 0.52, 1.0, 1.0), (0.0, 0.855, 1.0, 1.0))
+
 FEATURE_NAMES = (
     "t",
     "area",
@@ -163,13 +168,24 @@ def blob_table(mask: np.ndarray) -> np.ndarray:
     return table
 
 
+def _region_mask(shape: tuple[int, int], regions: tuple[tuple[float, float, float, float], ...]) -> np.ndarray:
+    """``uint8`` mask that is 255 inside the given fractional regions."""
+    height, width = shape
+    mask = np.zeros(shape, dtype=np.uint8)
+    for x0, y0, x1, y1 in regions:
+        mask[round(y0 * height) : round(y1 * height), round(x0 * width) : round(x1 * width)] = 255
+    return mask
+
+
 def _append(rows: dict[str, list], values: dict[str, float]) -> None:
     for name, value in values.items():
         rows[name].append(value)
 
 
 def extract_features(  # noqa: C901
-    frames: Iterator[tuple[float, np.ndarray]], blur_kernel: tuple[int, int] = GAUSSIAN_BLUR_KERNEL_SIZE
+    frames: Iterator[tuple[float, np.ndarray]],
+    blur_kernel: tuple[int, int] = GAUSSIAN_BLUR_KERNEL_SIZE,
+    exclude_regions: tuple[tuple[float, float, float, float], ...] = (),
 ) -> dict[str, np.ndarray]:
     """Computes per-check features from a stream of sampled frames.
 
@@ -179,6 +195,7 @@ def extract_features(  # noqa: C901
     Args:
         frames: Iterator of ``(time_s, frame)`` pairs.
         blur_kernel: Gaussian blur of the colour mask (production (21, 21); (5, 5) is the equivalent at 480x270).
+        exclude_regions: Frame regions (fractions ``x0, y0, x1, y1``) whose warm pixels are ignored (post hoc ROI run).
 
     Returns:
         A mapping of feature name to a NumPy array with one row per check.
@@ -194,6 +211,8 @@ def extract_features(  # noqa: C901
         blur = cv2.GaussianBlur(frame, blur_kernel, GAUSSIAN_BLUR_SIGMA_X)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
+        if exclude_regions:
+            color[_region_mask(frame.shape[:2], exclude_regions) > 0] = 0
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         area = frame.shape[0] * frame.shape[1]
         warm = cv2.countNonZero(color)
