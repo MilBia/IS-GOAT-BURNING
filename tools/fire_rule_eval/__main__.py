@@ -16,6 +16,8 @@ from tools.fire_rule_eval.features import extract_features
 from tools.fire_rule_eval.features import iter_check_frames
 from tools.fire_rule_eval.flicker import extract_flicker_features
 from tools.fire_rule_eval.flicker import iter_frames_30fps
+from tools.fire_rule_eval.protocol import evaluate_rule
+from tools.fire_rule_eval.protocol import render
 from tools.fire_rule_eval.report import load_clips
 from tools.fire_rule_eval.report import render_markdown
 from tools.fire_rule_eval.rules import FLICKER_RULES
@@ -107,11 +109,41 @@ def _cmd_synth(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     """Prints the Markdown report."""
     flicker_dir = Path(args.flicker) if args.flicker else None
-    clips = load_clips(Path(args.manifest), Path(args.features), flicker_dir)
+    clips = load_clips(Path(args.manifest), Path(args.features), flicker_dir, args.warmup)
     if not clips:
         print("no clips with features found", file=sys.stderr)
         return 1
     print(render_markdown(clips, (*RULES, *FLICKER_RULES) if flicker_dir else RULES))
+    return 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    """Prints the common #132 comparison table (best safe point per rule, warm-up, time to first alarm)."""
+    from tools.fire_rule_eval.rules import RULES_BY_NAME
+
+    clips = load_clips(Path(args.manifest), Path(args.features), None, args.warmup)
+    if not clips:
+        print("no clips with features found", file=sys.stderr)
+        return 1
+    clips = [c for c in clips if not (c.label == "neg" and any(token in c.name for token in args.exclude_neg))]
+    rules = [RULES_BY_NAME[name] for name in args.rules]
+    print(render([evaluate_rule(rule, clips) for rule in rules], args.warmup, len(rules)))
+    return 0
+
+
+def _cmd_bench(args: argparse.Namespace) -> int:
+    """Measures the per-check cost of the P15 / P8 candidates on real frames."""
+    from tools.fire_rule_eval import bench
+
+    for path in args.video:
+        for scale in args.scale:
+            r = bench.run(Path(path), args.checks, scale, args.repeats, args.threads)
+            print(
+                f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: "
+                f"baseline mask {r['baseline_mask_ms']:.2f} ms; P15 +{r['p15_ms']:.2f} ms "
+                f"(tracker only {r['p15_tracker_only_ms']:.2f}); P8 +{r['p8_ms']:.2f} ms; P15+P8 +{r['p15_p8_ms']:.2f} ms",
+                flush=True,
+            )
     return 0
 
 
@@ -163,7 +195,26 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--manifest", required=True)
     report.add_argument("--features", required=True)
     report.add_argument("--flicker", help="directory from the `flicker` command; adds the flicker rules")
+    report.add_argument("--warmup", type=int, default=1, help="leading checks of every clip that do not count (default 1)")
     report.set_defaults(func=_cmd_report)
+
+    bench = sub.add_parser("bench", help="per-check cost of the P15 / P8 candidates on real frames (decode excluded)")
+    bench.add_argument("--video", nargs="+", required=True)
+    bench.add_argument("--scale", nargs="+", type=float, default=[1.0, 0.25])
+    bench.add_argument("--checks", type=int, default=21)
+    bench.add_argument("--repeats", type=int, default=7)
+    bench.add_argument("--threads", type=int, default=1)
+    bench.set_defaults(func=_cmd_bench)
+
+    compare = sub.add_parser("compare", help="common #132 comparison table at each rule's best safe point")
+    compare.add_argument("--manifest", required=True)
+    compare.add_argument("--features", required=True)
+    compare.add_argument("--rules", nargs="+", required=True, help="rule names (see rules.RULES_BY_NAME)")
+    compare.add_argument("--warmup", type=int, default=5, help="leading checks of every clip that do not count (default 5)")
+    compare.add_argument(
+        "--exclude-neg", nargs="*", default=[], help="drop negative clips whose name contains one of these (sensitivity runs)"
+    )
+    compare.set_defaults(func=_cmd_compare)
     return parser
 
 

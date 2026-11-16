@@ -38,7 +38,17 @@ FEATURE_NAMES = (
     "cc_close_max",
     "wm_avg25",
     "white_wm25",
+    "blobs",
+    "fine_wm25",
 )
+
+BLOB_SLOTS = 8  # largest components kept per check
+BLOB_COLUMNS = 5  # x, y, w, h (fractions of the frame), area (fraction of the frame)
+BLOB_WIDTH = 480  # working width of the blob mask; the height keeps the aspect ratio
+BLOB_COVERAGE = 77  # a working pixel counts as set when >= 30 % of its source pixels are warm AND moving
+BLOB_CLOSE = 5
+BLOB_MIN_AREA_PX = 3
+FINE_GRID = (32, 18)  # (columns, rows) of the fine evidence grid used by the leaky integrator
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,36 @@ def _tile_fractions(mask: np.ndarray) -> np.ndarray:
     return frac.reshape(-1)
 
 
+def blob_table(mask: np.ndarray) -> np.ndarray:
+    """Describes the largest connected components of a warm-AND-moving mask.
+
+    The mask is reduced to a fixed working width (480 px) so that sizes do not depend on the source resolution.
+
+    Args:
+        mask: ``uint8`` mask (0 / 255) at the source resolution.
+
+    Returns:
+        ``float32`` array ``(BLOB_SLOTS, 5)`` with ``x, y, w, h`` (fractions of the frame) and the component
+        area (fraction of the frame), sorted by area, zero padded.
+    """
+    height, width = mask.shape[:2]
+    work_h = max(round(BLOB_WIDTH * height / width), 1)
+    small = cv2.resize(mask, (BLOB_WIDTH, work_h), interpolation=cv2.INTER_AREA)
+    small = (small >= BLOB_COVERAGE).astype(np.uint8)
+    small = cv2.morphologyEx(small, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (BLOB_CLOSE, BLOB_CLOSE)))
+    table = np.zeros((BLOB_SLOTS, BLOB_COLUMNS), dtype=np.float32)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(small, connectivity=8)
+    if count <= 1:
+        return table
+    stats = stats[1:]
+    stats = stats[stats[:, cv2.CC_STAT_AREA] >= BLOB_MIN_AREA_PX]
+    stats = stats[np.argsort(-stats[:, cv2.CC_STAT_AREA], kind="stable")][:BLOB_SLOTS]
+    total = BLOB_WIDTH * work_h
+    for slot, (x, y, w, h, area) in enumerate(stats):
+        table[slot] = (x / BLOB_WIDTH, y / work_h, w / BLOB_WIDTH, h / work_h, area / total)
+    return table
+
+
 def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np.ndarray]:
     """Computes per-check features from a stream of sampled frames.
 
@@ -157,6 +197,8 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
             largest = _largest_component(color, close=False)
             rows["cc_max"].append(largest)
             rows["cc_close_max"].append(_largest_component(color, close=True))
+            rows["blobs"].append(np.zeros((BLOB_SLOTS, BLOB_COLUMNS), dtype=np.float32))
+            rows["fine_wm25"].append(np.zeros(FINE_GRID[0] * FINE_GRID[1], dtype=np.float32))
         else:
             diff = cv2.absdiff(gray, previous_gray)
             masks = {}
@@ -169,6 +211,10 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
             rows["tile_wm25"].append(_tile_fractions(joint))
             rows["cc_max"].append(_largest_component(joint, close=False))
             rows["cc_close_max"].append(_largest_component(joint, close=True))
+            rows["blobs"].append(blob_table(joint))
+            rows["fine_wm25"].append(
+                cv2.resize((joint > 0).astype(np.float32), FINE_GRID, interpolation=cv2.INTER_AREA).reshape(-1)
+            )
 
             average = np.mean(np.stack(history), axis=0).astype(np.float32)
             avg_motion = (np.abs(gray.astype(np.float32) - average) > 25).astype(np.uint8) * MAX_PIXEL_VALUE
@@ -186,6 +232,10 @@ def extract_features(frames: Iterator[tuple[float, np.ndarray]]) -> dict[str, np
     for name, values in rows.items():
         if name.startswith("tile_"):
             out[name] = np.array(values, dtype=np.float32).reshape(-1, tiles)
+        elif name == "blobs":
+            out[name] = np.stack(values).astype(np.float32) if values else np.zeros((0, BLOB_SLOTS, BLOB_COLUMNS), np.float32)
+        elif name == "fine_wm25":
+            out[name] = np.array(values, dtype=np.float32).reshape(-1, FINE_GRID[0] * FINE_GRID[1])
         elif name == "t":
             out[name] = np.array(values, dtype=np.float64)
         else:

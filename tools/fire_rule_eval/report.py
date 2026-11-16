@@ -25,6 +25,13 @@ class Clip:
     label: str
     group: str
     features: Features
+    valid: np.ndarray | None = None  # checks that count towards the evaluation (warm-up and fire window applied)
+    onset_s: float = 0.0  # when the fire becomes visible (positives)
+
+    @property
+    def mask(self) -> np.ndarray:
+        """Boolean mask of the checks that count (all checks when no mask was set)."""
+        return np.ones(len(self.features["t"]), dtype=bool) if self.valid is None else self.valid
 
     @property
     def is_positive(self) -> bool:
@@ -63,17 +70,20 @@ def _merge_flicker(feats: Features, flicker: Features) -> Features | None:
     return rows
 
 
-def load_clips(manifest_path: Path, features_dir: Path, flicker_dir: Path | None = None) -> list[Clip]:
+def load_clips(manifest_path: Path, features_dir: Path, flicker_dir: Path | None = None, warmup: int = 1) -> list[Clip]:
     """Loads clips listed in a manifest that have stored features.
 
     Positive clips are restricted to the ``fire_from_s`` / ``fire_to_s`` window when given and always
-    drop their first check (no motion information), so recall reflects the steady state.
+    drop their first check (no motion information), so recall reflects the steady state. The rules run on
+    the whole clip (stateful rules need the history); the mask only selects which checks are scored.
 
     Args:
         manifest_path: JSON manifest with a ``clips`` list.
         features_dir: Directory holding ``<name>.npz`` files from ``extract``.
         flicker_dir: Optional directory with ``<name>.npz`` files from ``flicker``; when given, only clips
             present there are loaded, the first seconds are dropped and flicker columns are added.
+        warmup: Number of leading checks of every clip that never count (1 = only the first check, which has
+            no motion information). Stateful rules still see these checks, so their state has warmed up.
 
     Returns:
         Loaded clips (clips without features are skipped).
@@ -95,14 +105,21 @@ def load_clips(manifest_path: Path, features_dir: Path, flicker_dir: Path | None
             if merged is None:
                 continue
             feats = merged
-        keep = np.ones(len(feats["t"]), dtype=bool)
+        valid = (np.arange(len(feats["t"])) >= warmup) & (feats["first"] == 0)
         if entry["label"] == POSITIVE:
-            keep &= feats["first"] == 0
-            keep &= feats["t"] >= entry.get("fire_from_s", 0.0)
-            keep &= feats["t"] <= entry.get("fire_to_s", float("inf"))
-            feats = {key: value[keep] for key, value in feats.items()}
-        if len(feats["t"]):
-            clips.append(Clip(entry["name"], entry["label"], entry.get("group", entry["label"]), feats))
+            valid &= feats["t"] >= entry.get("fire_from_s", 0.0)
+            valid &= feats["t"] <= entry.get("fire_to_s", float("inf"))
+        if valid.any():
+            clips.append(
+                Clip(
+                    entry["name"],
+                    entry["label"],
+                    entry.get("group", entry["label"]),
+                    feats,
+                    valid,
+                    float(entry.get("fire_from_s", 0.0)),
+                )
+            )
     return clips
 
 
@@ -131,20 +148,21 @@ def evaluate(rule: Rule, param: float, clips: list[Clip]) -> Point:
     detected = pos_clips = 0
     for clip in clips:
         alarm = rule.decide(clip.features, param)
+        valid = clip.mask
         if clip.is_positive:
             pos_clips += 1
-            recalls.append(float(alarm.mean()))
-            detected += int(alarm.any())
+            recalls.append(float(alarm[valid].mean()))
+            detected += int(alarm[valid].any())
         elif clip.label == HARD_NEGATIVE:
             hard_clips += 1
-            hard_alarmed += int((alarm & (clip.features["first"] == 0)).any())
+            hard_alarmed += int((alarm & valid).any())
         else:
             neg_clips += 1
             first = clip.features["first"] == 1
-            steady = alarm & ~first
+            steady = alarm & valid
             neg_alarms += int(steady.sum())
             neg_first += int((alarm & first).sum())
-            neg_checks += int((~first).sum())
+            neg_checks += int(valid.sum())
             neg_clips_alarmed += int(steady.any())
     recall = float(np.mean(recalls)) if recalls else float("nan")
     return Point(
@@ -213,8 +231,8 @@ AGREEMENT_THRESHOLDS = (0.0005, 0.001, 0.002, 0.005, 0.01)
 
 def render_flicker_agreement(clips: list[Clip]) -> str:
     """Compares the incremental flicker feature with the windowed reference over all checks."""
-    win = np.concatenate([c.features["flick_win"] / c.features["flick_area"] for c in clips])
-    inc = np.concatenate([c.features["flick_inc"] / c.features["flick_area"] for c in clips])
+    win = np.concatenate([(c.features["flick_win"] / c.features["flick_area"])[c.mask] for c in clips])
+    inc = np.concatenate([(c.features["flick_inc"] / c.features["flick_area"])[c.mask] for c in clips])
     both = (win > 0) & (inc > 0)
     pearson = float(np.corrcoef(win, inc)[0, 1]) if win.std() > 0 and inc.std() > 0 else float("nan")
     ranks = np.corrcoef(np.argsort(np.argsort(win)), np.argsort(np.argsort(inc)))[0, 1]
@@ -294,6 +312,6 @@ def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RU
         for name in names:
             rule, point = details[name]
             alarm = rule.decide(clip.features, point.param)
-            cells.append(f"{int(alarm.sum())}/{len(alarm)}")
+            cells.append(f"{int(alarm[clip.mask].sum())}/{int(clip.mask.sum())}")
         lines.append(f"| {clip.name} | {clip.label} | {clip.group} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
