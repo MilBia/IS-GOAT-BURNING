@@ -227,3 +227,15 @@ def test_saver_selects_segments_strategy(mocker: MockerFixture, tmp_path: Path) 
 
     assert isinstance(saver.strategy, SegmentsBufferStrategy)
     assert inspect.iscoroutinefunction(saver.strategy.handle_fire_event)
+
+
+def test_prepare_ring_warns_when_tmpfs_is_too_small(ring: Path, context: MagicMock, mocker: MockerFixture) -> None:
+    mocker.patch("is_goat_burning.stream_recording.strategies.shutil.disk_usage", return_value=MagicMock(free=10 * 2**20))
+    warn = mocker.patch("is_goat_burning.stream_recording.strategies.logger.warning")
+    (ring / "seg000.ts").write_bytes(b"x")
+
+    SegmentsBufferStrategy(context)._prepare_ring()
+
+    assert not list(ring.glob("seg*.ts"))  # stale segments are cleared
+    warn.assert_called_once()
+    assert "--shm-size" in warn.call_args.args[0]

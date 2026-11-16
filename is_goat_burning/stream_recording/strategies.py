@@ -329,6 +329,7 @@ class SegmentsBufferStrategy(BufferStrategy):
     RESTART_DELAY_MAX: ClassVar[float] = 30.0
     COLLECT_INTERVAL_SECONDS: ClassVar[float] = 5.0
     STABLE_RUN_SECONDS: ClassVar[float] = 30.0
+    MIN_FREE_BYTES: ClassVar[int] = 128 * 1024 * 1024
 
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the segment ring parameters.
@@ -390,6 +391,12 @@ class SegmentsBufferStrategy(BufferStrategy):
         self.ring_dir.mkdir(parents=True, exist_ok=True)
         for old in self.ring_dir.glob(self.SEGMENT_GLOB):
             old.unlink(missing_ok=True)
+        free = shutil.disk_usage(self.ring_dir).free
+        if free < self.MIN_FREE_BYTES:
+            logger.warning(
+                f"Only {free // 2**20} MB free in the segment ring directory (need >= {self.MIN_FREE_BYTES // 2**20} MB). "
+                "The ring may fill up and archiving fail; in Docker raise --shm-size."
+            )
 
     async def _supervise_ffmpeg(self) -> None:
         """Keeps the ffmpeg archiver running, restarting it with a back-off when it exits."""
