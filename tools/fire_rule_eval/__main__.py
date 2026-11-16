@@ -11,6 +11,10 @@ import time
 import cv2
 import numpy as np
 
+from tools.fire_rule_eval.bgmodel import ALL_VARIANTS
+from tools.fire_rule_eval.bgmodel import CANDIDATE_VARIANTS
+from tools.fire_rule_eval.bgmodel import BgModels
+from tools.fire_rule_eval.bgmodel import extract_bg_features
 from tools.fire_rule_eval.features import MOSAIC_REGIONS
 from tools.fire_rule_eval.features import ExtractOptions
 from tools.fire_rule_eval.features import extract_features
@@ -55,6 +59,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     options = ExtractOptions(args.interval, args.start, args.max_checks, args.scale)
+    variants = tuple(ALL_VARIANTS) if args.bg_variants == ["all"] else tuple(args.bg_variants or CANDIDATE_VARIANTS)
+    carried: dict[str, BgModels] = {}
     for entry in manifest["clips"]:
         if args.only and entry["name"] not in args.only:
             continue
@@ -63,7 +69,12 @@ def _cmd_extract(args: argparse.Namespace) -> int:
             continue
         started = time.time()
         regions = MOSAIC_REGIONS if args.exclude_mosaic and entry.get("group", "").startswith(("goat_", "synth")) else ()
-        features = extract_features(iter_check_frames(Path(entry["path"]), options), (args.blur, args.blur), regions)
+        frames = iter_check_frames(Path(entry["path"]), options)
+        if args.bg_only:
+            state = carried.setdefault(entry.get("group", ""), BgModels(variants)) if args.carry_state else None
+            features = extract_bg_features(frames, (args.blur, args.blur), regions, variants, state)
+        else:
+            features = extract_features(frames, (args.blur, args.blur), regions)
         np.savez_compressed(target, **features)
         print(f"{entry['name']}: {len(features['t'])} checks in {time.time() - started:.0f}s", flush=True)
     return 0
@@ -170,8 +181,33 @@ def _cmd_gates(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_bench(args: argparse.Namespace) -> int:
+def _cmd_bgreport(args: argparse.Namespace) -> int:
+    """Prints the #139 report (foreground share on the goat, baseline-alarm retention per hard clip, fire retention)."""
+    from tools.fire_rule_eval.bgeval import run
+
+    clips = load_clips(Path(args.manifest), Path(args.features), None, args.warmup)
+    if not clips:
+        print("no clips with features found", file=sys.stderr)
+        return 1
+    print(run(clips, args.label or args.features))
+    return 0
+
+
+def _cmd_bench(args: argparse.Namespace) -> int:  # noqa: C901
     """Measures the per-check cost of the P15 / P8 candidates on real frames."""
+    if args.bg_model:
+        from tools.fire_rule_eval import bench
+
+        for path in args.video:
+            for scale in args.scale:
+                r = bench.run_bg(Path(path), args.checks, scale, args.repeats, args.threads)
+                print(
+                    f"{Path(path).name} {int(r['width'])}x{int(r['height'])} threads={args.threads}: baseline mask "
+                    f"{r['baseline_mask_ms']:.2f} ms; "
+                    + "; ".join(f"{k} +{v:.2f} ms" for k, v in r.items() if k not in ("width", "height", "baseline_mask_ms")),
+                    flush=True,
+                )
+        return 0
     if args.decision:
         from tools.fire_rule_eval.decision import bench_decision
 
@@ -250,6 +286,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="post hoc sensitivity run: ignore warm pixels in the privacy mosaic of the goat / synth clips",
     )
+    extract.add_argument(
+        "--bg-only",
+        action="store_true",
+        help="#139: store only the baseline columns the rules need plus the background-model columns (MOG2 / KNN / median)",
+    )
+    extract.add_argument(
+        "--bg-variants",
+        nargs="*",
+        help="with --bg-only: model names (default: the pre-registered candidates; `all` adds the sensitivity set)",
+    )
+    extract.add_argument(
+        "--carry-state",
+        action="store_true",
+        help="with --bg-only: carry the model state over the clips of one manifest group (goat days), POST HOC run",
+    )
     extract.add_argument("--only", nargs="*")
     extract.add_argument("--skip-existing", action="store_true")
     extract.set_defaults(func=_cmd_extract)
@@ -291,6 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--invariance", action="store_true", help="measure the #135 motion masks instead of P15 / P8")
     bench.add_argument("--local-contrast", action="store_true", help="measure the #136 local-contrast scores")
     bench.add_argument("--global-change", action="store_true", help="measure the #138 global-change features")
+    bench.add_argument("--bg-model", action="store_true", help="measure the #139 background-model masks (increment per model)")
     bench.add_argument("--decision", action="store_true", help="measure the #137 decision layers (no video needed)")
     bench.set_defaults(func=_cmd_bench)
 
@@ -323,6 +375,12 @@ def build_parser() -> argparse.ArgumentParser:
     gates.add_argument("--label", help="title of the feature set in the report")
     gates.add_argument("--cuts", help="JSON from cuts.py (POST HOC scene-cut audit of the real clips)")
     gates.set_defaults(func=_cmd_gates)
+    bgreport = sub.add_parser("bgreport", help="#139: foreground share on the goat, baseline-alarm retention per hard clip")
+    bgreport.add_argument("--manifest", required=True)
+    bgreport.add_argument("--features", required=True)
+    bgreport.add_argument("--warmup", type=int, default=5)
+    bgreport.add_argument("--label", help="title of the feature set in the report")
+    bgreport.set_defaults(func=_cmd_bgreport)
     return parser
 
 

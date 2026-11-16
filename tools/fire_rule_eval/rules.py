@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from tools.fire_rule_eval.bgmodel import CANDIDATE_VARIANTS
+from tools.fire_rule_eval.bgmodel import SENSITIVITY_VARIANTS
 from tools.fire_rule_eval.features import FINE_GRID
 from tools.fire_rule_eval.features import TILE_GRID
 from tools.fire_rule_eval.invariance import VARIANTS as INVARIANCE_VARIANTS
@@ -103,6 +105,25 @@ def _area_relative_family(wm_key: str, warm_key: str = "warm") -> Callable[[Feat
 def _tiled(f: Features, p: float) -> np.ndarray:
     moving_enough = f["wm25"] > MIN_MOVING_FRACTION * f["area"]
     return (f["tile_wm25"].max(axis=1) > p) & moving_enough & _not_first(f)
+
+
+def tiled_score(wm_key: str = "wm25", tile_key: str = "tile_wm25") -> Callable[[Features], np.ndarray]:
+    """Continuous score of the ``tiled`` rule: the largest tile fraction of warm AND moving (0 where the moving gate fails)."""
+
+    def score(f: Features) -> np.ndarray:
+        moving_enough = f[wm_key] > MIN_MOVING_FRACTION * f["area"]
+        return np.where(moving_enough & _not_first(f), f[tile_key].max(axis=1), 0.0)
+
+    return score
+
+
+def abs_score(key: str) -> Callable[[Features], np.ndarray]:
+    """Continuous score of the production ``skip_first`` form: ``key`` count as a share of the frame (0 on a first check)."""
+
+    def score(f: Features) -> np.ndarray:
+        return np.where(_not_first(f), f[key] / np.maximum(f["area"], 1), 0.0)
+
+    return score
 
 
 def _white_core(f: Features, p: float) -> np.ndarray:
@@ -438,6 +459,78 @@ GATE_RULES: tuple[Rule, ...] = (
 )
 
 
+# ---- #139: background-model foreground masks (MOG2 / KNN / running median; see ``bgmodel.py``) -----------------------
+# PRE-REGISTERED (``bgmodel.py`` docstring) before any ``bg*`` feature was extracted and before any ``compare``:
+# 6 candidate models x 3 forms (``area_relative`` share, ``tiled``, absolute area) + 6 debounced (D=2) = 24 candidates,
+# + 4 controls on the same features. The sensitivity models (other histories / schedules) get the same three forms but
+# are only reported in a separately labelled table. State is computed per clip at extraction time (``chain=False``).
+
+
+def _bg_rules(variants: tuple[str, ...], debounce: bool) -> tuple[Rule, ...]:
+    rules: list[Rule] = []
+    for v in variants:
+        wm = f"bgwm_{v}"
+        ratio = area_relative_score(wm)
+        rules.append(
+            Rule(
+                f"bg_{v}",
+                f"#139 {v}: share of the warm region that is background-model foreground > p",
+                RATIO_GRID,
+                _score_rule(ratio),
+                score=ratio,
+                chain=False,
+            )
+        )
+        tiled = tiled_score(wm, f"tile_bg_{v}")
+        rules.append(
+            Rule(
+                f"bg_{v}_tiled",
+                f"#139 {v}: max 8x4 tile fraction of warm AND foreground > p",
+                TILE_GRID_VALUES,
+                _score_rule(tiled),
+                score=tiled,
+                chain=False,
+            )
+        )
+        absolute = abs_score(wm)
+        rules.append(
+            Rule(
+                f"bg_{v}_abs",
+                f"#139 {v}: warm AND foreground > p * frame area",
+                FRACTION_GRID,
+                _score_rule(absolute),
+                score=absolute,
+                chain=False,
+            )
+        )
+        if debounce:
+            deb = debounced_score(ratio, 3)
+            rules.append(
+                Rule(
+                    f"bg_{v}_deb3",
+                    f"#139 {v}: bg_{v} alarmed on 3 consecutive checks",
+                    RATIO_GRID,
+                    _score_rule(deb),
+                    score=deb,
+                    chain=False,
+                )
+            )
+    return tuple(rules)
+
+
+BG_CANDIDATE_RULES: tuple[Rule, ...] = _bg_rules(tuple(CANDIDATE_VARIANTS), True)
+BG_SENSITIVITY_RULES: tuple[Rule, ...] = _bg_rules(tuple(SENSITIVITY_VARIANTS), False)
+BG_CONTROL_RULES: tuple[Rule, ...] = (
+    Rule(
+        "abs_wm25",
+        "#139 control: warm AND motion25 > p * frame area (production skip_first, with a score)",
+        FRACTION_GRID,
+        _score_rule(abs_score("wm25")),
+        score=abs_score("wm25"),
+    ),
+)
+
+
 RULES: tuple[Rule, ...] = (
     Rule("deployed", "production: warm AND motion(25) > p * area; first check is colour only", FRACTION_GRID, _deployed, 0.1),
     Rule("skip_first", "deployed, but never alarm on the first check after (re)start", FRACTION_GRID, _skip_first, 0.1),
@@ -451,7 +544,13 @@ RULES: tuple[Rule, ...] = (
         _area_relative,
         score=area_relative_score(),
     ),
-    Rule("tiled", "max over 8x4 tiles of the tile fraction that is warm AND moving > p", TILE_GRID_VALUES, _tiled),
+    Rule(
+        "tiled",
+        "max over 8x4 tiles of the tile fraction that is warm AND moving > p",
+        TILE_GRID_VALUES,
+        _tiled,
+        score=tiled_score(),
+    ),
     Rule("component", "largest connected warm-AND-moving component > p * frame area", FRACTION_GRID, _threshold("cc_max")),
     Rule("component_closed", "as component, after a 5x5 morphological close", FRACTION_GRID, _threshold("cc_close_max")),
     Rule("white_core", "warm-AND-moving plus bright desaturated moving pixels near warm", FRACTION_GRID, _white_core),
@@ -514,5 +613,16 @@ CONTROL_RULES: tuple[Rule, ...] = (
 
 RULES_BY_NAME = {
     rule.name: rule
-    for rule in (*RULES, *FLICKER_RULES, *TRACKING_RULES, *INVARIANCE_RULES, *LOCAL_CONTRAST_RULES, *GATE_RULES, *CONTROL_RULES)
+    for rule in (
+        *RULES,
+        *FLICKER_RULES,
+        *TRACKING_RULES,
+        *INVARIANCE_RULES,
+        *LOCAL_CONTRAST_RULES,
+        *GATE_RULES,
+        *BG_CANDIDATE_RULES,
+        *BG_SENSITIVITY_RULES,
+        *BG_CONTROL_RULES,
+        *CONTROL_RULES,
+    )
 }

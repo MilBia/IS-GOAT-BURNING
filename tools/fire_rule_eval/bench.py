@@ -336,3 +336,65 @@ def run_global(path: Path, checks: int, scale: float, repeats: int, threads: int
         "baseline_mask_ms": _median_ms(baseline, n, repeats),
         "global_ms": _median_ms(features, n, repeats),
     }
+
+
+def run_bg(path: Path, checks: int, scale: float, repeats: int, threads: int) -> dict[str, float]:
+    """Measures the per-check cost of the #139 background-model masks on real frames (decode excluded).
+
+    Each model is timed on its own: ``model.apply`` plus the work that turns the mask into the stored counts (warm AND fg,
+    AND motion25, the foreground count and the 8x4 tile fractions). The models are fed the same frames cyclically for
+    ``repeats`` passes after one warm-up pass, so the timings are steady-state. The frame differencing baseline is timed
+    on the same frames (``baseline_mask_ms``); the figures are increments over it (the models do not need its absdiff).
+
+    Args:
+        path: Video file.
+        checks: Number of 1 Hz checks to decode up front.
+        scale: Resize factor applied to every frame before anything is timed.
+        repeats: Timing passes (the median is reported).
+        threads: OpenCV thread count.
+
+    Returns:
+        Milliseconds per check by model (plus ``all_candidates``, the sum of the pre-registered candidates), and the frame size.
+    """
+    from tools.fire_rule_eval.bgmodel import ALL_VARIANTS
+    from tools.fire_rule_eval.bgmodel import CANDIDATE_VARIANTS
+    from tools.fire_rule_eval.bgmodel import BgModels
+
+    cv2.setNumThreads(threads)
+    kernel = (5, 5) if scale < 0.5 else GAUSSIAN_BLUR_KERNEL_SIZE
+    frames = [f for _, f in iter_check_frames(path, ExtractOptions(1.0, 0.0, checks, scale))]
+    grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    colors = [
+        cv2.inRange(
+            cv2.cvtColor(cv2.GaussianBlur(f, kernel, GAUSSIAN_BLUR_SIGMA_X), cv2.COLOR_BGR2HSV),
+            DEFAULT_LOWER_HSV_FIRE,
+            DEFAULT_UPPER_HSV_FIRE,
+        )
+        for f in frames
+    ]
+    motions = [None] + [
+        cv2.threshold(cv2.absdiff(grays[i], grays[i - 1]), 25, 255, cv2.THRESH_BINARY)[1] for i in range(1, len(frames))
+    ]
+    n = len(frames)
+
+    def baseline(i: int) -> None:
+        k = i % n
+        hsv = cv2.cvtColor(cv2.GaussianBlur(frames[k], kernel, GAUSSIAN_BLUR_SIGMA_X), cv2.COLOR_BGR2HSV)
+        color = cv2.inRange(hsv, DEFAULT_LOWER_HSV_FIRE, DEFAULT_UPPER_HSV_FIRE)
+        _, motion = cv2.threshold(
+            cv2.absdiff(cv2.cvtColor(frames[k], cv2.COLOR_BGR2GRAY), grays[k - 1]), 25, 255, cv2.THRESH_BINARY
+        )
+        cv2.countNonZero(cv2.bitwise_and(color, motion))
+
+    out: dict[str, float] = {
+        "height": float(frames[0].shape[0]),
+        "width": float(frames[0].shape[1]),
+        "baseline_mask_ms": _median_ms(baseline, n, repeats),
+    }
+    for name in ALL_VARIANTS:
+        state = BgModels((name,))
+        for i in range(n):  # warm-up pass: the model has seen the clip once
+            state.update(grays[i], colors[i], motions[i])
+        out[name] = _median_ms(lambda i, s=state: s.update(grays[i % n], colors[i % n], motions[i % n]), n, repeats)
+    out["all_candidates"] = sum(out[name] for name in CANDIDATE_VARIANTS)
+    return out
