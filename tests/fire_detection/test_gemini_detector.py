@@ -87,3 +87,64 @@ async def test_detect_api_failure(mock_genai_client, monkeypatch) -> None:
 
     assert is_fire is False
     assert returned_frame is frame
+
+
+# --- verifier contract (#169): errors are distinguishable from "no fire" ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [Exception("API Error"), ValueError("bad frame")])
+async def test_verify_raises_verifier_error_on_failure(mock_genai_client, monkeypatch, error) -> None:
+    """``verify`` reports a failed call as VerifierError, not as "no fire"."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+    mock_genai_client.return_value.aio.models.generate_content.side_effect = error
+
+    with pytest.raises(VerifierError):
+        await GeminiFireDetector().verify(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+@pytest.mark.asyncio
+async def test_verify_raises_when_response_is_not_parsed(mock_genai_client, monkeypatch) -> None:
+    """An unparseable answer is an error, not a "no fire" verdict."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+    mock_genai_client.return_value.aio.models.generate_content.return_value = MagicMock(parsed=None)
+
+    with pytest.raises(VerifierError):
+        await GeminiFireDetector().verify(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+@pytest.mark.asyncio
+async def test_verify_returns_the_verdict(mock_genai_client, monkeypatch) -> None:
+    """A parsed answer is returned as a plain bool."""
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+    mock_genai_client.return_value.aio.models.generate_content.return_value = MagicMock(
+        parsed=FireDetectionResponse(is_fire=True, confidence=0.9)
+    )
+
+    assert await GeminiFireDetector().verify(np.zeros((10, 10, 3), dtype=np.uint8)) is True
+
+
+@pytest.mark.asyncio
+async def test_call_times_out_after_configured_seconds(mock_genai_client, monkeypatch) -> None:
+    """A hanging request is cut off at GEMINI__TIMEOUT_SECONDS and counts as a verifier error."""
+    import asyncio
+
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+    monkeypatch.setattr(settings.gemini, "timeout_seconds", 0.01)
+
+    async def _hang(**_kwargs: object) -> None:
+        await asyncio.sleep(5)
+
+    mock_genai_client.return_value.aio.models.generate_content.side_effect = _hang
+    detector = GeminiFireDetector()
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+
+    with pytest.raises(VerifierError, match="timed out"):
+        await detector.verify(frame)
+    assert await detector.detect(frame) == (False, frame)  # standalone use still never raises

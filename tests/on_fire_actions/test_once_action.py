@@ -313,3 +313,35 @@ async def test_fire_event_action_stop_cancels_task() -> None:
     await container.stop()
 
     assert container._task.done()
+
+
+# --- unverified alerts (#169) ---
+
+
+@pytest.mark.asyncio
+async def test_unverified_flag_is_forwarded_to_actions() -> None:
+    """An unverified fire event passes ``unverified=True`` to every action; a verified one passes nothing."""
+    action = AsyncMock()
+    once_action = OnceAction(actions=[(action, {})])
+
+    await once_action(unverified=True)
+    action.assert_awaited_once_with(unverified=True)
+
+    await once_action.rearm()
+    await once_action()
+    assert action.await_args_list[-1].kwargs == {}
+
+
+@pytest.mark.asyncio
+async def test_deferred_alert_keeps_the_unverified_flag() -> None:
+    """A deferred alert (inside the cooldown) is still sent as unverified."""
+    action = AsyncMock()
+    clock = FakeClock()
+    once_action = OnceAction(actions=[(action, {})], cooldown_seconds=0.05, clock=clock)
+    await once_action()
+    await once_action.rearm()
+
+    await once_action(unverified=True)  # inside the cooldown: deferred
+    await asyncio.sleep(0.1)
+
+    assert action.await_args_list[-1].kwargs == {"unverified": True}

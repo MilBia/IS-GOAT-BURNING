@@ -18,6 +18,7 @@ import numpy as np
 
 from is_goat_burning.config import Accelerator
 from is_goat_burning.config import EdgeSettings
+from is_goat_burning.fire_detection.verifier_health import VerifierError
 from is_goat_burning.logger import get_logger
 
 logger = get_logger("EdgeInferenceDetector")
@@ -441,9 +442,10 @@ def _create_backend(
 class EdgeInferenceDetector:
     """Confirms fire with a local image classifier (fire / no-fire) running fully offline.
 
-    ``detect()`` never raises (an exception would abort the detection loop): failures are logged at ERROR,
-    treated as "no fire" and counted; after ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive failures a
-    CRITICAL message is logged once.
+    Inference failures are logged at ERROR and counted (``needs_rebuild``); after
+    ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive failures a CRITICAL message is logged once.
+    ``verify()`` (used by ``HybridFireDetector``) raises ``VerifierError`` on a failure so the
+    ``VERIFIER_FAILURE_POLICY`` applies; ``detect()`` never raises and reports a failure as "no fire".
 
     With ``EDGE__ACCELERATOR=auto`` the ONNX Runtime CUDA backend is preferred; if CUDA is listed but does not
     activate, the detector falls back to ``cv2.dnn`` on the CPU (WARNING). An explicit ``cuda`` fails with
@@ -532,24 +534,25 @@ class EdgeInferenceDetector:
             raise ValueError(f"Model produced a non-finite probability: {probability}.")
         return probability
 
-    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
-        """Analyzes a frame for fire with the local model.
+    async def verify(self, frame: np.ndarray) -> bool:
+        """Classifies a frame with the local model.
 
         Args:
             frame: The input video frame. Only BGR ``np.ndarray`` frames are accepted; GPU/UMat frames must be
                 converted beforehand (``HybridFireDetector`` does this).
 
         Returns:
-            A tuple containing:
-            - A boolean indicating if fire was detected (``False`` on any error).
-            - The original, unmodified frame.
+            The verdict: True if ``P(fire) >= threshold``.
+
+        Raises:
+            VerifierError: If the inference failed (the failure is counted, so ``needs_rebuild`` becomes True).
         """
         try:
             probability = await asyncio.to_thread(self._infer, frame)
-        except Exception:
+        except Exception as e:
             logger.exception("Edge inference failed.")
             self._record_error()
-            return False, frame
+            raise VerifierError(f"Edge inference failed: {type(e).__name__}") from e
 
         if self._consecutive_errors:
             logger.info("Edge inference recovered after %d consecutive errors.", self._consecutive_errors)
@@ -557,4 +560,20 @@ class EdgeInferenceDetector:
 
         is_fire = probability >= self.threshold
         logger.debug("Edge result: P(fire)=%.3f threshold=%.2f is_fire=%s", probability, self.threshold, is_fire)
-        return is_fire, frame
+        return is_fire
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        """Analyzes a frame for fire with the local model; never raises.
+
+        Args:
+            frame: The input video frame (BGR ``np.ndarray``).
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if fire was detected (``False`` on any error).
+            - The original, unmodified frame.
+        """
+        try:
+            return await self.verify(frame), frame
+        except VerifierError:
+            return False, frame

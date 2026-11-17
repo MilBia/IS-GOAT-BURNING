@@ -241,11 +241,13 @@ class GeminiSettings(BaseModel):
         api_key: The Google Gemini API key.
         model: The model to use (e.g., "gemini-3.5-flash-lite").
         prompt: The prompt to send to the model.
+        timeout_seconds: Per-request timeout; a timed-out request counts as a verifier error.
     """
 
     api_key: SecretStr | None = Field(default=None)
     model: str = Field(default="gemini-3.5-flash-lite")
     prompt: str = Field(default="Analyze this image and determine if there is a visible fire. Ignore purely digital overlays.")
+    timeout_seconds: float = Field(default=10.0, gt=0.0)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> GeminiSettings:
@@ -332,6 +334,10 @@ class Settings(BaseSettings):
     area_relative_threshold: float = Field(default=0.23, gt=0.0, le=1.0, validation_alias="AREA_RELATIVE_THRESHOLD")
     verifier_cooldown_seconds: float = Field(default=60.0, ge=0.0, validation_alias="VERIFIER_COOLDOWN_SECONDS")
     verifier_max_calls_per_hour: int = Field(default=0, ge=0, validation_alias="VERIFIER_MAX_CALLS_PER_HOUR")
+    verifier_failure_policy: Literal["alert_unverified", "suppress"] = Field(
+        default="alert_unverified", validation_alias="VERIFIER_FAILURE_POLICY"
+    )
+    verifier_errors_before_policy: int = Field(default=3, ge=1, validation_alias="VERIFIER_ERRORS_BEFORE_POLICY")
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)

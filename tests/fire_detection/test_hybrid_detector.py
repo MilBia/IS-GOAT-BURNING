@@ -50,7 +50,7 @@ def mock_local_detector() -> MagicMock:
 def mock_verifier() -> MagicMock:
     """Creates a mock verifier (shaped like the Gemini detector)."""
     mock = MagicMock(spec=GeminiFireDetector)
-    mock.detect = AsyncMock()
+    mock.verify = AsyncMock()
     return mock
 
 
@@ -80,7 +80,7 @@ async def test_hybrid_case_a_local_false_no_api_call(
     assert is_fire is False
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_verifier.detect.assert_not_called()  # Critical: verifier NOT called
+    mock_verifier.verify.assert_not_called()  # Critical: verifier NOT called
 
 
 @pytest.mark.asyncio
@@ -92,7 +92,7 @@ async def test_hybrid_case_b_local_true_gemini_false(
     """Case B: Local(True) -> verifier(False) -> Result(False) [False positive filtered]."""
     # Setup: local detector returns True, verifier returns False
     mock_local_detector.detect.return_value = (True, sample_frame)
-    mock_verifier.detect.return_value = (False, sample_frame)
+    mock_verifier.verify.return_value = False
 
     detector = HybridFireDetector(mock_local_detector, mock_verifier)
     is_fire, returned_frame = await detector.detect(sample_frame)
@@ -101,7 +101,7 @@ async def test_hybrid_case_b_local_true_gemini_false(
     assert is_fire is False  # False positive filtered by the verifier
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_verifier.detect.assert_called_once_with(sample_frame)
+    mock_verifier.verify.assert_called_once_with(sample_frame)
 
 
 @pytest.mark.asyncio
@@ -113,7 +113,7 @@ async def test_hybrid_case_c_local_true_gemini_true(
     """Case C: Local(True) -> verifier(True) -> Result(True) [Confirmed fire]."""
     # Setup: both detectors return True
     mock_local_detector.detect.return_value = (True, sample_frame)
-    mock_verifier.detect.return_value = (True, sample_frame)
+    mock_verifier.verify.return_value = True
 
     detector = HybridFireDetector(mock_local_detector, mock_verifier)
     is_fire, returned_frame = await detector.detect(sample_frame)
@@ -122,7 +122,7 @@ async def test_hybrid_case_c_local_true_gemini_true(
     assert is_fire is True  # Fire confirmed by both
     assert returned_frame is sample_frame
     mock_local_detector.detect.assert_called_once_with(sample_frame)
-    mock_verifier.detect.assert_called_once_with(sample_frame)
+    mock_verifier.verify.assert_called_once_with(sample_frame)
 
 
 @pytest.fixture
@@ -181,9 +181,9 @@ class _FakeVerifier:
         self.verdict = verdict
         self.calls = 0
 
-    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    async def verify(self, frame: np.ndarray) -> bool:  # noqa: ARG002
         self.calls += 1
-        return self.verdict, frame
+        return self.verdict
 
 
 @pytest.mark.asyncio

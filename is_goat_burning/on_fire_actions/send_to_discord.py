@@ -17,6 +17,8 @@ logger = get_logger("DiscordSender")
 
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_SERVER_ERROR = 500
+DISCORD_MESSAGE_LIMIT = 2000
+UNVERIFIED_NOTE = "\n\n[UNVERIFIED] The fire verifier is unavailable; this alert comes from the local camera detector only."
 
 
 def _host(url: str) -> str:
@@ -56,8 +58,14 @@ class SendToDiscord:
     def __post_init__(self) -> None:
         """Prepares the data payload after the instance is initialized."""
         self.data = {
-            "content": self.message[:2000],  # Discord has a 2000 character limit
+            "content": self.message[:DISCORD_MESSAGE_LIMIT],  # Discord has a 2000 character limit
         }
+
+    def _payload(self, unverified: bool) -> dict[str, str]:
+        """Returns the JSON payload; an unverified alert gets `UNVERIFIED_NOTE` appended (kept within the limit)."""
+        if not unverified:
+            return self.data
+        return {"content": self.message[: DISCORD_MESSAGE_LIMIT - len(UNVERIFIED_NOTE)] + UNVERIFIED_NOTE}
 
     async def _retry_after(self, response: ClientResponse) -> float | None:
         """Extracts the server-requested wait (seconds) from a 429 response.
@@ -76,12 +84,13 @@ class SendToDiscord:
             return None
         return value if math.isfinite(value) else None
 
-    async def send_to_webhook(self, session: ClientSession, url: str) -> bool:
+    async def send_to_webhook(self, session: ClientSession, url: str, payload: dict[str, str] | None = None) -> bool:
         """Sends the message to one webhook, retrying transient failures.
 
         Args:
             session: The `aiohttp.ClientSession` to use for the request.
             url: The webhook URL (never logged; only its host is).
+            payload: The JSON payload; defaults to `data`.
 
         Returns:
             True if the webhook accepted the message, False otherwise.
@@ -92,7 +101,7 @@ class SendToDiscord:
             try:
                 async with session.post(
                     url=url,
-                    json=self.data,
+                    json=self.data if payload is None else payload,
                     headers={"User-Agent": "Python/3", "Content-Type": "application/json"},
                     timeout=ClientTimeout(total=self.timeout),
                 ) as response:
@@ -116,17 +125,22 @@ class SendToDiscord:
             await asyncio.sleep(delay)
         return False
 
-    async def __call__(self) -> bool:
+    async def __call__(self, *, unverified: bool = False) -> bool:
         """Sends messages concurrently to all configured webhooks.
+
+        Args:
+            unverified: If True, `UNVERIFIED_NOTE` is appended so the recipient can tell an alert
+                sent while the fire verifier was unavailable from a verified one.
 
         Returns:
             True if at least one webhook accepted the message, False if none did
             (so the caller can keep the alert armed for a later attempt).
         """
+        payload = self._payload(unverified)
         async with ClientSession() as session:
             logger.info(f"Sending message to {len(self.webhooks)} webhook(s)...")
             results = await asyncio.gather(
-                *(self.send_to_webhook(session, url) for url in self.webhooks), return_exceptions=True
+                *(self.send_to_webhook(session, url, payload) for url in self.webhooks), return_exceptions=True
             )
         for url, result in zip(self.webhooks, results, strict=True):
             if isinstance(result, Exception):  # Unexpected error: isolate it so other webhooks still count.

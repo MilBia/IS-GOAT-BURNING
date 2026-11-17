@@ -215,3 +215,23 @@ async def test_unexpected_exception_log_omits_message(caplog: pytest.LogCaptureF
         assert await SendToDiscord(webhooks=[SECRET_URL], message="m")() is False
     assert "RuntimeError" in caplog.text
     assert "SECRETTOKEN" not in caplog.text
+
+
+# --- unverified alerts (#169) ---
+
+
+@pytest.mark.asyncio
+async def test_unverified_alert_carries_a_note() -> None:
+    """An unverified alert appends a note so the recipient can tell it apart; the note survives truncation."""
+    from is_goat_burning.on_fire_actions.send_to_discord import UNVERIFIED_NOTE
+
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        sender = SendToDiscord(webhooks=["https://discord.com/api/webhooks/1/a"], message="x" * 2500)
+        assert await sender(unverified=True) is True
+        content = mock_post.call_args.kwargs["json"]["content"]
+        assert content.endswith(UNVERIFIED_NOTE)
+        assert len(content) == 2000
+
+        await sender()
+        assert mock_post.call_args.kwargs["json"]["content"] == "x" * 2000

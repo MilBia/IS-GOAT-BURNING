@@ -75,7 +75,9 @@ class StreamFireDetector:
 
         Args:
             src: The source URL of the video stream (e.g., a YouTube URL).
-            on_fire_action: An awaitable callback to execute on fire detection.
+            on_fire_action: An awaitable callback to execute on fire detection. It is
+                called with ``unverified=True`` when the fire was reported while the
+                verifier was unavailable (``VERIFIER_FAILURE_POLICY=alert_unverified``).
             threshold: The percentage of the frame's pixels that must match
                 the fire color to trigger a detection.
             video_output: If True, displays a window with the video feed and
@@ -148,12 +150,24 @@ class StreamFireDetector:
                 yield frame
                 frame_counter -= frames_between_step
 
+    async def _signal_fire(self) -> None:
+        """Runs the on-fire callback, flagging fires reported while the verifier is unavailable (#169)."""
+        if getattr(self.fire_detector, "last_result_unverified", False) is True:
+            logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
+            await self.on_fire_action(unverified=True)
+        else:
+            await self.on_fire_action()
+
     async def _handle_fire_detection(self, fire_in_frame: bool) -> None:
         """Handles the state logic for fire detection with debouncing.
 
         Args:
             fire_in_frame: A boolean indicating if fire was detected in the current frame.
         """
+        if getattr(self.fire_detector, "last_result_inconclusive", False) is True:
+            # The verifier failed below VERIFIER_ERRORS_BEFORE_POLICY: neither fire nor no-fire. Keep the current
+            # state and do not start or reset either debounce timer (a slow outage must not fake an extinguish).
+            return
         now = time.monotonic()
 
         if fire_in_frame:
@@ -169,7 +183,7 @@ class StreamFireDetector:
                 self.fire_is_currently_detected = True
                 self._potential_fire_start_time = None  # Clear timer
                 self.signal_handler.fire_detected()
-                await self.on_fire_action()
+                await self._signal_fire()
         else:
             self._potential_fire_start_time = None  # Reset any pending fire signal
             if not self.fire_is_currently_detected:
