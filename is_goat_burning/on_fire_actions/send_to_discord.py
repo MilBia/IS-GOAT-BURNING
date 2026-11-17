@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from dataclasses import field
+import math
 from urllib.parse import urlparse
 
 from aiohttp import ClientError
@@ -59,15 +60,21 @@ class SendToDiscord:
         }
 
     async def _retry_after(self, response: ClientResponse) -> float | None:
-        """Extracts the server-requested wait (seconds) from a 429 response."""
+        """Extracts the server-requested wait (seconds) from a 429 response.
+
+        Returns None when absent or not a finite number (caller uses backoff).
+        """
+        candidates: list[object] = [response.headers.get("Retry-After")]
+        if candidates[0] is None:
+            try:
+                candidates = [(await response.json()).get("retry_after")]
+            except ClientError, ValueError, AttributeError:
+                return None
         try:
-            return float(response.headers["Retry-After"])
-        except KeyError, TypeError, ValueError:
-            pass
-        try:
-            return float((await response.json()).get("retry_after"))
-        except ClientError, TypeError, ValueError, AttributeError:
+            value = float(candidates[0])  # type: ignore[arg-type]
+        except TypeError, ValueError:
             return None
+        return value if math.isfinite(value) else None
 
     async def send_to_webhook(self, session: ClientSession, url: str) -> bool:
         """Sends the message to one webhook, retrying transient failures.
@@ -123,7 +130,7 @@ class SendToDiscord:
             )
         for url, result in zip(self.webhooks, results, strict=True):
             if isinstance(result, Exception):  # Unexpected error: isolate it so other webhooks still count.
-                logger.error(f"Unexpected error sending to webhook {_host(url)}: [{result.__class__.__name__}] {result}")
+                logger.error(f"Unexpected error sending to webhook {_host(url)}: [{result.__class__.__name__}]")
         success_count = sum(1 for result in results if result is True)
         logger.info(f"Message sending complete. Successful: {success_count}/{len(self.webhooks)}.")
         return success_count > 0
