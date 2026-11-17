@@ -594,3 +594,26 @@ async def test_backend_inference_is_serialized():
     frame = np.zeros((8, 8, 3), np.uint8)
     await asyncio.gather(*(detector.detect(frame) for _ in range(4)))
     assert state["max"] == 1
+
+
+# --- verifier contract (#169): errors are distinguishable from "no fire" ---
+
+
+@pytest.mark.asyncio
+async def test_verify_raises_verifier_error_and_marks_for_rebuild():
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    backend = MagicMock()
+    backend.predict.side_effect = RuntimeError("CUDA context lost")
+    detector = _detector(backend)
+
+    with pytest.raises(VerifierError):
+        await detector.verify(np.zeros((8, 8, 3), np.uint8))
+    assert detector.needs_rebuild is True
+
+
+@pytest.mark.asyncio
+async def test_verify_returns_verdict():
+    backend = MagicMock()
+    backend.predict.return_value = np.array([[0.0, np.log(3.0)]])  # P = 0.75
+    assert await _detector(backend).verify(np.zeros((8, 8, 3), np.uint8)) is True

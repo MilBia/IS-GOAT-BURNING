@@ -249,3 +249,34 @@ def test_discord_retry_defaults_and_validation(monkeypatch: MonkeyPatch) -> None
     monkeypatch.setenv("SOURCE", "x")
     monkeypatch.setenv("DISCORD__MAX_ATTEMPTS", "3")
     assert Settings(_env_file=None).discord.max_attempts == 3
+
+
+def test_verifier_failure_policy_defaults(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the verifier failure policy defaults (D2: alert unverified), isolated from any local ``.env``."""
+    for name in ("VERIFIER_FAILURE_POLICY", "VERIFIER_ERRORS_BEFORE_POLICY", "GEMINI__TIMEOUT_SECONDS"):
+        monkeypatch.delenv(name, raising=False)
+    settings = Settings(_env_file=None, source="mock://source")
+    assert settings.verifier_failure_policy == "alert_unverified"
+    assert settings.verifier_errors_before_policy == 3
+    assert settings.gemini.timeout_seconds == 10.0
+
+
+def test_verifier_failure_policy_is_read_from_env(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the policy, error threshold and Gemini timeout are read from the environment."""
+    monkeypatch.setenv("VERIFIER_FAILURE_POLICY", "suppress")
+    monkeypatch.setenv("VERIFIER_ERRORS_BEFORE_POLICY", "5")
+    monkeypatch.setenv("GEMINI__TIMEOUT_SECONDS", "2.5")
+    settings = Settings(_env_file=None, source="mock://source")
+    assert settings.verifier_failure_policy == "suppress"
+    assert settings.verifier_errors_before_policy == 5
+    assert settings.gemini.timeout_seconds == 2.5
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"verifier_failure_policy": "ignore"}, {"verifier_errors_before_policy": 0}, {"gemini": {"timeout_seconds": 0}}],
+)
+def test_verifier_failure_settings_reject_invalid_values(overrides: dict) -> None:
+    """Verifies an unknown policy, a zero error threshold and a non-positive timeout fail validation."""
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, source="mock://source", **overrides)

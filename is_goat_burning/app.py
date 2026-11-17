@@ -108,6 +108,10 @@ class Application:
                         logger.info("Action manager received FIRE event. Triggering actions.")
                         if self.on_fire_action_handler:
                             await self.on_fire_action_handler()
+                    elif event == "FIRE_UNVERIFIED":
+                        logger.info("Action manager received an UNVERIFIED FIRE event. Triggering actions.")
+                        if self.on_fire_action_handler:
+                            await self.on_fire_action_handler(unverified=True)
                     elif event == "EXTINGUISHED":
                         logger.info("Action manager received EXTINGUISHED event. Re-arming the fire alert.")
                         if self.on_fire_action_handler:
@@ -120,9 +124,13 @@ class Application:
             except Exception:
                 logger.exception("Action manager encountered an error, but will continue running.")
 
-    async def _queue_fire_event(self) -> None:
-        """A callback for the detector to queue a fire event."""
-        await self.action_queue.put("FIRE")
+    async def _queue_fire_event(self, unverified: bool = False) -> None:
+        """A callback for the detector to queue a fire event.
+
+        Args:
+            unverified: True if the fire was reported while the verifier was unavailable.
+        """
+        await self.action_queue.put("FIRE_UNVERIFIED" if unverified else "FIRE")
 
     async def _queue_extinguished_event(self) -> None:
         """A callback for the detector to queue a fire-extinguished event."""

@@ -235,3 +235,20 @@ async def test_run_loop_handles_cancellation_during_sleep(
     mock_detector_factory.assert_called_once()
     # Sleep was called, but was cancelled.
     mock_sleep.assert_awaited_once_with(test_settings.reconnect_delay_seconds)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_unverified_fire_event_reaches_the_alert_as_unverified(test_settings: Settings) -> None:  # noqa: ARG001
+    """``on_fire_action(unverified=True)`` from the detector is delivered to the alert as unverified."""
+    app = Application()
+    alert = AsyncMock()
+    app.on_fire_action_handler = OnceAction([(alert, {})], cooldown_seconds=0.0)
+    manager = asyncio.create_task(app._action_manager())
+
+    await app._queue_fire_event(unverified=True)
+    await app.action_queue.join()
+    manager.cancel()
+    await asyncio.gather(manager, return_exceptions=True)
+
+    alert.assert_awaited_once_with(unverified=True)

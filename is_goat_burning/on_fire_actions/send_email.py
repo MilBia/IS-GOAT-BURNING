@@ -10,6 +10,9 @@ from is_goat_burning.logger import get_logger
 
 logger = get_logger("EmailSender")
 
+UNVERIFIED_SUBJECT_PREFIX = "[UNVERIFIED] "
+UNVERIFIED_NOTE = "\n\nThe fire verifier is unavailable; this alert comes from the local camera detector only."
+
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
 class SendEmail:
@@ -40,17 +43,20 @@ class SendEmail:
     host: str
     port: int
 
-    def _send_email_blocking(self) -> None:
+    def _send_email_blocking(self, unverified: bool = False) -> None:
         """Constructs and sends the email using blocking I/O.
 
         This method contains the actual smtplib implementation and is intended
         to be run in a thread pool executor.
+
+        Args:
+            unverified: If True, the subject and body are marked as unverified.
         """
         msg = EmailMessage()
-        msg["Subject"] = self.subject
+        msg["Subject"] = UNVERIFIED_SUBJECT_PREFIX + self.subject if unverified else self.subject
         msg["From"] = self.sender
         msg["To"] = ", ".join(self.recipients)
-        msg.set_content(self.message)
+        msg.set_content(self.message + UNVERIFIED_NOTE if unverified else self.message)
         if self.message_html:
             msg.add_alternative(self.message_html, subtype="html")
 
@@ -71,11 +77,14 @@ class SendEmail:
         except Exception as e:
             logger.error(e)
 
-    async def __call__(self) -> None:
+    async def __call__(self, *, unverified: bool = False) -> None:
         """Asynchronously sends the email notification.
 
         This method schedules the blocking `_send_email_blocking` method to run
         in the event loop's default executor.
+
+        Args:
+            unverified: If True, the alert is marked as sent while the fire verifier was unavailable.
         """
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._send_email_blocking)
+        await loop.run_in_executor(None, self._send_email_blocking, unverified)

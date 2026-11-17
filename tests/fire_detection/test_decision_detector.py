@@ -184,3 +184,30 @@ def test_factory_builds_decision_detectors(mock_genai_client: MagicMock, strateg
         assert isinstance(detector, HybridFireDetector)
         assert isinstance(detector.local_detector, CPUFireDetector)
         assert isinstance(detector.verifier, DecisionFireDetector)
+
+
+# --- verifier contract (#169): errors are distinguishable from "no fire" ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [genai_errors.ServerError(503, {"error": {"message": "x", "status": "UNAVAILABLE"}}), RuntimeError("boom")],
+)
+async def test_verify_raises_verifier_error(mock_genai_client: MagicMock, frame: np.ndarray, error: Exception) -> None:
+    """``verify`` reports API failures as VerifierError (counted like ``detect`` failures)."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    mock_genai_client.return_value.aio.decisions.create.side_effect = error
+    detector = DecisionFireDetector()
+
+    with pytest.raises(VerifierError):
+        await detector.verify(frame)
+    assert detector._consecutive_errors == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_returns_thresholded_verdict(mock_genai_client: MagicMock, frame: np.ndarray) -> None:
+    """A successful call returns a plain bool verdict."""
+    mock_genai_client.return_value.aio.decisions.create.return_value = _response(0.2)
+    assert await DecisionFireDetector().verify(frame) is False

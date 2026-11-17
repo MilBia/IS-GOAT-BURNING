@@ -75,7 +75,9 @@ class StreamFireDetector:
 
         Args:
             src: The source URL of the video stream (e.g., a YouTube URL).
-            on_fire_action: An awaitable callback to execute on fire detection.
+            on_fire_action: An awaitable callback to execute on fire detection. It is
+                called with ``unverified=True`` when the fire was reported while the
+                verifier was unavailable (``VERIFIER_FAILURE_POLICY=alert_unverified``).
             threshold: The percentage of the frame's pixels that must match
                 the fire color to trigger a detection.
             video_output: If True, displays a window with the video feed and
@@ -169,7 +171,12 @@ class StreamFireDetector:
                 self.fire_is_currently_detected = True
                 self._potential_fire_start_time = None  # Clear timer
                 self.signal_handler.fire_detected()
-                await self.on_fire_action()
+                # A hybrid detector reports fire without verification while its verifier is unavailable (#169).
+                if getattr(self.fire_detector, "last_result_unverified", False) is True:
+                    logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
+                    await self.on_fire_action(unverified=True)
+                else:
+                    await self.on_fire_action()
         else:
             self._potential_fire_start_time = None  # Reset any pending fire signal
             if not self.fire_is_currently_detected:

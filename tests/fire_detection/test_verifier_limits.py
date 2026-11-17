@@ -19,8 +19,8 @@ def _hybrid(verdicts: list[bool], **limits: float) -> tuple[HybridFireDetector, 
     local = MagicMock()
     local.detect = AsyncMock(return_value=(True, FRAME))
     verifier = MagicMock()
-    verifier.detect = AsyncMock(side_effect=[(v, FRAME) for v in verdicts])
-    return HybridFireDetector(local, verifier, **limits), verifier.detect
+    verifier.verify = AsyncMock(side_effect=verdicts)
+    return HybridFireDetector(local, verifier, **limits), verifier.verify
 
 
 @pytest.mark.asyncio
@@ -37,13 +37,13 @@ async def test_cooldown_reuses_last_verdict_without_calling_again(mocker: Mocker
 
 
 @pytest.mark.asyncio
-async def test_hourly_cap_returns_no_fire_without_calling(mocker: MockerFixture) -> None:
+async def test_hourly_cap_skips_the_call_and_applies_the_failure_policy(mocker: MockerFixture) -> None:
     mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[0.0, 1.0, 2.0, 3601.0])))
-    detector, call = _hybrid([True, True, True], cooldown_seconds=0, max_calls_per_hour=2)
+    detector, call = _hybrid([True, True, True], cooldown_seconds=0, max_calls_per_hour=2, failure_policy="suppress")
 
     results = [(await detector.detect(FRAME))[0] for _ in range(4)]
 
-    assert results == [True, True, False, True]  # 3rd is over the cap; after an hour the window frees up
+    assert results == [True, True, False, True]  # 3rd is over the cap (suppressed); after an hour the window frees up
     assert call.await_count == 3
 
 
@@ -58,22 +58,22 @@ async def test_no_limits_calls_every_time() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cap_warning_is_logged_once(mocker: MockerFixture) -> None:
+async def test_cap_critical_is_logged_once(mocker: MockerFixture) -> None:
     mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[0.0, 1.0, 2.0, 3.0])))
     detector, _ = _hybrid([True], cooldown_seconds=0, max_calls_per_hour=1)
-    warn = mocker.patch.object(detector._logger, "warning")
+    critical = mocker.patch.object(detector._logger, "critical")
 
     for _ in range(4):
         await detector.detect(FRAME)
 
-    assert warn.call_count == 1
+    assert critical.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_failed_verifier_call_does_not_start_the_cooldown(mocker: MockerFixture) -> None:
     mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[100.0, 101.0])))
     detector, call = _hybrid([], cooldown_seconds=60, max_calls_per_hour=0)
-    call.side_effect = [RuntimeError("boom"), (True, FRAME)]
+    call.side_effect = [RuntimeError("boom"), True]
 
     with pytest.raises(RuntimeError):
         await detector.detect(FRAME)

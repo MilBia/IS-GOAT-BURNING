@@ -9,6 +9,7 @@ from google.genai import types
 import numpy as np
 
 from is_goat_burning.config import settings
+from is_goat_burning.fire_detection.verifier_health import VerifierError
 from is_goat_burning.logger import get_logger
 
 logger = get_logger("DecisionFireDetector")
@@ -25,10 +26,11 @@ class DecisionFireDetector:
     cheap (input tokens only) and low-latency. A frame is reported as fire when
     ``P(fire) >= settings.decision.threshold``.
 
-    API failures never raise (an exception would abort the detection loop); they are logged
-    at ERROR level, treated as "no fire", and counted. After
-    ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive failures a CRITICAL message announces
-    that fire detection is effectively disabled.
+    API failures are logged at ERROR level and counted; after ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL``
+    consecutive failures a CRITICAL message is logged once. ``verify()`` (used by ``HybridFireDetector``)
+    raises ``VerifierError`` on a failure so the ``VERIFIER_FAILURE_POLICY`` applies; ``detect()`` (the
+    standalone ``gemini_decision`` strategy) never raises (an exception would abort the detection loop) and
+    reports a failure as "no fire".
     """
 
     def __init__(self) -> None:
@@ -79,16 +81,17 @@ class DecisionFireDetector:
                 self._consecutive_errors,
             )
 
-    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
-        """Analyzes a frame for fire using the Decisions API.
+    async def verify(self, frame: np.ndarray) -> bool:
+        """Asks the Decisions API whether the frame shows fire.
 
         Args:
             frame: The input video frame (BGR numpy array).
 
         Returns:
-            A tuple containing:
-            - A boolean indicating if fire was detected (``False`` on any API error).
-            - The original frame (annotation is not implemented).
+            The verdict: True if ``P(fire) >= threshold``.
+
+        Raises:
+            VerifierError: If no verdict could be obtained (API error, timeout, malformed answer).
         """
         try:
             image_input = await asyncio.to_thread(self._preprocess_frame, frame)
@@ -101,18 +104,18 @@ class DecisionFireDetector:
                 timeout=self.timeout_seconds,
             )
             probability = float(response.answers[_QUESTION_ID].noul)
-        except TimeoutError:
+        except TimeoutError as e:
             logger.error("Decisions API request timed out after %.1f s.", self.timeout_seconds)
             self._record_error()
-            return False, frame
+            raise VerifierError(f"Decisions API request timed out after {self.timeout_seconds:.1f} s") from e
         except genai.errors.APIError as e:
             logger.error("Decisions API error: %s", e)
             self._record_error()
-            return False, frame
-        except Exception:
+            raise VerifierError(f"Decisions API error: {type(e).__name__}") from e
+        except Exception as e:
             logger.exception("Unexpected error during Decisions API fire detection.")
             self._record_error()
-            return False, frame
+            raise VerifierError(f"Unexpected Decisions API error: {type(e).__name__}") from e
 
         if self._consecutive_errors:
             logger.info("Decisions API recovered after %d consecutive errors.", self._consecutive_errors)
@@ -120,4 +123,23 @@ class DecisionFireDetector:
 
         is_fire = probability >= self.threshold
         logger.debug("Decision result: P(fire)=%.3f threshold=%.2f is_fire=%s", probability, self.threshold, is_fire)
-        return is_fire, frame
+        return is_fire
+
+    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        """Analyzes a frame for fire using the Decisions API (standalone ``gemini_decision`` strategy).
+
+        Never raises: a failed request is reported as "no fire". Under ``hybrid_decision`` the hybrid detector
+        calls :meth:`verify` instead, so errors reach the ``VERIFIER_FAILURE_POLICY``.
+
+        Args:
+            frame: The input video frame (BGR numpy array).
+
+        Returns:
+            A tuple containing:
+            - A boolean indicating if fire was detected (``False`` on any API error).
+            - The original frame (annotation is not implemented).
+        """
+        try:
+            return await self.verify(frame), frame
+        except VerifierError:
+            return False, frame

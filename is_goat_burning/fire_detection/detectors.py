@@ -23,6 +23,9 @@ import cv2
 import numpy as np
 
 from is_goat_burning.config import settings
+from is_goat_burning.fire_detection.verifier_health import VerifierError
+from is_goat_burning.fire_detection.verifier_health import VerifierStatus
+from is_goat_burning.fire_detection.verifier_health import publish_verifier_status
 from is_goat_burning.logger import get_logger
 
 # --- Constants ---
@@ -108,16 +111,18 @@ class FireVerifier(Protocol):
     satisfied by `GeminiFireDetector`, `DecisionFireDetector` and offline edge models.
     """
 
-    async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+    async def verify(self, frame: np.ndarray) -> bool:
         """Verifies whether a frame contains fire.
 
         Args:
             frame: The input video frame as a BGR numpy array.
 
         Returns:
-            A tuple containing:
-            - A boolean indicating if fire was confirmed.
-            - The (possibly annotated) frame.
+            True if fire was confirmed, False if the verifier rejected it.
+
+        Raises:
+            VerifierError: If the verifier could not produce a verdict (API error, timeout, failed inference).
+                This is distinct from "no fire" and is handled by the ``VERIFIER_FAILURE_POLICY``.
         """
         ...
 
@@ -458,6 +463,13 @@ class HybridFireDetector:
     uses a `FireVerifier` (e.g. Gemini, Decisions API or an edge model) for
     high-accuracy verification. This approach minimizes verifier cost while
     reducing false positives.
+
+    A verifier error (``VerifierError``: the verifier did not answer) is never treated as "no fire" for longer than
+    ``errors_before_policy - 1`` checks: it is not cached for the cooldown, the verifier is asked again on the next
+    positive check, and once ``errors_before_policy`` errors occurred in a row (or the hourly call cap is reached)
+    the ``failure_policy`` decides: ``alert_unverified`` reports the gate's fire as an unverified detection
+    (``last_result_unverified`` is True), ``suppress`` reports no fire. Entering and leaving that degraded state
+    is logged (CRITICAL / INFO) and published through ``verifier_health.publish_verifier_status``.
     """
 
     def __init__(
@@ -466,6 +478,8 @@ class HybridFireDetector:
         verifier: FireVerifier,
         cooldown_seconds: float | None = None,
         max_calls_per_hour: int | None = None,
+        failure_policy: str | None = None,
+        errors_before_policy: int | None = None,
     ) -> None:
         """Initializes the HybridFireDetector.
 
@@ -474,18 +488,32 @@ class HybridFireDetector:
             verifier: The second-stage verifier (any `FireVerifier`) used to confirm detections.
             cooldown_seconds: Minimum time between verifier calls. While it runs, the last verdict is reused (so the
                 debounce is not reset by a gap). Defaults to ``settings.verifier_cooldown_seconds``; 0 disables it.
+                Only real verdicts are reused; an error is never cached.
             max_calls_per_hour: Hard cap of verifier calls in a rolling hour; once reached the verifier is not called
-                and the result is "no fire" (a cost guard). Defaults to ``settings.verifier_max_calls_per_hour``;
-                0 means unlimited.
+                and the verifier counts as unavailable (``failure_policy`` applies). Defaults to
+                ``settings.verifier_max_calls_per_hour``; 0 means unlimited.
+            failure_policy: ``alert_unverified`` or ``suppress``; what to report while the verifier is unavailable.
+                Defaults to ``settings.verifier_failure_policy``.
+            errors_before_policy: Consecutive verifier errors after which ``failure_policy`` applies (before that an
+                error reports "no fire" and the verifier is re-asked on the next check). Defaults to
+                ``settings.verifier_errors_before_policy``.
         """
         self.local_detector = local_detector
         self.verifier = verifier
         self.cooldown_seconds = settings.verifier_cooldown_seconds if cooldown_seconds is None else cooldown_seconds
         self.max_calls_per_hour = settings.verifier_max_calls_per_hour if max_calls_per_hour is None else max_calls_per_hour
+        self.failure_policy = settings.verifier_failure_policy if failure_policy is None else failure_policy
+        self.errors_before_policy = (
+            settings.verifier_errors_before_policy if errors_before_policy is None else errors_before_policy
+        )
+        #: True when the last ``detect()`` reported fire only because the verifier is unavailable.
+        self.last_result_unverified = False
         self._last_call_time: float | None = None
         self._last_verdict = False
         self._call_times: deque[float] = deque()
         self._limit_warned = False
+        self._consecutive_errors = 0
+        self._unavailable = False
         self._logger = get_logger("HybridFireDetector")
         self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
 
@@ -497,12 +525,52 @@ class HybridFireDetector:
             self._call_times.popleft()
         if len(self._call_times) >= self.max_calls_per_hour:
             if not self._limit_warned:
-                self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
                 self._limit_warned = True
+                self._mark_unavailable(f"call limit {self.max_calls_per_hour}/h reached")
             return True
         self._limit_warned = False
         self._call_times.append(now)
         return False
+
+    def _mark_unavailable(self, reason: str) -> None:
+        """Logs CRITICAL and notifies listeners once when the verifier becomes unavailable."""
+        if self._unavailable:
+            return
+        self._unavailable = True
+        outcome = (
+            "fires seen by the local detector are reported as UNVERIFIED"
+            if self.failure_policy == "alert_unverified"
+            else "fires seen by the local detector are SUPPRESSED (no alert)"
+        )
+        self._logger.critical(
+            "Verifier %s unavailable (%s); policy %s: %s until it recovers.",
+            type(self.verifier).__name__,
+            reason,
+            self.failure_policy,
+            outcome,
+        )
+        publish_verifier_status(
+            VerifierStatus(available=False, verifier=type(self.verifier).__name__, reason=reason, policy=self.failure_policy)
+        )
+
+    def _mark_available(self) -> None:
+        """Resets the error state after a real verdict; logs and notifies once if an outage was announced."""
+        self._consecutive_errors = 0
+        if not self._unavailable:
+            return
+        self._unavailable = False
+        self._logger.info("Verifier %s recovered; fires are verified again.", type(self.verifier).__name__)
+        publish_verifier_status(
+            VerifierStatus(
+                available=True, verifier=type(self.verifier).__name__, reason="recovered", policy=self.failure_policy
+            )
+        )
+
+    def _policy_result(self) -> bool:
+        """Returns the result reported while the verifier is unavailable, per ``failure_policy``."""
+        unverified = self.failure_policy == "alert_unverified"
+        self.last_result_unverified = unverified
+        return unverified
 
     async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
@@ -511,16 +579,19 @@ class HybridFireDetector:
         If no fire is detected, returns immediately without calling the verifier.
 
         Stage 2 (Verifier): If local detection is positive, calls the
-        verifier to confirm the detection and filter false positives.
+        verifier to confirm the detection and filter false positives. If the
+        verifier is unavailable, the failure policy decides (see class docstring).
 
         Args:
             frame: The input video frame (BGR numpy array, UMat, or GpuMat).
 
         Returns:
             A tuple containing:
-            - A boolean indicating if fire was confirmed by both detectors.
+            - A boolean indicating if fire was confirmed by both detectors (or, under
+              ``alert_unverified``, seen by the local detector while the verifier is unavailable).
             - The annotated frame from the local detector.
         """
+        self.last_result_unverified = False
         # Stage 1: Fast local check (gatekeeper)
         local_result, annotated_frame = await self.local_detector.detect(frame)
 
@@ -542,16 +613,30 @@ class HybridFireDetector:
         if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
             return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
         if self._cap_reached(now):
-            return False, annotated_frame
+            return self._policy_result(), annotated_frame
         previous_call_time = self._last_call_time
         self._last_call_time = now
 
         try:
-            verified, _ = await self.verifier.detect(numpy_frame)
+            verified = await self.verifier.verify(numpy_frame)
+        except VerifierError as exc:
+            self._last_call_time = previous_call_time  # an error is not a verdict: no cooldown, ask again next check
+            self._consecutive_errors += 1
+            if self._consecutive_errors < self.errors_before_policy:
+                self._logger.warning(
+                    "Verifier error %d/%d (%s); asking again on the next check.",
+                    self._consecutive_errors,
+                    self.errors_before_policy,
+                    exc,
+                )
+                return False, annotated_frame
+            self._mark_unavailable(f"{self._consecutive_errors} consecutive errors, last: {exc}")
+            return self._policy_result(), annotated_frame
         except BaseException:
             self._last_call_time = previous_call_time  # a failed call must not start the cooldown
             raise
         self._last_verdict = verified
+        self._mark_available()
 
         if not verified:
             self._logger.info(
