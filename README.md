@@ -348,7 +348,7 @@ docker run -d --name burning_goat_detection_container \
 -   Keep the env file **outside the repository** with mode `600` (`chmod 600 goat.env`); it holds the Gemini key and webhooks.
 -   Recordings: 20 s of 1080p60 is 10-18 MB, so budget ~2.5 GB of disk per hour of fire.
 
-Recommended production preset (names match `is_goat_burning/config.py`; secrets are placeholders). Docker env files do **not** strip quotes, so write values unquoted:
+Recommended production preset (names match `is_goat_burning/config.py`; secrets are placeholders). Docker env files do **not** strip quotes, so write values unquoted and put comments on their own lines (no inline comments):
 
 ```env
 SOURCE=<stream URL>
@@ -358,7 +358,8 @@ CHECKS_PER_SECOND=1.0
 # CV gatekeeper (mandatory, see the warning above)
 FIRE_DETECTION_MODE=area_relative
 AREA_RELATIVE_THRESHOLD=0.23
-FIRE_DETECTED_DEBOUNCE_SECONDS=1.0   # 1 s chosen because the verifier filters false positives (see below)
+# 1 s chosen because the verifier filters false positives (see below)
+FIRE_DETECTED_DEBOUNCE_SECONDS=1.0
 FIRE_EXTINGUISHED_DEBOUNCE_SECONDS=10.0
 
 # Verifier. Measured in E3 (164 frames; the goat frames were all daytime, so night behaviour is unmeasured):
