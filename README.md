@@ -82,7 +82,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | --- | --- | --- |
 | `SOURCE` | URL of the webcam feed. | `"https://youtu.be/vDFPpkp9krY"` |
 | `FIRE_DETECTION_THRESHOLD` | Percentage of frame pixels to trigger fire detection. | `0.1` |
-| `FIRE_DETECTION_MODE` | `frame_fraction` (threshold above) or `area_relative` (experimental: share of the warm region that is moving; detects small fires). | `frame_fraction` |
+| `FIRE_DETECTION_MODE` | `frame_fraction` (threshold above) or `area_relative` (recommended for production, see [Production run](#production-run): share of the warm region that is moving; detects small fires). | `frame_fraction` |
 | `AREA_RELATIVE_THRESHOLD` | Share of warm pixels that must be moving in `area_relative` mode (0–1). | `0.23` |
 | `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
 | `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
@@ -115,13 +115,13 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |
 | `EMAIL__SENDER` | Your sender email address. | `""` |
 | `EMAIL__SENDER_PASSWORD` | Your email password or app password. | `""` |
-| `EMAIL__RECIPIENTS` | Comma-separated list of recipient emails. | `""` |
+| `EMAIL__RECIPIENTS` | JSON list of recipient emails, e.g. `["a@example.com","b@example.com"]` (a comma-separated value fails at startup; in a Docker `--env-file` write it unquoted). | `""` |
 | `EMAIL__EMAIL_HOST` | SMTP server host (e.g., `smtp.gmail.com`). | `""` |
 | `EMAIL__EMAIL_PORT` | SMTP server port (e.g., `587`). | `""` |
 | | | |
 | **Discord Settings** | | |
 | `DISCORD__USE_DISCORD` | Set to `true` to enable Discord notifications. | `false` |
-| `DISCORD__HOOKS` | Comma-separated list of Discord webhook URLs. | `""` |
+| `DISCORD__HOOKS` | JSON list of Discord webhook URLs, e.g. `["https://..."]`. | `""` |
 | `DISCORD__SEND_VIDEO_CHUNKS` | Set to `true` to upload saved video chunks to Discord as they are archived around a fire event. Requires `VIDEO__SAVE_VIDEO_CHUNKS=true`. | `false` |
 | | | |
 | **Video Archiving** | | |
@@ -148,7 +148,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 -   **CUDA:** `CUDA=true` requires a compatible NVIDIA GPU and properly installed drivers. See the Docker section for setup instructions.
 -   **Video Buffer Mode (`VIDEO__BUFFER_MODE`):**
     -   `memory` (default): Holds a buffer of recent, compressed video frames in RAM. No data is written to disk during normal operation. When a fire is detected, this in-memory buffer is flushed to a file. This mode significantly reduces disk I/O but increases RAM usage. The amount of RAM needed is proportional to the buffer duration and video resolution/framerate.
-    -   `segments`: One supervised `ffmpeg -c copy` process writes the original stream (no decoding, no re-encoding) into a ring of short segments in a tmpfs directory (`VIDEO__SEGMENTS_DIRECTORY`), sized by `VIDEO__MEMORY_BUFFER_SECONDS`. Frames are decoded only for analysis (`grab()` skips the rest), so CPU and RAM stay low (measured on a Raspberry Pi 4, live 1080p30 stream: ~0.8 core vs ~1.46 for `memory`, which also dropped ~1/3 of the frames there, with a ~26 MB ring vs ~1.6 GB; at 1080p60 the ring reaches ~120 MB). On fire the segments are joined with `-c copy` into the pre-fire clip and recording continues until the fire is out. Needs `ffmpeg`; in Docker give the container enough shared memory (the default `/dev/shm` is only 64 MB; use e.g. `--shm-size=256m`). A warning is logged at start when the ring directory has less than 128 MB free.
+    -   `segments`: One supervised `ffmpeg -c copy` process writes the original stream (no decoding, no re-encoding) into a ring of short segments in a tmpfs directory (`VIDEO__SEGMENTS_DIRECTORY`), sized by `VIDEO__MEMORY_BUFFER_SECONDS`. Frames are decoded only for analysis (`grab()` skips the rest), so CPU and RAM stay low (measured on a Raspberry Pi 4, live 1080p30 stream: ~0.8 core vs ~1.46 for `memory`, which also dropped ~1/3 of the frames there, with a ~26 MB ring vs ~1.6 GB; at 1080p60 the ring reaches ~120 MB for a 60 s buffer, ~250 MB for 120 s). On fire the segments are joined with `-c copy` into the pre-fire clip and recording continues until the fire is out. Needs `ffmpeg`; in Docker give the container enough shared memory (the default `/dev/shm` is only 64 MB; use `--shm-size 1g` for a 60 fps source: the default overflows after ~80 s and `ffmpeg` falls into a restart loop, see #156; `256m` is enough for 30 fps). A warning is logged at start when the ring directory has less than 128 MB free.
     -   `disk`: Continuously saves video chunks to the disk. This has low RAM usage but causes constant disk I/O, which can be inefficient and cause wear on SSDs.
 -   **Sending Video Chunks to Discord (`DISCORD__SEND_VIDEO_CHUNKS`):** When enabled (alongside `DISCORD__USE_DISCORD=true` and `VIDEO__SAVE_VIDEO_CHUNKS=true`), each video chunk archived around a fire event—starting with the pre-fire buffer and continuing with the post-fire chunks—is uploaded to the configured Discord webhook(s) as it is written. This gives you an instant, playable clip of the moments around the event. Discord webhooks reject uploads larger than ~25 MB; any chunk at or above the ~24 MB limit is not uploaded, and a fallback text message pointing to the chunk's local path is sent instead (`Goat on fire! A video chunk was saved but is too large to upload to Discord. You can find it at: <path>`). To keep individual chunks small enough to upload, lower `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` and/or `VIDEO__MEMORY_BUFFER_SECONDS`.
 
@@ -159,7 +159,7 @@ The defaults are conservative and were **not tuned for real fires**: in the eval
 frame (so there is a large false-alarm margin to spend). The numbers below come from a narrow data set (one scene,
 one time of day, one day of the year, no real Gävle fire footage), so the defaults in code are left unchanged until #109 is done.
 
-Pick **one** of the two decision rules (they use different parameters):
+Pick **one** of the two decision rules (they use different parameters). `area_relative` is the recommended one for production; `frame_fraction` with 0.05 is the older alternative:
 
 | Rule | Settings | Evaluation result (#104, measured with debounce `0`) |
 | --- | --- | --- |
@@ -192,6 +192,8 @@ FIRE_DETECTED_DEBOUNCE_SECONDS=2.0
 # Or hybrid_cloud; needs GEMINI__API_KEY
 DETECTION_STRATEGY=hybrid_decision
 ```
+
+For the full production preset see [Production run](#production-run).
 
 Known limits of the colour + motion rule (also with `area_relative`):
 
@@ -324,6 +326,80 @@ Docker allows you to run the application in a consistent and isolated environmen
     docker stop burning_goat_detection_container
     docker start burning_goat_detection_container
     ```
+
+### Production run
+
+> **Warning:** the defaults (`FIRE_DETECTION_MODE=frame_fraction`, `FIRE_DETECTION_THRESHOLD=0.1`) detected 0 of 11
+> real fires in #104. For a real deployment `FIRE_DETECTION_MODE=area_relative` is **mandatory**.
+
+```bash
+docker build --target cpu -t burning_goat_detection .
+
+docker run -d --name burning_goat_detection_container \
+  --restart unless-stopped \
+  --shm-size 1g \
+  --env-file /path/outside/repo/goat.env \
+  -v /path/to/recordings:/app/recordings \
+  burning_goat_detection
+```
+
+-   `--restart unless-stopped` brings the container back after a crash or host reboot.
+-   `--shm-size 1g` is **required** in `segments` mode: the default 64 MB `/dev/shm` overflows at 60 fps after ~80 s and `ffmpeg` falls into a restart loop (#156). A 1080p60 ring of 120 s takes ~250 MB.
+-   Keep the env file **outside the repository** with mode `600` (`chmod 600 goat.env`); it holds the Gemini key and webhooks.
+-   Recordings: 20 s of 1080p60 is 10-18 MB, so budget ~2.5 GB of disk per hour of fire.
+
+Recommended production preset (names match `is_goat_burning/config.py`; secrets are placeholders). Docker env files do **not** strip quotes, so write values unquoted and put comments on their own lines (no inline comments):
+
+```env
+SOURCE=<stream URL>
+YTDLP_FORMAT=bestvideo/best
+CHECKS_PER_SECOND=1.0
+
+# CV gatekeeper (mandatory, see the warning above)
+FIRE_DETECTION_MODE=area_relative
+AREA_RELATIVE_THRESHOLD=0.23
+# 1 s chosen because the verifier filters false positives (see below)
+FIRE_DETECTED_DEBOUNCE_SECONDS=1.0
+FIRE_EXTINGUISHED_DEBOUNCE_SECONDS=10.0
+
+# Verifier. Measured in E3 (164 frames; the goat frames were all daytime, so night behaviour is unmeasured):
+# default DECISION__INSTRUCTIONS with threshold 0.40 -> 88 % recall, 0/107 false alarms (95 % CI upper bound ~3 %). The code default
+# threshold is 0.5; 0.40 is a recommendation, not a default.
+# Fallback: DETECTION_STRATEGY=hybrid_cloud with the default GEMINI__PROMPT.
+DETECTION_STRATEGY=hybrid_decision
+GEMINI__API_KEY=<key>
+DECISION__THRESHOLD=0.40
+DECISION__TIMEOUT_SECONDS=10
+VERIFIER_COOLDOWN_SECONDS=30
+VERIFIER_MAX_CALLS_PER_HOUR=0
+VERIFIER_FAILURE_POLICY=alert_unverified
+VERIFIER_ERRORS_BEFORE_POLICY=3
+ALERT_COOLDOWN_SECONDS=600
+
+# Discord
+DISCORD__USE_DISCORD=true
+DISCORD__HOOKS=["<webhook URL>"]
+# Keep false: video upload is limited by Discord's file size limit (tracked in #159)
+DISCORD__SEND_VIDEO_CHUNKS=false
+
+# Recording
+VIDEO__SAVE_VIDEO_CHUNKS=true
+VIDEO__VIDEO_OUTPUT_DIRECTORY=/app/recordings
+VIDEO__BUFFER_MODE=segments
+VIDEO__MEMORY_BUFFER_SECONDS=120
+VIDEO__SEGMENTS_DIRECTORY=/dev/shm/goat-ring
+VIDEO__SEGMENT_SECONDS=2
+VIDEO__VIDEO_CHUNK_LENGTH_SECONDS=20
+VIDEO__CHUNKS_TO_KEEP_AFTER_FIRE=10
+VIDEO__RECORD_DURING_FIRE=true
+```
+
+Debounce: 1.0 here and 2.0 in the in-season block above are both inside the measured 1-2 s compromise (#130); 1.0 is preferred in production because the Gemini verifier filters false positives, so lower latency wins. `frame_fraction` with `FIRE_DETECTION_THRESHOLD=0.05` remains the older alternative (6/11 clips) but must not be combined with a debounce.
+
+`VERIFIER_FAILURE_POLICY=alert_unverified` means that when the verifier is unavailable, CV detections are still
+alerted (marked `[UNVERIFIED]`) instead of being silenced. After start, `docker logs` should show in order:
+`Successfully resolved stream URL`, `Segments ring: N slots`, `Initialized hybrid detector with verifier ...`,
+`Segment archiver (ffmpeg -c copy) started`.
 
 ## Testing
 
