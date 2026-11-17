@@ -96,12 +96,21 @@ class DiscordSettings(BaseModel):
         message: The message content to send to the webhooks.
         send_video_chunks: If True, saved video chunks are uploaded to the
             configured Discord webhooks as they are archived after a fire event.
+        timeout_seconds: Per-request timeout for text alerts.
+        max_attempts: Maximum attempts per webhook for text alerts.
+        retry_base_delay_seconds: Delay before the first retry (doubles each retry).
+        retry_max_delay_seconds: Cap for any wait between attempts, including
+            server-requested `Retry-After` delays.
     """
 
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
     message: CleanedMessage = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
     send_video_chunks: bool = Field(default=False)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    max_attempts: int = Field(default=5, ge=1)
+    retry_base_delay_seconds: float = Field(default=1.0, ge=0)
+    retry_max_delay_seconds: float = Field(default=30.0, ge=0)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
