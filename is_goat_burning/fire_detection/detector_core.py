@@ -33,6 +33,30 @@ DEFAULT_UPPER_HSV_FIRE = np.array([35, 255, 255], dtype="uint8")
 logger = get_logger("FireDetector")
 
 
+def _host_copy(frame: object) -> np.ndarray | None:
+    """Returns an independent host (numpy) copy of a frame, or None if it cannot be obtained.
+
+    The stream may reuse its buffers and GPU/UMat frames live on the device, so the alert gets its own copy.
+
+    Args:
+        frame: A numpy array, ``cv2.UMat`` or ``cv2.cuda.GpuMat``.
+
+    Returns:
+        A BGR ``np.ndarray`` copy, or None for unsupported types or on any error (the alert is then sent without it).
+    """
+    try:
+        gpu_mat = getattr(getattr(cv2, "cuda", None), "GpuMat", None)
+        if isinstance(frame, np.ndarray):
+            return frame.copy()
+        if isinstance(frame, cv2.UMat):
+            return np.array(frame.get())
+        if gpu_mat is not None and isinstance(frame, gpu_mat):
+            return np.array(frame.download())
+    except Exception:  # noqa: BLE001 - the image is optional; never block the alert
+        logger.warning("Could not copy the triggering frame for the alert.", exc_info=True)
+    return None
+
+
 class StreamFireDetector:
     """Orchestrates video streaming and fire detection.
 
@@ -41,7 +65,7 @@ class StreamFireDetector:
 
     def __init__(
         self,
-        on_fire_action: Callable[[], Any],
+        on_fire_action: Callable[..., Any],
         video_output: bool,
         checks_per_second: float | None,
         on_extinguished_action: Callable[[], Any] | None = None,
@@ -62,7 +86,7 @@ class StreamFireDetector:
     async def create(
         cls,
         src: str,
-        on_fire_action: Callable[[], Any],
+        on_fire_action: Callable[..., Any],
         threshold: float = DEFAULT_DETECTION_THRESHOLD,
         video_output: bool = False,
         checks_per_second: float | None = None,
@@ -77,7 +101,8 @@ class StreamFireDetector:
             src: The source URL of the video stream (e.g., a YouTube URL).
             on_fire_action: An awaitable callback to execute on fire detection. It is
                 called with ``unverified=True`` when the fire was reported while the
-                verifier was unavailable (``VERIFIER_FAILURE_POLICY=alert_unverified``).
+                verifier was unavailable (``VERIFIER_FAILURE_POLICY=alert_unverified``), and with
+                ``frame=<np.ndarray copy of the triggering frame>`` when one could be copied.
             threshold: The percentage of the frame's pixels that must match
                 the fire color to trigger a detection.
             video_output: If True, displays a window with the video feed and
@@ -150,19 +175,28 @@ class StreamFireDetector:
                 yield frame
                 frame_counter -= frames_between_step
 
-    async def _signal_fire(self) -> None:
-        """Runs the on-fire callback, flagging fires reported while the verifier is unavailable (#169)."""
+    async def _signal_fire(self, frame: object = None) -> None:
+        """Runs the on-fire callback, flagging fires reported while the verifier is unavailable (#169).
+
+        Args:
+            frame: The raw frame of the detection that completed the debounce; a host copy is passed on as ``frame=``
+                (#177). Omitted when there is none or it cannot be copied.
+        """
+        kwargs: dict[str, Any] = {}
+        copy = None if frame is None else _host_copy(frame)
+        if copy is not None:
+            kwargs["frame"] = copy
         if getattr(self.fire_detector, "last_result_unverified", False) is True:
             logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
-            await self.on_fire_action(unverified=True)
-        else:
-            await self.on_fire_action()
+            kwargs["unverified"] = True
+        await self.on_fire_action(**kwargs)
 
-    async def _handle_fire_detection(self, fire_in_frame: bool) -> None:
+    async def _handle_fire_detection(self, fire_in_frame: bool, frame: object = None) -> None:
         """Handles the state logic for fire detection with debouncing.
 
         Args:
             fire_in_frame: A boolean indicating if fire was detected in the current frame.
+            frame: The current raw frame, attached to the alert if this detection completes the fire debounce.
         """
         if getattr(self.fire_detector, "last_result_inconclusive", False) is True:
             # The verifier failed below VERIFIER_ERRORS_BEFORE_POLICY: neither fire nor no-fire. Keep the current
@@ -183,7 +217,7 @@ class StreamFireDetector:
                 self.fire_is_currently_detected = True
                 self._potential_fire_start_time = None  # Clear timer
                 self.signal_handler.fire_detected()
-                await self._signal_fire()
+                await self._signal_fire(frame)
         else:
             self._potential_fire_start_time = None  # Reset any pending fire signal
             if not self.fire_is_currently_detected:
@@ -222,7 +256,7 @@ class StreamFireDetector:
         try:
             async for frame in self._frame_generator():
                 fire_in_frame, annotated_frame = await self.fire_detector.detect(frame)
-                await self._handle_fire_detection(fire_in_frame)
+                await self._handle_fire_detection(fire_in_frame, frame)
 
                 if self.video_output:
                     cv2.imshow("output", annotated_frame)

@@ -59,6 +59,7 @@ class OnceAction:
     _deferred_task: asyncio.Task[None] | None
     _deferred_sending: bool
     _unverified: bool
+    _frame: Any
     _lock: asyncio.Lock
     stop_timeout_seconds: float
 
@@ -89,6 +90,7 @@ class OnceAction:
         self._deferred_task = None
         self._deferred_sending = False
         self._unverified = False
+        self._frame = None
         self._lock = asyncio.Lock()
         self.stop_timeout_seconds = stop_timeout_seconds
         for action, kwargs in actions:
@@ -103,7 +105,7 @@ class OnceAction:
             return 0.0
         return max(0.0, self._last_alert_time + self.cooldown_seconds - self._clock())
 
-    async def __call__(self, *args: Any, unverified: bool = False, **kwargs: Any) -> None:
+    async def __call__(self, *args: Any, unverified: bool = False, frame: Any = None, **kwargs: Any) -> None:
         """Sends the alert for the current fire event if it has not been sent yet.
 
         Inside the cooldown the alert is deferred until the cooldown ends.
@@ -113,12 +115,17 @@ class OnceAction:
             unverified: True if the fire was reported while the verifier was unavailable. The latest value before
                 the alert is sent wins; it is then passed to every action as ``unverified=True`` (actions must accept
                 that keyword). Verified alerts call the actions without arguments.
+            frame: The frame (BGR ``np.ndarray`` copy) that triggered the event, passed to every action as ``frame=``
+                (actions must accept that keyword). At most one frame is held; a newer one replaces it, so a
+                deferred alert carries the frame of the latest event. It is released once the alert was sent.
             **kwargs: Ignored.
         """
         async with self._lock:
             if self.was_performed:
                 return
             self._unverified = unverified
+            if frame is not None:
+                self._frame = frame
             remaining = self._cooldown_remaining()
             if remaining > 0:
                 if self._deferred_task is None or self._deferred_task.done():
@@ -145,7 +152,9 @@ class OnceAction:
 
     async def _perform(self) -> None:
         """Runs all actions and records the alert as sent if any succeeded."""
-        kwargs = {"unverified": True} if self._unverified else {}
+        kwargs: dict[str, Any] = {"unverified": True} if self._unverified else {}
+        if self._frame is not None:
+            kwargs["frame"] = self._frame
         results = await asyncio.gather(*[action(**kwargs) for action in self.actions], return_exceptions=True)
         failures = 0
         for action, result in zip(self.actions, results, strict=True):
@@ -163,6 +172,7 @@ class OnceAction:
             )
             return
         self.was_performed = True
+        self._frame = None
         self._last_alert_time = self._clock()
 
     async def rearm(self) -> None:
@@ -178,6 +188,7 @@ class OnceAction:
             if self.was_performed:
                 logger.info("Fire alert re-armed for the next fire event.")
             self.was_performed = False
+            self._frame = None
 
     async def stop(self) -> None:
         """Cancels a pending deferred alert and waits for it to finish.
