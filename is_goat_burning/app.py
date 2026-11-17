@@ -192,8 +192,6 @@ class Application:
         if self.on_fire_action_handler:
             await self.on_fire_action_handler.stop()
 
-        await close_escalation_log()
-
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():
             self.action_manager_task.cancel()
@@ -201,4 +199,7 @@ class Application:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Last: the detector has stopped by now, so no further escalations can be queued.
+        await close_escalation_log()
         logger.info("Application has shut down.")

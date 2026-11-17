@@ -80,7 +80,7 @@ async def test_index_rotation(tmp_path: Path, mocker: MockerFixture) -> None:
     mocker.patch.object(el, "MAX_INDEX_BYTES", 300)
     log = EscalationLog(tmp_path, max_mb=10)
     for _ in range(6):
-        log.record_capped("V", None)
+        log.record(FRAME, "V", "fire", None, 1.0)
         await log.aclose()
     assert (tmp_path / el.ROTATED_NAME).is_file()
     assert (tmp_path / el.INDEX_NAME).stat().st_size <= 600
@@ -168,3 +168,59 @@ async def test_hybrid_records_error_without_message_and_cap(tmp_path: Path) -> N
 
 def test_get_escalation_log_disabled_returns_none() -> None:
     assert el.get_escalation_log() is None
+
+
+@pytest.mark.asyncio
+async def test_record_never_raises_when_queueing_fails(tmp_path: Path) -> None:
+    log = EscalationLog(tmp_path, max_mb=1)
+    broken = MagicMock()
+    broken.copy.side_effect = RuntimeError("boom")
+    log.record(broken, "V", "fire", None, 1.0)  # must not raise
+    assert log._in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_frame_is_copied_before_the_caller_reuses_it(tmp_path: Path) -> None:
+    import cv2
+
+    log = EscalationLog(tmp_path, max_mb=10, jpeg_quality=100)
+    frame = np.full((64, 64, 3), (200, 120, 40), dtype=np.uint8)  # flat colour: JPEG-faithful
+    expected = frame.copy()
+    log.record(frame, "V", "fire", None, 1.0)
+    frame[:] = 0  # the stream reuses/overwrites its buffer right after the call
+    await log.aclose()
+    stored = cv2.imread(str(next(tmp_path.glob("*.jpg"))))
+    assert np.abs(stored.astype(int) - expected.astype(int)).mean() < 5
+
+
+@pytest.mark.asyncio
+async def test_capped_records_are_throttled(tmp_path: Path, mocker: MockerFixture) -> None:
+    clock = MagicMock(monotonic=MagicMock(side_effect=[0.0, 1.0, 2.0, 61.0, 62.0, 62.0]))
+    mocker.patch.object(el, "time", clock)
+    log = EscalationLog(tmp_path, max_mb=10)
+    for _ in range(4):
+        log.record_capped("V", "suppress")
+        await log.aclose()
+    lines = _lines(tmp_path)
+    assert [x["verdict"] for x in lines] == ["capped", "capped"]
+    assert lines[0]["suppressed"] == 0
+    assert lines[1]["suppressed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_hybrid_records_no_fire_verdict(tmp_path: Path) -> None:
+    log = EscalationLog(tmp_path, max_mb=10)
+    detector = _hybrid(log, AsyncMock(return_value=False), cooldown_seconds=0, max_calls_per_hour=0)
+    await detector.detect(FRAME)
+    await log.aclose()
+    assert [x["verdict"] for x in _lines(tmp_path)] == ["no_fire"]
+
+
+@pytest.mark.asyncio
+async def test_in_flight_is_released_after_writes(tmp_path: Path) -> None:
+    log = EscalationLog(tmp_path, max_mb=10)
+    for _ in range(el.MAX_IN_FLIGHT * 3):
+        log.record(FRAME, "V", "fire", None, 1.0)
+        await log.aclose()
+    assert log._in_flight == 0
+    assert len(_lines(tmp_path)) == el.MAX_IN_FLIGHT * 3

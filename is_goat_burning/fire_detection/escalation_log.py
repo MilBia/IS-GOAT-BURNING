@@ -33,6 +33,8 @@ MAX_INDEX_BYTES = 50 * 1024 * 1024
 MAX_IN_FLIGHT = 4
 #: Minimum seconds between two logged write failures / drops.
 WARN_INTERVAL_SECONDS = 60.0
+#: Minimum seconds between two ``capped`` index lines (at the cap every CV-positive frame would write one).
+CAPPED_INTERVAL_SECONDS = 60.0
 
 
 class EscalationLog:
@@ -57,6 +59,9 @@ class EscalationLog:
         self._in_flight = 0
         self._pending: set[asyncio.Task[None]] = set()
         self._last_warning = float("-inf")
+        self._last_capped = float("-inf")
+        self._suppressed_capped = 0
+        self._write_order = asyncio.Lock()  # keeps the index in submission order (threads would race)
 
     @classmethod
     def from_settings(cls, cfg: EscalationLogSettings) -> EscalationLog:
@@ -100,7 +105,15 @@ class EscalationLog:
             verifier: Verifier class name.
             policy: The failure policy applied.
         """
-        self._submit(None, self._entry(verifier, "capped", None, None, None, policy))
+        now = time.monotonic()
+        if now - self._last_capped < CAPPED_INTERVAL_SECONDS:
+            self._suppressed_capped += 1
+            return
+        self._last_capped = now
+        entry = self._entry(verifier, "capped", None, None, None, policy)
+        entry["suppressed"] = self._suppressed_capped  # capped skips not written since the previous line
+        self._suppressed_capped = 0
+        self._submit(None, entry)
 
     @staticmethod
     def _entry(
@@ -122,11 +135,11 @@ class EscalationLog:
             "policy": policy,
         }
 
-    def _warn(self, message: str, *args: object) -> None:
+    def _warn(self, message: str, *args: object, **kwargs: object) -> None:
         now = time.monotonic()
         if now - self._last_warning >= WARN_INTERVAL_SECONDS:
             self._last_warning = now
-            logger.warning(message, *args)
+            logger.warning(message, *args, **kwargs)
 
     def _submit(self, frame: np.ndarray | None, entry: dict[str, object]) -> None:
         try:
@@ -143,7 +156,8 @@ class EscalationLog:
 
     async def _run(self, frame: np.ndarray | None, entry: dict[str, object]) -> None:
         try:
-            await asyncio.to_thread(self._write, frame, entry)
+            async with self._write_order:
+                await asyncio.to_thread(self._write, frame, entry)
         except Exception as exc:  # noqa: BLE001 - drop and report, never propagate
             self._warn("Escalation log write failed (%s); record dropped.", type(exc).__name__)
         finally:
