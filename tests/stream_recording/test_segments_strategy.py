@@ -158,6 +158,7 @@ def test_concat_blocking_joins_real_segments(tmp_path: Path) -> None:
     assert float(probe) == pytest.approx(2.0, abs=0.3)
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 def test_concat_failure_returns_false(tmp_path: Path) -> None:
     missing = tmp_path / "nope.ts"
     assert SegmentsBufferStrategy._concat_blocking([missing], str(tmp_path / "o.mp4")) is False
