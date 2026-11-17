@@ -233,7 +233,7 @@ def test_saver_selects_segments_strategy(mocker: MockerFixture, tmp_path: Path) 
 def test_prepare_ring_warns_when_tmpfs_is_too_small(ring: Path, context: MagicMock, mocker: MockerFixture) -> None:
     mocker.patch("is_goat_burning.stream_recording.strategies.shutil.disk_usage", return_value=MagicMock(free=10 * 2**20))
     warn = mocker.patch("is_goat_burning.stream_recording.strategies.logger.warning")
-    (ring / "seg000.ts").write_bytes(b"x")
+    _segment(ring, "seg000.ts", 100)  # older than the pre-fire window
 
     SegmentsBufferStrategy(context)._prepare_ring()
 
@@ -242,11 +242,290 @@ def test_prepare_ring_warns_when_tmpfs_is_too_small(ring: Path, context: MagicMo
     assert "--shm-size" in warn.call_args.args[0]
 
 
+# --- ring kept across reconnects (#160) -------------------------------------------------------------------------
+
+
+def test_prepare_ring_keeps_young_segments_and_drops_old_or_out_of_range(ring: Path, context: MagicMock) -> None:
+    _segment(ring, "seg000.ts", 100)  # older than the window: useless, freed at once
+    _segment(ring, "seg001.ts", 6)  # from the previous connection, still inside the window: kept
+    _segment(ring, "seg002.ts", 3)
+    _segment(ring, "seg042.ts", 3)  # slot outside the current ring (other config): the ring bound would not hold
+    _segment(ring, "seg_x.ts", 3)  # not a ring slot at all
+
+    SegmentsBufferStrategy(context)._prepare_ring()
+
+    assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg001.ts", "seg002.ts"]
+
+
+def test_next_segment_number_continues_after_the_newest_slot(ring: Path, context: MagicMock) -> None:
+    strategy = SegmentsBufferStrategy(context)  # ring of 10 // 2 + 4 = 9 slots
+    assert strategy._next_segment_number() == 0  # empty ring
+
+    _segment(ring, "seg003.ts", 6)
+    _segment(ring, "seg004.ts", 3)  # newest: the previous run stopped here
+    _segment(ring, "seg007.ts", 20)
+    assert strategy._next_segment_number() == 5
+
+    _segment(ring, "seg008.ts", 1)  # newest in the last slot: wrap around
+    assert strategy._next_segment_number() == 0
+
+
+@pytest.mark.usefixtures("ring")
+def test_ffmpeg_command_starts_numbering_where_the_previous_run_stopped(context: MagicMock) -> None:
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command(start_number=5)
+
+    assert cmd[cmd.index("-segment_start_number") + 1] == "5"
+    assert cmd[cmd.index("-segment_wrap") + 1] == "9"
+
+
+def test_newest_segment_of_a_previous_run_is_complete(ring: Path, context: MagicMock) -> None:
+    import time
+
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 3)  # last segment of the previous connection, finished when its ffmpeg stopped
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 1  # new ffmpeg started, has not written a segment yet
+
+    assert [p.name for _, p in strategy._complete_segments()] == ["seg000.ts", "seg001.ts"]
+
+    _segment(ring, "seg002.ts", 0.1)  # the new run's segment being written is still left out
+    assert [p.name for _, p in strategy._complete_segments()] == ["seg000.ts", "seg001.ts"]
+
+
+def _simulate_run(ring: Path, strategy: SegmentsBufferStrategy, segments: int, start_age: float) -> None:
+    """Writes `segments` slots the way the segment muxer would, starting at the strategy's next number."""
+    number = strategy._next_segment_number()
+    for i in range(segments):
+        _segment(ring, f"seg{(number + i) % strategy.ring_size:03d}.ts", start_age - 2 * i)
+
+
+def test_ring_stays_bounded_across_many_reconnects(ring: Path, context: MagicMock) -> None:
+    age = 1000.0
+    for _ in range(6):  # six reconnects, each run writing more than a full ring
+        strategy = SegmentsBufferStrategy(context)
+        strategy._prepare_ring()
+        _simulate_run(ring, strategy, segments=13, start_age=age)
+        age -= 30
+
+    files = list(ring.glob("seg*.ts"))
+    assert len(files) <= strategy.ring_size
+    assert all(p.name in {f"seg{i:03d}.ts" for i in range(strategy.ring_size)} for p in files)
+
+
+@pytest.mark.asyncio
+async def test_pre_fire_clip_spans_a_reconnect(ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture) -> None:
+    import time
+
+    # Old connection wrote seg003..seg005, then the URL expired; the new run continued at seg006.
+    _segment(ring, "seg003.ts", 9)
+    _segment(ring, "seg004.ts", 7)
+    _segment(ring, "seg005.ts", 5)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 3
+    _segment(ring, "seg006.ts", 1)
+    _segment(ring, "seg007.ts", 0.1)  # being written
+    clips = _capture_clips(mocker, results=[True])
+    mocker.patch.object(SegmentsBufferStrategy, "_probe_blocking", staticmethod(lambda _: "h264,High,1920,1080,yuv420p"))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips[0] == ["seg003.ts", "seg004.ts", "seg005.ts", "seg006.ts"]
+
+
+@pytest.mark.asyncio
+async def test_fire_right_after_reconnect_uses_previous_run(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import time
+
+    _segment(ring, "seg003.ts", 6)
+    _segment(ring, "seg004.ts", 4)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 1  # no segment from the new connection yet
+    clips = _capture_clips(mocker, results=[True])
+    probe = MagicMock()
+    mocker.patch.object(SegmentsBufferStrategy, "_probe_blocking", staticmethod(probe))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips[0] == ["seg003.ts", "seg004.ts"]
+    probe.assert_not_called()  # nothing to compare against
+
+
+@pytest.mark.asyncio
+async def test_incompatible_previous_run_falls_back_to_current_segments(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import time
+
+    _segment(ring, "seg003.ts", 9)
+    _segment(ring, "seg004.ts", 7)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 5
+    _segment(ring, "seg005.ts", 3)
+    _segment(ring, "seg006.ts", 1)
+    _segment(ring, "seg007.ts", 0.1)
+    clips = _capture_clips(mocker, results=[True])
+
+    def probe(path: Path) -> str:
+        return "h264,High,1280,720,yuv420p" if path.name.endswith(("seg003.ts", "seg004.ts")) else "h264,High,1920,1080,yuv420p"
+
+    mocker.patch.object(SegmentsBufferStrategy, "_probe_blocking", staticmethod(probe))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips == [["seg005.ts", "seg006.ts"]]
+
+
+@pytest.mark.asyncio
+async def test_failed_probe_falls_back_to_current_segments(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import time
+
+    _segment(ring, "seg003.ts", 9)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 5
+    _segment(ring, "seg004.ts", 3)
+    _segment(ring, "seg005.ts", 0.1)
+    clips = _capture_clips(mocker, results=[True])
+    mocker.patch.object(SegmentsBufferStrategy, "_probe_blocking", staticmethod(lambda _: None))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips == [["seg004.ts"]]
+
+
+@pytest.mark.asyncio
+async def test_failed_concat_across_reconnect_retries_with_current_segments(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    import time
+
+    _segment(ring, "seg003.ts", 9)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 5
+    _segment(ring, "seg004.ts", 3)
+    _segment(ring, "seg005.ts", 0.1)
+    clips = _capture_clips(mocker, results=[False, True])
+    mocker.patch.object(SegmentsBufferStrategy, "_probe_blocking", staticmethod(lambda _: "same"))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips == [["seg003.ts", "seg004.ts"], ["seg004.ts"]]
+    assert context._publish_chunk_path.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_drops_the_segment_cut_by_a_kill(ring: Path, context: MagicMock) -> None:
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 0.1)
+    strategy = SegmentsBufferStrategy(context)
+    proc = MagicMock()
+    proc.returncode = None
+    proc.wait = AsyncMock(side_effect=[TimeoutError, 0])
+    strategy._ffmpeg = proc
+
+    await strategy._stop_ffmpeg()
+
+    proc.kill.assert_called_once()
+    assert [p.name for p in ring.glob("seg*.ts")] == ["seg000.ts"]
+
+
+def _capture_clips(mocker: MockerFixture, results: list[bool]) -> list[list[str]]:
+    """Patches the concat to record the ring names of each clip's parts; the pre-fire clip is the first one."""
+    clips: list[list[str]] = []
+    outcomes = iter(results)
+
+    def fake_concat(paths: list[Path], _out: str) -> bool:
+        clips.append([p.name.split("_", 1)[1] for p in paths])
+        return next(outcomes, True)
+
+    mocker.patch.object(SegmentsBufferStrategy, "_concat_blocking", staticmethod(fake_concat))
+    mocker.patch("is_goat_burning.stream_recording.strategies.asyncio.sleep", AsyncMock())
+    return clips
+
+
+def _event_dir(tmp_path: Path, context: MagicMock) -> Path:
+    context.chunks_to_keep_after_fire = 0  # the extinguished fire ends the post-fire recording at once
+    context._publish_chunk_path = MagicMock()
+    event_dir = tmp_path / "event"
+    event_dir.mkdir()
+    return event_dir
+
+
+def _encode(path: Path, size: str, seconds: float, age_s: float) -> None:
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size={size}:rate=10", "-t", str(seconds)]
+        + ["-c:v", "mpeg4", "-g", "5", "-f", "mpegts", str(path)],
+        check=True,
+    )
+    import time
+
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+
+
+def _has_mpeg4_encoder() -> bool:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        return False
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=False).stdout
+    return " mpeg4 " in encoders
+
+
+@pytest.mark.skipif(not _has_mpeg4_encoder(), reason="ffmpeg/ffprobe with the mpeg4 encoder not installed")
+@pytest.mark.parametrize(("old_size", "expected_seconds"), [("64x48", 3.0), ("96x64", 1.0)])
+@pytest.mark.asyncio
+async def test_real_pre_fire_clip_across_reconnect(
+    ring: Path,
+    context: MagicMock,
+    tmp_path: Path,
+    mocker: MockerFixture,
+    old_size: str,
+    expected_seconds: float,
+) -> None:
+    import time
+
+    _encode(ring / "seg003.ts", old_size, 1, 8)
+    _encode(ring / "seg004.ts", old_size, 1, 6)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 4
+    _encode(ring / "seg005.ts", "64x48", 1, 2)
+    _encode(ring / "seg006.ts", "64x48", 1, 0.1)
+    mocker.patch("is_goat_burning.stream_recording.strategies.asyncio.sleep", AsyncMock())
+    event_dir = _event_dir(tmp_path, context)
+
+    await strategy.handle_fire_event(str(event_dir))
+
+    (clip,) = event_dir.glob("*pre-fire-buffer*.mp4")
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(clip)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert float(probe) == pytest.approx(expected_seconds, abs=0.3)
+
+
 def test_drop_truncated_segment_removes_only_the_newest(ring: Path, context: MagicMock) -> None:
     _segment(ring, "seg000.ts", 6)
     _segment(ring, "seg001.ts", 3)
     _segment(ring, "seg002.ts", 0.1)
 
     SegmentsBufferStrategy(context)._drop_truncated_segment()
+
+    assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
+
+
+def test_drop_truncated_segment_spares_segments_of_earlier_runs(ring: Path, context: MagicMock) -> None:
+    import time
+
+    # The expired URL: each restart fails at input open without writing a segment; the earlier ones are complete.
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 3)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 1
+
+    strategy._drop_truncated_segment()
 
     assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
