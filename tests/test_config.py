@@ -232,3 +232,20 @@ def test_message_cleaning(input_str: str, expected_str: str) -> None:
     # Using DiscordSettings as an example to test the validator
     settings = DiscordSettings(message=input_str)
     assert settings.message == expected_str
+
+
+def test_discord_retry_defaults_and_validation(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the Discord retry settings defaults, env override and bounds."""
+    for key in list(os.environ):
+        if key.startswith("DISCORD__"):
+            monkeypatch.delenv(key)
+    defaults = DiscordSettings()
+    assert (defaults.timeout_seconds, defaults.max_attempts) == (10.0, 5)
+    assert (defaults.retry_base_delay_seconds, defaults.retry_max_delay_seconds) == (1.0, 30.0)
+    with pytest.raises(ValidationError):
+        DiscordSettings(max_attempts=0)
+    with pytest.raises(ValidationError):
+        DiscordSettings(timeout_seconds=0)
+    monkeypatch.setenv("SOURCE", "x")
+    monkeypatch.setenv("DISCORD__MAX_ATTEMPTS", "3")
+    assert Settings(_env_file=None).discord.max_attempts == 3

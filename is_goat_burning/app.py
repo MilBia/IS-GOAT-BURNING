@@ -73,6 +73,10 @@ class Application:
                     {
                         "message": settings.discord.message,
                         "webhooks": settings.discord.hooks,
+                        "timeout": settings.discord.timeout_seconds,
+                        "max_attempts": settings.discord.max_attempts,
+                        "base_delay": settings.discord.retry_base_delay_seconds,
+                        "max_delay": settings.discord.retry_max_delay_seconds,
                     },
                 )
             )
