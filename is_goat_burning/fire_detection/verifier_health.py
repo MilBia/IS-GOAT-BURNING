@@ -10,8 +10,9 @@ service/maintenance channel: register a listener with :func:`add_verifier_status
 synchronously from the detection loop, so they must be quick (e.g. put the status on a queue) and must not block.
 A listener that raises is logged and skipped; it never affects detection.
 
-The detector is rebuilt on every stream reconnect, so its error counters start from zero after a reconnect; an
-outage that spans a reconnect is announced again.
+The detector is rebuilt on every stream reconnect, so its error counters start from zero after a reconnect. The
+last published availability is therefore kept here, per verifier class: listeners only receive real changes, so an
+outage that spans a reconnect is not announced twice and its recovery (seen by the new detector) is not lost.
 """
 
 from collections.abc import Callable
@@ -48,6 +49,8 @@ class VerifierStatus:
 VerifierStatusListener = Callable[[VerifierStatus], object]
 
 _listeners: list[VerifierStatusListener] = []
+# Last published availability per verifier class name; a verifier not listed here is assumed available.
+_last_available: dict[str, bool] = {}
 
 
 def add_verifier_status_listener(listener: VerifierStatusListener) -> None:
@@ -69,12 +72,23 @@ def remove_verifier_status_listener(listener: VerifierStatusListener) -> None:
         _listeners.remove(listener)
 
 
+def reset_verifier_status() -> None:
+    """Forgets the last published availability of every verifier (all are assumed available again)."""
+    _last_available.clear()
+
+
 def publish_verifier_status(status: VerifierStatus) -> None:
-    """Delivers a status change to every listener, isolating listener failures.
+    """Delivers an availability change to every listener, isolating listener failures.
+
+    A status equal to the last one published for the same verifier is dropped, so callers may publish on every
+    observation (e.g. each successful call) and listeners still see only transitions.
 
     Args:
-        status: The availability change to publish.
+        status: The verifier's current availability.
     """
+    if _last_available.get(status.verifier, True) == status.available:
+        return
+    _last_available[status.verifier] = status.available
     for listener in list(_listeners):
         try:
             listener(status)

@@ -23,6 +23,7 @@ from is_goat_burning.fire_detection.verifier_health import VerifierError
 from is_goat_burning.fire_detection.verifier_health import VerifierStatus
 from is_goat_burning.fire_detection.verifier_health import add_verifier_status_listener
 from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+from is_goat_burning.fire_detection.verifier_health import reset_verifier_status
 
 FRAME = np.zeros((4, 4, 3), dtype=np.uint8)
 
@@ -31,9 +32,11 @@ FRAME = np.zeros((4, 4, 3), dtype=np.uint8)
 def statuses() -> Iterator[list[VerifierStatus]]:
     """Collects the verifier status notifications published during a test."""
     received: list[VerifierStatus] = []
+    reset_verifier_status()
     add_verifier_status_listener(received.append)
     yield received
     remove_verifier_status_listener(received.append)
+    reset_verifier_status()
 
 
 def _hybrid(verdicts: list[bool | Exception], **kwargs: object) -> tuple[HybridFireDetector, AsyncMock]:
@@ -163,6 +166,19 @@ async def test_gate_negative_clears_the_unverified_flag() -> None:
     detector.local_detector.detect.return_value = (False, FRAME)
     assert (await detector.detect(FRAME))[0] is False
     assert detector.last_result_unverified is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_after_a_reconnect_is_published(statuses: list[VerifierStatus]) -> None:
+    """A detector rebuilt on reconnect reports the recovery of an outage announced by its predecessor, once."""
+    first, _ = _hybrid([VerifierError("down")] * 3, errors_before_policy=3)
+    await _run(first, 3)
+    second, _ = _hybrid([VerifierError("down")] * 3, errors_before_policy=3)
+    await _run(second, 3)  # the outage continues after a reconnect: not announced again
+    third, _ = _hybrid([True], errors_before_policy=3)
+    await _run(third, 1)  # recovered right after another reconnect: the new detector never saw the outage
+
+    assert [s.available for s in statuses] == [False, True]
 
 
 def test_defaults_come_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -554,12 +554,15 @@ class HybridFireDetector:
         )
 
     def _mark_available(self) -> None:
-        """Resets the error state after a real verdict; logs and notifies once if an outage was announced."""
+        """Resets the error state after a real verdict and reports the verifier as available.
+
+        The INFO log is per detector instance; the published status is de-duplicated by ``verifier_health``, so a
+        recovery seen by a detector rebuilt after a reconnect still reaches the listeners exactly once.
+        """
         self._consecutive_errors = 0
-        if not self._unavailable:
-            return
-        self._unavailable = False
-        self._logger.info("Verifier %s recovered; fires are verified again.", type(self.verifier).__name__)
+        if self._unavailable:
+            self._unavailable = False
+            self._logger.info("Verifier %s recovered; fires are verified again.", type(self.verifier).__name__)
         publish_verifier_status(
             VerifierStatus(
                 available=True, verifier=type(self.verifier).__name__, reason="recovered", policy=self.failure_policy
