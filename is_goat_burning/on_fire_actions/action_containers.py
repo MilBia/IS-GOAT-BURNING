@@ -38,7 +38,10 @@ class OnceAction:
     returning ``False``; any other return value (``None``, ``True``) is success.
     The alert counts as sent (container disarmed, cooldown started) when at least
     one action succeeded; failed actions are logged. If every action failed, the
-    container stays armed and the next call retries.
+    container stays armed and the next call retries. The detector only signals
+    on a no-fire -> fire transition, so during one ongoing fire that next call
+    comes only after a re-detection (extinguish, then fire) or a stream
+    reconnect, not on every frame.
 
     Attributes:
         was_performed (bool): True once the alert for the current fire event has
@@ -56,12 +59,14 @@ class OnceAction:
     _deferred_task: asyncio.Task[None] | None
     _deferred_sending: bool
     _lock: asyncio.Lock
+    stop_timeout_seconds: float
 
     def __init__(
         self,
         actions: list[tuple[type | Callable[..., Any], dict[str, Any]]],
         cooldown_seconds: float = 0.0,
         clock: Callable[[], float] = time.monotonic,
+        stop_timeout_seconds: float = 5.0,
     ) -> None:
         """Initializes the OnceAction container.
 
@@ -72,6 +77,8 @@ class OnceAction:
             cooldown_seconds: The minimum number of seconds between two alerts.
                 ``0`` disables the spacing.
             clock: A monotonic clock returning seconds (injectable for tests).
+            stop_timeout_seconds: How long `stop` waits for a deferred alert that
+                is already being sent before cancelling it.
         """
         self.actions = []
         self.was_performed = False
@@ -81,6 +88,7 @@ class OnceAction:
         self._deferred_task = None
         self._deferred_sending = False
         self._lock = asyncio.Lock()
+        self.stop_timeout_seconds = stop_timeout_seconds
         for action, kwargs in actions:
             if isinstance(action, type):
                 self.actions.append(action(**kwargs))
@@ -142,7 +150,10 @@ class OnceAction:
                 failures += 1
                 logger.error(f"Alert action {_action_name(action)} reported failure.")
         if self.actions and failures == len(self.actions):
-            logger.error("No alert action succeeded; the alert stays armed and will be retried on the next fire signal.")
+            logger.error(
+                "No alert action succeeded; the alert stays armed and is retried only after the fire is "
+                "re-detected (extinguish, then fire) or the stream reconnects."
+            )
             return
         self.was_performed = True
         self._last_alert_time = self._clock()
@@ -162,10 +173,21 @@ class OnceAction:
             self.was_performed = False
 
     async def stop(self) -> None:
-        """Cancels a pending deferred alert and waits for it to finish."""
+        """Cancels a pending deferred alert and waits for it to finish.
+
+        A deferred alert that is still waiting for the cooldown is cancelled.
+        One that is already being sent gets up to `stop_timeout_seconds` to
+        finish; only if it is still running after that is it cancelled, so
+        shutdown is never blocked indefinitely by a hanging send.
+        """
         task = self._deferred_task
         self._deferred_task = None
         if task is not None and not task.done():
+            if self._deferred_sending:
+                await asyncio.wait({task}, timeout=self.stop_timeout_seconds)
+                if task.done():
+                    return
+                logger.warning("Shutdown: the alert being sent did not finish in time and is cancelled.")
             task.cancel()
             try:
                 await task
