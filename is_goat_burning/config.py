@@ -311,6 +311,22 @@ class EdgeSettings(BaseModel):
     input_size: int = Field(default=224, gt=0)
 
 
+class EscalationLogSettings(BaseModel):
+    """Configuration of the escalation log (frames sent to the verifier, with verdicts).
+
+    Attributes:
+        enabled: Whether escalations are recorded (off by default).
+        directory: Directory receiving the JPEG frames and the ``escalations.jsonl`` index.
+        max_mb: Size limit of the directory in MB; the oldest JPEGs are deleted beyond it.
+        jpeg_quality: JPEG quality (1-100) of the stored frames.
+    """
+
+    enabled: bool = Field(default=False)
+    directory: str = Field(default="./escalation_log")
+    max_mb: int = Field(default=2000, gt=0)
+    jpeg_quality: int = Field(default=85, ge=1, le=100)
+
+
 class Settings(BaseSettings):
     """The main application settings model.
 
@@ -359,6 +375,7 @@ class Settings(BaseSettings):
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     edge: EdgeSettings = Field(default_factory=EdgeSettings)
     decision: DecisionSettings = Field(default_factory=DecisionSettings)
+    escalation_log: EscalationLogSettings = Field(default_factory=EscalationLogSettings)
 
     @field_validator("detection_strategy", mode="before")
     @classmethod

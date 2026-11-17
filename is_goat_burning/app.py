@@ -6,6 +6,7 @@ from typing import Any
 
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
+from is_goat_burning.fire_detection.escalation_log import close_escalation_log
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
 from is_goat_burning.on_fire_actions import FireEventAction
@@ -198,4 +199,7 @@ class Application:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Last: the detector has stopped by now, so no further escalations can be queued.
+        await close_escalation_log()
         logger.info("Application has shut down.")

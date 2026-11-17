@@ -105,6 +105,10 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `DECISION__THRESHOLD` | Minimum `P(fire)` (0–1) to report fire. | `0.5` |
 | `DECISION__INSTRUCTIONS` | Yes/no question asked about each frame. | `"Is there a visible fire..."` |
 | `DECISION__TIMEOUT_SECONDS` | Per-request timeout in seconds. | `10` |
+| `ESCALATION_LOG__ENABLED` | `hybrid_*` only: record every frame sent to the verifier as a JPEG plus a line in `escalations.jsonl` (time, file, verifier, verdict `fire`/`no_fire`/`error`/`capped`, probability, latency, error type, policy). Non-blocking; for threshold tuning. | `false` |
+| `ESCALATION_LOG__DIRECTORY` | Directory of the escalation log. | `./escalation_log` |
+| `ESCALATION_LOG__MAX_MB` | Size limit; the oldest JPEGs are deleted beyond it (index lines are kept, the index itself rotates). | `2000` |
+| `ESCALATION_LOG__JPEG_QUALITY` | JPEG quality (1-100) of stored frames. | `85` |
 | | | |
 | **Debouncing** | | |
 | `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |

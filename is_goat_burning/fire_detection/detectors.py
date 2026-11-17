@@ -16,6 +16,7 @@ from collections import deque
 from pathlib import Path
 import threading
 import time
+from time import perf_counter
 from typing import TYPE_CHECKING
 from typing import Protocol
 
@@ -23,6 +24,8 @@ import cv2
 import numpy as np
 
 from is_goat_burning.config import settings
+from is_goat_burning.fire_detection.escalation_log import EscalationLog
+from is_goat_burning.fire_detection.escalation_log import get_escalation_log
 from is_goat_burning.fire_detection.verifier_health import VerifierError
 from is_goat_burning.fire_detection.verifier_health import VerifierStatus
 from is_goat_burning.fire_detection.verifier_health import publish_verifier_status
@@ -481,6 +484,7 @@ class HybridFireDetector:
         max_calls_per_hour: int | None = None,
         failure_policy: str | None = None,
         errors_before_policy: int | None = None,
+        escalation_log: EscalationLog | None = None,
     ) -> None:
         """Initializes the HybridFireDetector.
 
@@ -498,7 +502,10 @@ class HybridFireDetector:
             errors_before_policy: Consecutive verifier errors after which ``failure_policy`` applies (before that an
                 error reports "no fire" and the verifier is re-asked on the next check). Defaults to
                 ``settings.verifier_errors_before_policy``.
+            escalation_log: Recorder of every frame sent to the verifier with its verdict. Defaults to the shared log
+                from ``settings.escalation_log`` (None while it is disabled).
         """
+        self.escalation_log = escalation_log if escalation_log is not None else get_escalation_log()
         self.local_detector = local_detector
         self.verifier = verifier
         self.cooldown_seconds = settings.verifier_cooldown_seconds if cooldown_seconds is None else cooldown_seconds
@@ -573,6 +580,46 @@ class HybridFireDetector:
             )
         )
 
+    def _record_escalation(
+        self, frame: np.ndarray, verdict: str, latency_ms: float, error_type: str | None = None, policy: str | None = None
+    ) -> None:
+        """Hands one verifier call to the escalation log (no-op when disabled; never raises)."""
+        if self.escalation_log is None:
+            return
+        probability = getattr(self.verifier, "last_probability", None)
+        self.escalation_log.record(
+            frame,
+            type(self.verifier).__name__,
+            verdict,
+            probability if isinstance(probability, int | float) and verdict != "error" else None,
+            latency_ms,
+            error_type,
+            policy,
+        )
+
+    def _handle_verifier_error(self, exc: VerifierError, frame: np.ndarray, latency_ms: float) -> bool:
+        """Counts a verifier error, records it and returns the result to report (False when inconclusive)."""
+        self._consecutive_errors += 1
+        inconclusive = self._consecutive_errors < self.errors_before_policy and not self._unavailable
+        self._record_escalation(
+            frame,
+            "error",
+            latency_ms,
+            type(exc.__cause__ or exc).__name__,
+            "inconclusive" if inconclusive else self.failure_policy,
+        )
+        if inconclusive:
+            self._logger.warning(
+                "Verifier error %d/%d (%s); result inconclusive, asking again on the next check.",
+                self._consecutive_errors,
+                self.errors_before_policy,
+                exc,
+            )
+            self.last_result_inconclusive = True
+            return False
+        self._mark_unavailable(f"{self._consecutive_errors} consecutive errors, last: {exc}")
+        return self._policy_result()
+
     def _policy_result(self) -> bool:
         """Returns the result reported while the verifier is unavailable, per ``failure_policy``."""
         unverified = self.failure_policy == "alert_unverified"
@@ -621,29 +668,23 @@ class HybridFireDetector:
         if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
             return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
         if self._cap_reached(now):
+            if self.escalation_log is not None:
+                self.escalation_log.record_capped(type(self.verifier).__name__, self.failure_policy)
             return self._policy_result(), annotated_frame
         previous_call_time = self._last_call_time
         self._last_call_time = now
 
+        started = perf_counter()
         try:
             verified = await self.verifier.verify(numpy_frame)
         except VerifierError as exc:
             self._last_call_time = previous_call_time  # an error is not a verdict: no cooldown, ask again next check
-            self._consecutive_errors += 1
-            if self._consecutive_errors < self.errors_before_policy and not self._unavailable:
-                self._logger.warning(
-                    "Verifier error %d/%d (%s); result inconclusive, asking again on the next check.",
-                    self._consecutive_errors,
-                    self.errors_before_policy,
-                    exc,
-                )
-                self.last_result_inconclusive = True
-                return False, annotated_frame
-            self._mark_unavailable(f"{self._consecutive_errors} consecutive errors, last: {exc}")
-            return self._policy_result(), annotated_frame
+            result = self._handle_verifier_error(exc, numpy_frame, (perf_counter() - started) * 1000.0)
+            return result, annotated_frame
         except BaseException:
             self._last_call_time = previous_call_time  # a failed call must not start the cooldown
             raise
+        self._record_escalation(numpy_frame, "fire" if verified else "no_fire", (perf_counter() - started) * 1000.0)
         self._last_verdict = verified
         self._mark_available()
 

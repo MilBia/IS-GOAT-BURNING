@@ -473,6 +473,8 @@ class EdgeInferenceDetector:
         self.input_size = settings.input_size
         self._postprocess = postprocess
         self._consecutive_errors = 0
+        #: ``P(fire)`` of the last successful ``verify()`` (None before it and after a failed call).
+        self.last_probability: float | None = None
         self._lock = threading.Lock()  # cv2.dnn Net is not thread-safe; a cancelled to_thread keeps running
         if backend is not None:
             self._backend = backend
@@ -547,6 +549,7 @@ class EdgeInferenceDetector:
         Raises:
             VerifierError: If the inference failed (the failure is counted, so ``needs_rebuild`` becomes True).
         """
+        self.last_probability = None
         try:
             probability = await asyncio.to_thread(self._infer, frame)
         except Exception as e:
@@ -558,6 +561,7 @@ class EdgeInferenceDetector:
             logger.info("Edge inference recovered after %d consecutive errors.", self._consecutive_errors)
             self._consecutive_errors = 0
 
+        self.last_probability = probability
         is_fire = probability >= self.threshold
         logger.debug("Edge result: P(fire)=%.3f threshold=%.2f is_fire=%s", probability, self.threshold, is_fire)
         return is_fire
