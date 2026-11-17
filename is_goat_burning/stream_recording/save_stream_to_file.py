@@ -101,6 +101,7 @@ class AsyncVideoChunkSaver:
     chunk_start_time: float = field(init=False, default=0.0)
     current_video_path: str | None = field(init=False, default=None)
     _archive_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
+    _strategy_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
     chunk_limit_action: Callable[[], None] = field(init=False, repr=False)
     makedirs_callable: Callable[..., None] = field(init=False, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
@@ -148,7 +149,7 @@ class AsyncVideoChunkSaver:
             return
 
         self._archive_task = asyncio.create_task(self.archive_task())
-        asyncio.create_task(self.strategy.start())
+        self._strategy_task = asyncio.create_task(self.strategy.start())
 
     async def stop(self) -> None:
         """Signals the background tasks to stop and waits for them to finish."""

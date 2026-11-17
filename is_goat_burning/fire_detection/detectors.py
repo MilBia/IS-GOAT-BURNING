@@ -489,6 +489,21 @@ class HybridFireDetector:
         self._logger = get_logger("HybridFireDetector")
         self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
 
+    def _cap_reached(self, now: float) -> bool:
+        """Applies the rolling hourly cap; records the call when it is allowed."""
+        if not self.max_calls_per_hour:
+            return False
+        while self._call_times and now - self._call_times[0] >= 3600:
+            self._call_times.popleft()
+        if len(self._call_times) >= self.max_calls_per_hour:
+            if not self._limit_warned:
+                self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
+                self._limit_warned = True
+            return True
+        self._limit_warned = False
+        self._call_times.append(now)
+        return False
+
     async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
 
@@ -526,19 +541,16 @@ class HybridFireDetector:
         now = time.monotonic()
         if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
             return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
-        if self.max_calls_per_hour:
-            while self._call_times and now - self._call_times[0] >= 3600:
-                self._call_times.popleft()
-            if len(self._call_times) >= self.max_calls_per_hour:
-                if not self._limit_warned:
-                    self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
-                    self._limit_warned = True
-                return False, annotated_frame
-            self._limit_warned = False
-            self._call_times.append(now)
+        if self._cap_reached(now):
+            return False, annotated_frame
+        previous_call_time = self._last_call_time
         self._last_call_time = now
 
-        verified, _ = await self.verifier.detect(numpy_frame)
+        try:
+            verified, _ = await self.verifier.detect(numpy_frame)
+        except BaseException:
+            self._last_call_time = previous_call_time  # a failed call must not start the cooldown
+            raise
         self._last_verdict = verified
 
         if not verified:

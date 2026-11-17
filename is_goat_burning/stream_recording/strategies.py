@@ -493,17 +493,18 @@ class SegmentsBufferStrategy(BufferStrategy):
         dest_dir.mkdir(parents=True, exist_ok=True)
         copied = []
         for src in paths:
-            dest = dest_dir / f"{int(src.stat().st_mtime * 1000)}_{src.name}"
             try:
+                dest = dest_dir / f"{int(src.stat().st_mtime * 1000)}_{src.name}"
                 shutil.copy2(src, dest)
                 copied.append(dest)
             except OSError:
                 logger.warning("A segment was overwritten before it could be copied.")
         return copied
 
-    async def _write_clip(self, parts: list[Path], event_dir: str, label: str) -> None:
+    async def _write_clip(self, parts: list[Path], event_dir: str, label: str) -> bool:
+        """Joins `parts` into one clip. Returns True when the clip was written (or there was nothing to write)."""
         if not parts:
-            return
+            return True
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         out = os.path.join(event_dir, f"{self.context.FILENAME_PREFIX}{label}_{timestamp}{self.context.FILENAME_SUFFIX}")
         loop = asyncio.get_running_loop()
@@ -511,6 +512,8 @@ class SegmentsBufferStrategy(BufferStrategy):
             self.context.current_video_path = out
             self.context._publish_chunk_path(out)
             logger.info(f"Saved {label} clip {os.path.basename(out)} ({len(parts)} segments).")
+            return True
+        return False
 
     async def handle_fire_event(self, event_dir: str) -> None:
         """Writes the pre-fire clip and then the post-fire chunks, entirely from ring segments.
@@ -520,39 +523,45 @@ class SegmentsBufferStrategy(BufferStrategy):
         """
         loop = asyncio.get_running_loop()
         staging = Path(event_dir) / ".parts"
-        selected = await loop.run_in_executor(None, self._select_since, None)
-        last_mtime = selected[-1][0] if selected else time.time()
-        # Copy first (the ring keeps overwriting the oldest slots), then join from the stable copies.
-        parts = await loop.run_in_executor(None, self._copy_blocking, [p for _, p in selected], staging)
-        await self._write_clip(parts, event_dir, "pre-fire-buffer")
-        for part in parts:
-            part.unlink(missing_ok=True)
-        logger.info("Pre-fire clip written. Collecting post-fire segments.")
+        try:
+            selected = await loop.run_in_executor(None, self._select_since, None)
+            last_mtime = selected[-1][0] if selected else time.time()
+            # Copy first (the ring keeps overwriting the oldest slots), then join from the stable copies.
+            parts = await loop.run_in_executor(None, self._copy_blocking, [p for _, p in selected], staging)
+            await self._write_clip(parts, event_dir, "pre-fire-buffer")
+            for part in parts:
+                part.unlink(missing_ok=True)
+            logger.info("Pre-fire clip written. Collecting post-fire segments.")
 
-        chunk_seconds = self.context.chunk_length_seconds
-        tail = self.context.chunks_to_keep_after_fire * chunk_seconds
-        pending: list[Path] = []
-        pending_since = time.monotonic()
-        tail_deadline: float | None = None if settings.video.record_during_fire else time.monotonic() + tail
-        while True:
-            await asyncio.sleep(self.COLLECT_INTERVAL_SECONDS)
-            fresh = await loop.run_in_executor(None, self._select_since, last_mtime)
-            if fresh:
-                last_mtime = fresh[-1][0]
-                pending += await loop.run_in_executor(None, self._copy_blocking, [p for _, p in fresh], staging)
-            if tail_deadline is None and self.context.signal_handler.is_fire_extinguished():
-                logger.info("Fire extinguished signal received.")
-                tail_deadline = time.monotonic() + tail
-            done = tail_deadline is not None and time.monotonic() >= tail_deadline
-            if pending and (done or time.monotonic() - pending_since >= chunk_seconds):
-                await self._write_clip(pending, event_dir, "post-fire")
-                for part in pending:
-                    part.unlink(missing_ok=True)
-                pending = []
-                pending_since = time.monotonic()
-            if done:
-                break
-        shutil.rmtree(staging, ignore_errors=True)
+            chunk_seconds = self.context.chunk_length_seconds
+            tail = self.context.chunks_to_keep_after_fire * chunk_seconds
+            pending: list[Path] = []
+            pending_since = time.monotonic()
+            tail_deadline: float | None = None if settings.video.record_during_fire else time.monotonic() + tail
+            while True:
+                await asyncio.sleep(self.COLLECT_INTERVAL_SECONDS)
+                fresh = await loop.run_in_executor(None, self._select_since, last_mtime)
+                if fresh:
+                    last_mtime = fresh[-1][0]
+                    pending += await loop.run_in_executor(None, self._copy_blocking, [p for _, p in fresh], staging)
+                if tail_deadline is None and self.context.signal_handler.is_fire_extinguished():
+                    logger.info("Fire extinguished signal received.")
+                    tail_deadline = time.monotonic() + tail
+                done = tail_deadline is not None and time.monotonic() >= tail_deadline
+                if pending and (done or time.monotonic() - pending_since >= chunk_seconds):
+                    if await self._write_clip(pending, event_dir, "post-fire"):
+                        for part in pending:
+                            part.unlink(missing_ok=True)
+                        pending = []
+                    elif done:
+                        logger.error("Could not write the last post-fire clip; %d segments were discarded.", len(pending))
+                    else:
+                        logger.warning("Writing a post-fire clip failed; will retry with the next segments.")
+                    pending_since = time.monotonic()
+                if done:
+                    break
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         logger.info("Post-fire recording from segments is complete.")
 
     async def _run_main_loop(self) -> None:

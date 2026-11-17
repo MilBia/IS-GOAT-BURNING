@@ -67,3 +67,16 @@ async def test_cap_warning_is_logged_once(mocker: MockerFixture) -> None:
         await detector.detect(FRAME)
 
     assert warn.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_verifier_call_does_not_start_the_cooldown(mocker: MockerFixture) -> None:
+    mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[100.0, 101.0])))
+    detector, call = _hybrid([], cooldown_seconds=60, max_calls_per_hour=0)
+    call.side_effect = [RuntimeError("boom"), (True, FRAME)]
+
+    with pytest.raises(RuntimeError):
+        await detector.detect(FRAME)
+
+    assert (await detector.detect(FRAME))[0] is True  # asked again immediately, not blocked for 60 s
+    assert call.await_count == 2

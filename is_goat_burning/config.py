@@ -156,7 +156,7 @@ class VideoSettings(BaseModel):
     buffer_mode: Literal["disk", "memory", "segments"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
     segments_directory: str = Field(default="/dev/shm/goat-ring")  # noqa: S108 - tmpfs by design, keeps the ring in RAM
-    segment_seconds: int = Field(default=2)
+    segment_seconds: int = Field(default=2, ge=1)
     record_during_fire: bool = Field(default=False)
     flush_num_threads: int = Field(default=1)
     flush_throttle_frame_interval: int = Field(default=10)
