@@ -150,12 +150,24 @@ class StreamFireDetector:
                 yield frame
                 frame_counter -= frames_between_step
 
+    async def _signal_fire(self) -> None:
+        """Runs the on-fire callback, flagging fires reported while the verifier is unavailable (#169)."""
+        if getattr(self.fire_detector, "last_result_unverified", False) is True:
+            logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
+            await self.on_fire_action(unverified=True)
+        else:
+            await self.on_fire_action()
+
     async def _handle_fire_detection(self, fire_in_frame: bool) -> None:
         """Handles the state logic for fire detection with debouncing.
 
         Args:
             fire_in_frame: A boolean indicating if fire was detected in the current frame.
         """
+        if getattr(self.fire_detector, "last_result_inconclusive", False) is True:
+            # The verifier failed below VERIFIER_ERRORS_BEFORE_POLICY: neither fire nor no-fire. Keep the current
+            # state and do not start or reset either debounce timer (a slow outage must not fake an extinguish).
+            return
         now = time.monotonic()
 
         if fire_in_frame:
@@ -171,12 +183,7 @@ class StreamFireDetector:
                 self.fire_is_currently_detected = True
                 self._potential_fire_start_time = None  # Clear timer
                 self.signal_handler.fire_detected()
-                # A hybrid detector reports fire without verification while its verifier is unavailable (#169).
-                if getattr(self.fire_detector, "last_result_unverified", False) is True:
-                    logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
-                    await self.on_fire_action(unverified=True)
-                else:
-                    await self.on_fire_action()
+                await self._signal_fire()
         else:
             self._potential_fire_start_time = None  # Reset any pending fire signal
             if not self.fire_is_currently_detected:

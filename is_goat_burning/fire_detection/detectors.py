@@ -464,9 +464,10 @@ class HybridFireDetector:
     high-accuracy verification. This approach minimizes verifier cost while
     reducing false positives.
 
-    A verifier error (``VerifierError``: the verifier did not answer) is never treated as "no fire" for longer than
-    ``errors_before_policy - 1`` checks: it is not cached for the cooldown, the verifier is asked again on the next
-    positive check, and once ``errors_before_policy`` errors occurred in a row (or the hourly call cap is reached)
+    A verifier error (``VerifierError``: the verifier did not answer) is never treated as "no fire": it is not cached
+    for the cooldown, the verifier is asked again on the next positive check, the first ``errors_before_policy - 1``
+    errors are reported as inconclusive (``last_result_inconclusive``; ``StreamFireDetector`` keeps its state), and
+    once ``errors_before_policy`` errors occurred in a row (or the hourly call cap is reached)
     the ``failure_policy`` decides: ``alert_unverified`` reports the gate's fire as an unverified detection
     (``last_result_unverified`` is True), ``suppress`` reports no fire. Entering and leaving that degraded state
     is logged (CRITICAL / INFO) and published through ``verifier_health.publish_verifier_status``.
@@ -508,6 +509,9 @@ class HybridFireDetector:
         )
         #: True when the last ``detect()`` reported fire only because the verifier is unavailable.
         self.last_result_unverified = False
+        #: True when the last ``detect()`` got a verifier error below ``errors_before_policy``: the result is
+        #: neither fire nor no-fire, and ``StreamFireDetector`` keeps its debounce state for that frame.
+        self.last_result_inconclusive = False
         self._last_call_time: float | None = None
         self._last_verdict = False
         self._call_times: deque[float] = deque()
@@ -595,6 +599,7 @@ class HybridFireDetector:
             - The annotated frame from the local detector.
         """
         self.last_result_unverified = False
+        self.last_result_inconclusive = False
         # Stage 1: Fast local check (gatekeeper)
         local_result, annotated_frame = await self.local_detector.detect(frame)
 
@@ -625,13 +630,14 @@ class HybridFireDetector:
         except VerifierError as exc:
             self._last_call_time = previous_call_time  # an error is not a verdict: no cooldown, ask again next check
             self._consecutive_errors += 1
-            if self._consecutive_errors < self.errors_before_policy:
+            if self._consecutive_errors < self.errors_before_policy and not self._unavailable:
                 self._logger.warning(
-                    "Verifier error %d/%d (%s); asking again on the next check.",
+                    "Verifier error %d/%d (%s); result inconclusive, asking again on the next check.",
                     self._consecutive_errors,
                     self.errors_before_policy,
                     exc,
                 )
+                self.last_result_inconclusive = True
                 return False, annotated_frame
             self._mark_unavailable(f"{self._consecutive_errors} consecutive errors, last: {exc}")
             return self._policy_result(), annotated_frame

@@ -123,11 +123,28 @@ async def test_error_does_not_overwrite_the_cached_verdict(mocker: MockerFixture
     detector, verify = _hybrid([True, VerifierError("down")], cooldown_seconds=60, errors_before_policy=3)
 
     assert (await detector.detect(FRAME))[0] is True
-    assert (await detector.detect(FRAME))[0] is False  # error below threshold: "unknown", not the stale verdict
+    assert detector.last_result_inconclusive is False
+    # Error below the threshold: inconclusive (the stream detector keeps its state), never the stale verdict.
+    assert (await detector.detect(FRAME))[0] is False
+    assert detector.last_result_inconclusive is True
+    assert detector.last_result_unverified is False
     assert detector._last_verdict is True
     verify.side_effect = [True]
     assert (await detector.detect(FRAME))[0] is True
+    assert detector.last_result_inconclusive is False
     assert verify.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_error_after_the_cap_outage_keeps_applying_the_policy(mocker: MockerFixture) -> None:
+    """Once unavailable (cap), a single error is not reported as an inconclusive "no fire" (M1)."""
+    mocker.patch.object(detectors, "time", MagicMock(monotonic=MagicMock(side_effect=[0.0, 1.0, 3601.0])))
+    detector, _ = _hybrid([True, VerifierError("down")], max_calls_per_hour=1, errors_before_policy=3)
+
+    results = await _run(detector, 3)
+
+    assert results == [(True, False), (True, True), (True, True)]
+    assert detector.last_result_inconclusive is False
 
 
 @pytest.mark.asyncio
@@ -189,17 +206,31 @@ def test_defaults_come_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert detector.errors_before_policy == 7
 
 
-def test_failing_listener_does_not_break_detection(statuses: list[VerifierStatus]) -> None:  # noqa: ARG001
+def test_failing_listener_does_not_break_other_listeners() -> None:
     from is_goat_burning.fire_detection.verifier_health import publish_verifier_status
 
     def _broken(_status: VerifierStatus) -> None:
         raise RuntimeError("listener bug")
 
-    add_verifier_status_listener(_broken)
+    received: list[VerifierStatus] = []
+    add_verifier_status_listener(_broken)  # registered first, so it runs before the healthy one
+    add_verifier_status_listener(received.append)
+    status = VerifierStatus(available=False, verifier="X", reason="r", policy="suppress")
     try:
-        publish_verifier_status(VerifierStatus(available=False, verifier="X", reason="r", policy="suppress"))
+        publish_verifier_status(status)
     finally:
         remove_verifier_status_listener(_broken)
+        remove_verifier_status_listener(received.append)
+
+    assert received == [status]
+
+
+def test_async_listener_is_rejected() -> None:
+    async def _listener(_status: VerifierStatus) -> None:
+        return None
+
+    with pytest.raises(TypeError, match="synchronous"):
+        add_verifier_status_listener(_listener)
 
 
 # --- acceptance: a series of API errors behind an alarming gate ends in an alert, not silence ---
@@ -234,3 +265,61 @@ async def test_api_outage_with_suppress_only_signals_service(mocker: MockerFixtu
 
     on_fire.assert_not_awaited()
     assert [s.available for s in statuses] == [False]
+
+
+# --- inconclusive frames (errors below the threshold) keep the stream detector's debounce state ---
+
+
+async def _stream_run(
+    mocker: MockerFixture, verdicts: list[bool | Exception], times: list[float], *, detected: float, extinguished: float
+) -> tuple[StreamFireDetector, AsyncMock, AsyncMock]:
+    """Feeds one frame per verdict through a hybrid detector (gate always on) and the debounce logic.
+
+    ``times`` are the clock readings of the debounce logic; an inconclusive frame must not read the clock at all.
+    """
+    on_fire, on_extinguished = AsyncMock(), AsyncMock()
+    detector = StreamFireDetector(
+        on_fire_action=on_fire, video_output=False, checks_per_second=None, on_extinguished_action=on_extinguished
+    )
+    detector.signal_handler = MagicMock()
+    detector.fire_detector, _ = _hybrid(verdicts, errors_before_policy=3)
+    mocker.patch.object(settings, "fire_detected_debounce_seconds", detected)
+    mocker.patch.object(settings, "fire_extinguished_debounce_seconds", extinguished)
+    from is_goat_burning.fire_detection import detector_core
+
+    mocker.patch.object(detector_core, "time", MagicMock(monotonic=MagicMock(side_effect=times)))
+    for _ in verdicts:
+        fire, _ = await detector.fire_detector.detect(FRAME)
+        await detector._handle_fire_detection(fire)
+    return detector, on_fire, on_extinguished
+
+
+@pytest.mark.asyncio
+async def test_slow_verifier_errors_during_a_fire_do_not_extinguish_it(mocker: MockerFixture) -> None:
+    """Verified fire, then two (10 s) errors: no EXTINGUISHED, no second alert."""
+    detector, on_fire, on_extinguished = await _stream_run(
+        mocker, [True, VerifierError("timeout"), VerifierError("timeout"), True], [0.0, 30.0], detected=0, extinguished=10
+    )
+
+    on_fire.assert_awaited_once_with()
+    on_extinguished.assert_not_awaited()
+    assert detector.fire_is_currently_detected is True
+
+
+@pytest.mark.asyncio
+async def test_verifier_errors_without_fire_do_not_raise_fire(mocker: MockerFixture) -> None:
+    """No fire, then errors below the threshold: no FIRE."""
+    detector, on_fire, _ = await _stream_run(
+        mocker, [False, VerifierError("x"), VerifierError("x")], [0.0], detected=0, extinguished=10
+    )
+
+    on_fire.assert_not_awaited()
+    assert detector.fire_is_currently_detected is False
+
+
+@pytest.mark.asyncio
+async def test_inconclusive_frame_does_not_reset_a_pending_fire_debounce(mocker: MockerFixture) -> None:
+    """A verifier error between two confirmations neither starts nor resets the detection debounce."""
+    _, on_fire, _ = await _stream_run(mocker, [True, VerifierError("x"), True], [0.0, 6.0], detected=5, extinguished=10)
+
+    on_fire.assert_awaited_once_with()

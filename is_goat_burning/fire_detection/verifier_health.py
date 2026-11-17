@@ -18,6 +18,7 @@ outage that spans a reconnect is not announced twice and its recovery (seen by t
 from collections.abc import Callable
 import contextlib
 from dataclasses import dataclass
+import inspect
 
 from is_goat_burning.logger import get_logger
 
@@ -58,7 +59,12 @@ def add_verifier_status_listener(listener: VerifierStatusListener) -> None:
 
     Args:
         listener: A quick, non-blocking callable taking a :class:`VerifierStatus`.
+
+    Raises:
+        TypeError: If ``listener`` is a coroutine function (it would never be awaited).
     """
+    if inspect.iscoroutinefunction(listener):
+        raise TypeError("Verifier status listeners must be synchronous; schedule async work yourself (e.g. queue.put_nowait).")
     _listeners.append(listener)
 
 
