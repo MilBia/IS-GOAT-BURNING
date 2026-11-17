@@ -93,6 +93,21 @@ async def test_fire_extinguished_debounce_triggers_signal_after_delay(detector: 
 
 
 @pytest.mark.asyncio
+async def test_fire_extinguished_invokes_on_extinguished_action(detector: StreamFireDetector) -> None:
+    """The optional extinguished callback is awaited once the extinguish debounce elapses (re-arms alerts)."""
+    detector.on_extinguished_action = AsyncMock()
+    detector.fire_is_currently_detected = True
+
+    with patch("time.monotonic", side_effect=[200, 201.0, 202.1]):
+        await detector._handle_fire_detection(fire_in_frame=False)  # Potential end
+        await detector._handle_fire_detection(fire_in_frame=False)  # Still debouncing
+        detector.on_extinguished_action.assert_not_awaited()
+        await detector._handle_fire_detection(fire_in_frame=False)  # Debounce time exceeded
+
+    detector.on_extinguished_action.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_fire_detected_with_zero_debounce_triggers_immediately(
     detector: StreamFireDetector, mock_settings: MagicMock
 ) -> None:

@@ -18,6 +18,7 @@ from is_goat_burning.config import DiscordSettings
 from is_goat_burning.config import EmailSettings
 from is_goat_burning.config import Settings
 from is_goat_burning.config import VideoSettings
+from is_goat_burning.on_fire_actions import OnceAction
 
 TINY_RECONNECT_DELAY = 1
 
@@ -32,6 +33,7 @@ def test_settings(monkeypatch: MonkeyPatch) -> Settings:
         email=EmailSettings(use_emails=False),
         discord=DiscordSettings(use_discord=False),
         video=VideoSettings(save_video_chunks=False),
+        alert_cooldown_seconds=0.0,
     )
     monkeypatch.setattr("is_goat_burning.app.settings", settings)
     return settings
@@ -66,6 +68,73 @@ async def test_app_detects_fire_and_triggers_action(mock_detector_factory: Async
     mock_detector_factory.assert_awaited_once()
     mock_detector_instance.assert_awaited_once()
     app.on_fire_action_handler.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+@patch("is_goat_burning.app.StreamFireDetector.create")
+async def test_app_alerts_again_after_fire_is_extinguished(mock_detector_factory: AsyncMock, test_settings: Settings) -> None:  # noqa: ARG001
+    """FIRE, EXTINGUISHED, FIRE through the action queue sends two alerts (re-armed between events)."""
+    app = Application()
+    alert = AsyncMock()
+    app.on_fire_action_handler = OnceAction([(alert, {})], cooldown_seconds=0.0)
+    app.signal_handler = MagicMock()
+    app.signal_handler.is_running.return_value = True
+
+    mock_detector_instance = AsyncMock()
+    mock_detector_instance.fire_is_currently_detected = False
+
+    async def detector_call_side_effect() -> None:
+        kwargs = mock_detector_factory.call_args.kwargs
+        await kwargs["on_fire_action"]()
+        await kwargs["on_fire_action"]()  # duplicate signal within the same event
+        await kwargs["on_extinguished_action"]()
+        await kwargs["on_fire_action"]()
+        await app.action_queue.join()
+        app.signal_handler.is_running.return_value = False
+
+    mock_detector_instance.side_effect = detector_call_side_effect
+    mock_detector_factory.return_value = mock_detector_instance
+
+    await app.run()
+    await app.shutdown()
+
+    assert alert.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+@patch("is_goat_burning.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("is_goat_burning.app.StreamFireDetector.create")
+async def test_app_rearms_alert_when_stream_drops_mid_fire(
+    mock_detector_factory: AsyncMock,
+    mock_sleep: AsyncMock,  # noqa: ARG001
+    test_settings: Settings,  # noqa: ARG001
+) -> None:
+    """A detector that stops while in the fire state re-arms the alert (the new detector starts fire-free)."""
+    app = Application()
+    app.on_fire_action_handler = MagicMock()
+    app.on_fire_action_handler.rearm = AsyncMock()
+    app.on_fire_action_handler.stop = AsyncMock()
+    app.signal_handler = MagicMock()
+    app.signal_handler.is_running.return_value = True
+
+    mid_fire = AsyncMock()
+    mid_fire.fire_is_currently_detected = True
+    quiet = AsyncMock()
+    quiet.fire_is_currently_detected = False
+
+    async def stop_loop() -> None:
+        await app.action_queue.join()
+        app.signal_handler.is_running.return_value = False
+
+    quiet.side_effect = stop_loop
+    mock_detector_factory.side_effect = [mid_fire, quiet]
+
+    await app.run()
+    await app.shutdown()
+
+    app.on_fire_action_handler.rearm.assert_awaited_once()
 
 
 @pytest.mark.asyncio

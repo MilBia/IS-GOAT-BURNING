@@ -30,8 +30,8 @@ class Application:
         action_queue (asyncio.Queue[str]): A queue for communicating events.
         video_event_queue (asyncio.Queue[str]): A queue carrying the paths of
             saved video chunks to event-driven actions.
-        on_fire_action_handler (OnceAction | None): The handler that executes
-            notification actions.
+        on_fire_action_handler (OnceAction | None): The handler that sends one
+            alert per fire event; re-armed on EXTINGUISHED events.
         video_event_action (FireEventAction | None): The persistent handler that
             forwards saved video chunk paths to its wrapped action.
         action_manager_task (asyncio.Task | None): The task managing the event
@@ -76,7 +76,7 @@ class Application:
                     },
                 )
             )
-        self.on_fire_action_handler = OnceAction(actions)
+        self.on_fire_action_handler = OnceAction(actions, cooldown_seconds=settings.alert_cooldown_seconds)
 
         if settings.discord.use_discord and settings.discord.send_video_chunks:
             self.video_event_action = FireEventAction(
@@ -104,6 +104,10 @@ class Application:
                         logger.info("Action manager received FIRE event. Triggering actions.")
                         if self.on_fire_action_handler:
                             await self.on_fire_action_handler()
+                    elif event == "EXTINGUISHED":
+                        logger.info("Action manager received EXTINGUISHED event. Re-arming the fire alert.")
+                        if self.on_fire_action_handler:
+                            await self.on_fire_action_handler.rearm()
                 finally:
                     self.action_queue.task_done()
             except asyncio.CancelledError:
@@ -115,6 +119,10 @@ class Application:
     async def _queue_fire_event(self) -> None:
         """A callback for the detector to queue a fire event."""
         await self.action_queue.put("FIRE")
+
+    async def _queue_extinguished_event(self) -> None:
+        """A callback for the detector to queue a fire-extinguished event."""
+        await self.action_queue.put("EXTINGUISHED")
 
     async def run(self) -> None:
         """Starts and manages the main application tasks with a retry loop."""
@@ -133,6 +141,7 @@ class Application:
                     on_fire_action=self._queue_fire_event,
                     checks_per_second=settings.checks_per_second,
                     event_queue=self.video_event_queue if self._video_chunks_enabled else None,
+                    on_extinguished_action=self._queue_extinguished_event,
                 )
                 async with asyncio.TaskGroup() as tg:
                     detector_task = tg.create_task(detector())
@@ -149,6 +158,10 @@ class Application:
             finally:
                 if detector and detector.stream:
                     await detector.stream.stop()
+                if detector is not None and detector.fire_is_currently_detected is True:
+                    # The next detector starts fire-free and would never signal the end of this fire.
+                    logger.info("Stream stopped during a fire. Re-arming the fire alert for the next connection.")
+                    await self._queue_extinguished_event()
 
                 if self.signal_handler.is_running():
                     logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
@@ -163,6 +176,8 @@ class Application:
         logger.info("Initiating graceful shutdown.")
         if self.video_event_action:
             await self.video_event_action.stop()
+        if self.on_fire_action_handler:
+            await self.on_fire_action_handler.stop()
 
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():

@@ -137,6 +137,24 @@ def test_hybrid_edge_validation_skipped_for_other_strategies(monkeypatch: Monkey
     assert settings.edge.model_path is None
 
 
+def test_alert_cooldown_defaults_to_600_seconds(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the alert cooldown default, isolated from any local ``.env``."""
+    monkeypatch.delenv("ALERT_COOLDOWN_SECONDS", raising=False)
+    assert Settings(_env_file=None, source="mock://source").alert_cooldown_seconds == 600.0
+
+
+def test_alert_cooldown_is_read_from_env(monkeypatch: MonkeyPatch) -> None:
+    """Verifies ``ALERT_COOLDOWN_SECONDS`` overrides the default."""
+    monkeypatch.setenv("ALERT_COOLDOWN_SECONDS", "120")
+    assert Settings(_env_file=None, source="mock://source").alert_cooldown_seconds == 120.0
+
+
+def test_alert_cooldown_rejects_negative_values() -> None:
+    """Verifies a negative alert cooldown fails validation."""
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, source="mock://source", alert_cooldown_seconds=-1)
+
+
 def test_edge_settings_defaults() -> None:
     """Verifies EdgeSettings applies the documented defaults."""
     edge = EdgeSettings()

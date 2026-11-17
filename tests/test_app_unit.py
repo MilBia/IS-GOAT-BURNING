@@ -39,6 +39,7 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False, se
     mock_settings.discord.message = "discord_message"
     mock_settings.discord.hooks = ["hook1"]
     mock_settings.discord.send_video_chunks = send_video_chunks
+    mock_settings.alert_cooldown_seconds = 600.0
     return mock_settings
 
 
@@ -94,7 +95,7 @@ def test_setup_actions_instantiates_no_actions_when_disabled(mock_once_action: M
     with patch("is_goat_burning.app.settings", mock_settings):
         Application()
 
-    mock_once_action.assert_called_once_with([])
+    mock_once_action.assert_called_once_with([], cooldown_seconds=600.0)
 
 
 @patch("is_goat_burning.app.OnceAction")

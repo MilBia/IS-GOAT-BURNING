@@ -44,9 +44,11 @@ class StreamFireDetector:
         on_fire_action: Callable[[], Any],
         video_output: bool,
         checks_per_second: float | None,
+        on_extinguished_action: Callable[[], Any] | None = None,
     ) -> None:
         """Initializes the StreamFireDetector. Private, use `create`."""
         self.on_fire_action = on_fire_action
+        self.on_extinguished_action = on_extinguished_action
         self.video_output = video_output
         self.checks_per_second = checks_per_second
         self.signal_handler = SignalHandler()
@@ -67,6 +69,7 @@ class StreamFireDetector:
         lower_hsv: np.ndarray | None = None,
         upper_hsv: np.ndarray | None = None,
         event_queue: asyncio.Queue[str] | None = None,
+        on_extinguished_action: Callable[[], Any] | None = None,
     ) -> StreamFireDetector:
         """Creates and asynchronously initializes a StreamFireDetector instance.
 
@@ -83,11 +86,13 @@ class StreamFireDetector:
             upper_hsv: An optional override for the upper HSV fire color bound.
             event_queue: An optional shared queue onto which the video saver
                 publishes the paths of saved chunks for event-driven actions.
+            on_extinguished_action: An optional awaitable callback executed when
+                the fire is no longer detected (after the extinguish debounce).
 
         Returns:
             A fully initialized StreamFireDetector instance.
         """
-        instance = cls(on_fire_action, video_output, checks_per_second)
+        instance = cls(on_fire_action, video_output, checks_per_second, on_extinguished_action)
 
         # Resolve the stream URL
         resolver = YouTubeStream(url=src)
@@ -179,6 +184,8 @@ class StreamFireDetector:
                 self._potential_fire_end_time = None  # Clear timer
                 logger.info("Fire is no longer detected (after debounce).")
                 self.signal_handler.fire_extinguished()
+                if self.on_extinguished_action is not None:
+                    await self.on_extinguished_action()
 
     async def __call__(self) -> None:
         """Starts the fire detection loop.
