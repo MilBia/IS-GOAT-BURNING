@@ -1,8 +1,9 @@
 """Unit tests for the action container classes.
 
-These tests verify the core idempotency logic of the `OnceAction` class,
-ensuring that wrapped actions are only executed once, and the persistent,
-queue-driven behavior of the `FireEventAction` class.
+These tests verify the per-fire-event logic of the `OnceAction` class (fire
+once per event, re-arm after the fire is extinguished, a minimum spacing
+between alerts, success-only bookkeeping), and the persistent, queue-driven
+behavior of the `FireEventAction` class.
 """
 
 import asyncio
@@ -40,6 +41,197 @@ async def test_once_action_with_multiple_actions() -> None:
     # Assert that both actions were called
     mock_action_1.assert_called_once()
     mock_action_2.assert_called_once()
+
+
+class FakeClock:
+    """A manually advanced monotonic clock for cooldown tests."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.mark.asyncio
+async def test_once_action_two_events_separated_by_extinguish_give_two_alerts() -> None:
+    """Two fire events separated by an extinguish (past the cooldown) send two alerts."""
+    mock_action = AsyncMock()
+    clock = FakeClock()
+    once_action = OnceAction(actions=[(mock_action, {})], cooldown_seconds=600.0, clock=clock)
+
+    await once_action()
+    await once_action()  # same event: no duplicate
+    assert mock_action.await_count == 1
+
+    clock.now += 30.0
+    await once_action.rearm()  # fire extinguished
+    clock.now += 600.0
+    await once_action()  # a new fire event after the cooldown
+
+    assert mock_action.await_count == 2
+    await once_action.stop()
+
+
+@pytest.mark.asyncio
+async def test_once_action_flicker_within_cooldown_gives_one_alert() -> None:
+    """Extinguish + re-detection inside the cooldown that settles inside it sends a single alert."""
+    mock_action = AsyncMock()
+    clock = FakeClock()
+    once_action = OnceAction(actions=[(mock_action, {})], cooldown_seconds=600.0, clock=clock)
+
+    await once_action()
+    for _ in range(3):  # the state flickers several times within the window
+        clock.now += 10.0
+        await once_action.rearm()
+        clock.now += 10.0
+        await once_action()
+    await once_action.rearm()  # ...and finally settles as extinguished
+    await asyncio.sleep(0)
+
+    assert mock_action.await_count == 1
+    await once_action.stop()
+
+
+@pytest.mark.asyncio
+async def test_once_action_defers_alert_suppressed_by_cooldown() -> None:
+    """A new fire inside the cooldown that keeps burning is alerted when the cooldown ends."""
+    mock_action = AsyncMock()
+    once_action = OnceAction(actions=[(mock_action, {})], cooldown_seconds=0.05)
+
+    await once_action()
+    await once_action.rearm()
+    await once_action()  # still inside the cooldown: deferred, not dropped
+    assert mock_action.await_count == 1
+
+    await _wait_for(lambda: mock_action.await_count == 2)
+    await asyncio.sleep(0.1)
+    assert mock_action.await_count == 2
+    await once_action.stop()
+
+
+@pytest.mark.asyncio
+async def test_once_action_deferred_alert_cancelled_by_extinguish() -> None:
+    """A deferred alert is dropped if the fire is extinguished before the cooldown ends."""
+    mock_action = AsyncMock()
+    once_action = OnceAction(actions=[(mock_action, {})], cooldown_seconds=0.05)
+
+    await once_action()
+    await once_action.rearm()
+    await once_action()  # deferred
+    await once_action.rearm()  # extinguished before the cooldown ends
+    await asyncio.sleep(0.1)
+
+    assert mock_action.await_count == 1
+    await once_action.stop()
+
+
+@pytest.mark.asyncio
+async def test_once_action_stays_armed_when_every_action_fails() -> None:
+    """When no channel succeeds the alert is not marked sent and no cooldown starts."""
+    failing = AsyncMock(side_effect=[RuntimeError("boom"), None])
+    once_action = OnceAction(actions=[(failing, {})], cooldown_seconds=600.0, clock=FakeClock())
+
+    await once_action()
+    assert once_action.was_performed is False
+
+    await once_action()  # retried on the next fire signal, not blocked by the cooldown
+    assert failing.await_count == 2
+    assert once_action.was_performed is True
+
+
+@pytest.mark.asyncio
+async def test_once_action_false_return_counts_as_failure() -> None:
+    """An action returning ``False`` reports failure; ``None``/``True`` report success."""
+    reporting_failure = AsyncMock(return_value=False)
+    once_action = OnceAction(actions=[(reporting_failure, {})], clock=FakeClock())
+
+    await once_action()
+    assert once_action.was_performed is False
+
+
+@pytest.mark.asyncio
+async def test_once_action_partial_success_marks_sent_and_runs_all_actions() -> None:
+    """One failing channel neither blocks the others nor causes duplicates to the successful ones."""
+    failing = AsyncMock(side_effect=RuntimeError("discord down"))
+    working = AsyncMock()
+    once_action = OnceAction(actions=[(failing, {}), (working, {})], clock=FakeClock())
+
+    await once_action()
+    await once_action()
+
+    assert working.await_count == 1
+    assert failing.await_count == 1
+    assert once_action.was_performed is True
+
+
+class BlockingAction:
+    """An alert action that blocks until released, recording starts and completions."""
+
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+        self.started = 0
+        self.completed = 0
+
+    async def __call__(self) -> None:
+        self.started += 1
+        await self.release.wait()
+        self.completed += 1
+
+
+async def _start_deferred_send(action: BlockingAction, **kwargs) -> OnceAction:
+    """Sends a first alert, re-arms, and lets a deferred second alert start sending (and block)."""
+    once_action = OnceAction(actions=[(action, {})], cooldown_seconds=0.05, **kwargs)
+    action.release.set()
+    await once_action()  # first alert, completes immediately
+    action.release.clear()
+    await once_action.rearm()
+    await once_action()  # deferred
+    await _wait_for(lambda: action.started == 2)  # the deferred send is now in flight
+    return once_action
+
+
+@pytest.mark.asyncio
+async def test_once_action_stop_waits_for_in_flight_deferred_send() -> None:
+    """Shutdown lets an alert that is already being sent finish (within the stop timeout)."""
+    action = BlockingAction()
+    once_action = await _start_deferred_send(action, stop_timeout_seconds=1.0)
+
+    asyncio.get_running_loop().call_later(0.05, action.release.set)
+    await once_action.stop()
+
+    assert action.completed == 2
+    assert once_action.was_performed is True
+
+
+@pytest.mark.asyncio
+async def test_once_action_stop_cancels_hanging_send_after_timeout() -> None:
+    """A send that does not finish within the stop timeout is cancelled so shutdown is not blocked."""
+    action = BlockingAction()
+    once_action = await _start_deferred_send(action, stop_timeout_seconds=0.05)
+
+    await asyncio.wait_for(once_action.stop(), timeout=1.0)
+
+    assert action.completed == 1  # the hanging second send never completed
+    assert once_action.was_performed is False
+
+
+@pytest.mark.asyncio
+async def test_once_action_rearm_waits_for_in_flight_deferred_send() -> None:
+    """Re-arming during a deferred send neither cancels it nor is overwritten by it."""
+    action = BlockingAction()
+    once_action = await _start_deferred_send(action)
+
+    rearm = asyncio.create_task(once_action.rearm())
+    await asyncio.sleep(0.02)
+    assert not rearm.done()  # waits for the in-flight send instead of cancelling it
+
+    action.release.set()
+    await asyncio.wait_for(rearm, timeout=1.0)
+
+    assert action.completed == 2  # the deferred alert was delivered
+    assert once_action.was_performed is False  # and the container is armed for the next event
+    await once_action.stop()
 
 
 async def _wait_for(condition, timeout: float = 1.0) -> None:

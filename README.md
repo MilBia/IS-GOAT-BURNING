@@ -107,6 +107,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | **Debouncing** | | |
 | `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |
 | `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`| Seconds a fire must be continuously absent before the 'extinguished' state is registered. | `5.0` |
+| `ALERT_COOLDOWN_SECONDS` | One alert is sent per fire event; the alert re-arms once the fire is extinguished (or the stream drops mid-fire). This is the minimum spacing between two alerts: a fire re-detected inside the window is alerted when the window ends if it is still burning, otherwise not at all. `0` disables the spacing. | `600` |
 | | | |
 | **Email Settings** | | |
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |

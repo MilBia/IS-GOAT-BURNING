@@ -5,6 +5,7 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+import time
 from typing import Any
 
 from is_goat_burning.logger import get_logger
@@ -12,60 +13,194 @@ from is_goat_burning.logger import get_logger
 logger = get_logger("FireEventAction")
 
 
+def _action_name(action: Callable[..., Any]) -> str:
+    """Returns a log-safe name for an action (no bound arguments)."""
+    func = action.func if isinstance(action, partial) else action
+    return getattr(func, "__name__", type(func).__name__)
+
+
 @dataclass(init=False, repr=False, eq=False, order=False, kw_only=True, slots=True)
 class OnceAction:
-    """A container that ensures a set of actions are performed only once.
+    """A container that sends one alert per fire event, with a minimum spacing.
 
-    This class wraps one or more awaitable actions and guarantees that they are
-    executed only on the first `__call__`. Subsequent calls will have no effect.
-    It supports initializing actions from classes or partial functions.
+    The container starts *armed*. The first call while armed runs all wrapped
+    actions concurrently; once the alert has been sent it is *disarmed*, so
+    further calls for the same fire event are no-ops. `rearm` (called when the
+    fire is extinguished, or when the stream reconnects mid-fire) arms it again
+    for the next event.
+
+    Consecutive alerts are at least `cooldown_seconds` apart. A call that arrives
+    while armed but inside the cooldown is not dropped: it is deferred until the
+    cooldown ends and sent then, unless `rearm` (the fire went out) cancels it
+    first. A state flicker that settles inside the window thus yields one alert.
+
+    Success contract: each wrapped action reports failure by raising or by
+    returning ``False``; any other return value (``None``, ``True``) is success.
+    The alert counts as sent (container disarmed, cooldown started) when at least
+    one action succeeded; failed actions are logged. If every action failed, the
+    container stays armed and the next call retries. The detector only signals
+    on a no-fire -> fire transition, so during one ongoing fire that next call
+    comes only after a re-detection (extinguish, then fire) or a stream
+    reconnect, not on every frame.
 
     Attributes:
-        was_performed (bool): A flag indicating if the actions have been run.
+        was_performed (bool): True once the alert for the current fire event has
+            been sent (the container is disarmed); reset by `rearm`.
         actions (list[Callable[[], Awaitable[Any]]]): A list of the awaitable
             actions to be executed.
+        cooldown_seconds (float): The minimum number of seconds between alerts.
     """
 
     was_performed: bool
     actions: list[Callable[[], Awaitable[Any]]]
+    cooldown_seconds: float
+    _clock: Callable[[], float]
+    _last_alert_time: float | None
+    _deferred_task: asyncio.Task[None] | None
+    _deferred_sending: bool
+    _lock: asyncio.Lock
+    stop_timeout_seconds: float
 
-    def __init__(self, actions: list[tuple[type | Callable[..., Any], dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        actions: list[tuple[type | Callable[..., Any], dict[str, Any]]],
+        cooldown_seconds: float = 0.0,
+        clock: Callable[[], float] = time.monotonic,
+        stop_timeout_seconds: float = 5.0,
+    ) -> None:
         """Initializes the OnceAction container.
 
         Args:
             actions: A list of tuples, where each tuple contains an action
                 (either a class or a function) and a dictionary of keyword
                 arguments to initialize or call it with.
+            cooldown_seconds: The minimum number of seconds between two alerts.
+                ``0`` disables the spacing.
+            clock: A monotonic clock returning seconds (injectable for tests).
+            stop_timeout_seconds: How long `stop` waits for a deferred alert that
+                is already being sent before cancelling it.
         """
         self.actions = []
         self.was_performed = False
+        self.cooldown_seconds = cooldown_seconds
+        self._clock = clock
+        self._last_alert_time = None
+        self._deferred_task = None
+        self._deferred_sending = False
+        self._lock = asyncio.Lock()
+        self.stop_timeout_seconds = stop_timeout_seconds
         for action, kwargs in actions:
             if isinstance(action, type):
                 self.actions.append(action(**kwargs))
             else:
                 self.actions.append(partial(action, **kwargs))
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> None:
-        """Executes all contained actions if they have not yet been performed.
+    def _cooldown_remaining(self) -> float:
+        """Returns the number of seconds left in the cooldown (``0`` if none)."""
+        if self._last_alert_time is None:
+            return 0.0
+        return max(0.0, self._last_alert_time + self.cooldown_seconds - self._clock())
 
-        This method is idempotent. It will run the actions on the first call
-        and do nothing on all subsequent calls.
+    async def __call__(self, *args: Any, **kwargs: Any) -> None:
+        """Sends the alert for the current fire event if it has not been sent yet.
+
+        Inside the cooldown the alert is deferred until the cooldown ends.
 
         Args:
             *args: Ignored.
             **kwargs: Ignored.
         """
-        if self.was_performed:
+        async with self._lock:
+            if self.was_performed:
+                return
+            remaining = self._cooldown_remaining()
+            if remaining > 0:
+                if self._deferred_task is None or self._deferred_task.done():
+                    logger.info(f"Fire alert deferred: {remaining:.0f}s of the alert cooldown remain.")
+                    self._deferred_task = asyncio.create_task(self._send_after(remaining))
+                return
+            await self._perform()
+
+    async def _send_after(self, delay: float) -> None:
+        """Sends the deferred alert once the cooldown has elapsed.
+
+        Args:
+            delay: Seconds to wait before sending.
+        """
+        await asyncio.sleep(delay)
+        async with self._lock:
+            # From here on `rearm` must not cancel the send: it waits on the lock instead.
+            self._deferred_sending = True
+            try:
+                if not self.was_performed:
+                    await self._perform()
+            finally:
+                self._deferred_sending = False
+
+    async def _perform(self) -> None:
+        """Runs all actions and records the alert as sent if any succeeded."""
+        results = await asyncio.gather(*[action() for action in self.actions], return_exceptions=True)
+        failures = 0
+        for action, result in zip(self.actions, results, strict=True):
+            # Log names and exception types only: reprs/messages may carry webhook URLs or credentials.
+            if isinstance(result, BaseException):
+                failures += 1
+                logger.error(f"Alert action {_action_name(action)} failed with {type(result).__name__}.")
+            elif result is False:
+                failures += 1
+                logger.error(f"Alert action {_action_name(action)} reported failure.")
+        if self.actions and failures == len(self.actions):
+            logger.error(
+                "No alert action succeeded; the alert stays armed and is retried only after the fire is "
+                "re-detected (extinguish, then fire) or the stream reconnects."
+            )
             return
-        await asyncio.gather(*[action() for action in self.actions])
         self.was_performed = True
+        self._last_alert_time = self._clock()
+
+    async def rearm(self) -> None:
+        """Arms the container for the next fire event.
+
+        Cancels a pending deferred alert (the fire it was for is gone). An alert
+        that is already being sent is allowed to finish first.
+        """
+        if self._deferred_task is not None and not self._deferred_sending:
+            self._deferred_task.cancel()
+            self._deferred_task = None
+        async with self._lock:
+            if self.was_performed:
+                logger.info("Fire alert re-armed for the next fire event.")
+            self.was_performed = False
+
+    async def stop(self) -> None:
+        """Cancels a pending deferred alert and waits for it to finish.
+
+        A deferred alert that is still waiting for the cooldown is cancelled.
+        One that is already being sent gets up to `stop_timeout_seconds` to
+        finish; only if it is still running after that is it cancelled, so
+        shutdown is never blocked indefinitely by a hanging send.
+        """
+        task = self._deferred_task
+        self._deferred_task = None
+        if task is not None and not task.done():
+            if self._deferred_sending:
+                await asyncio.wait({task}, timeout=self.stop_timeout_seconds)
+                if task.done():
+                    return
+                logger.warning("Shutdown: the alert being sent did not finish in time and is cancelled.")
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise
 
 
 @dataclass(init=False, repr=False, eq=False, order=False, kw_only=True, slots=True)
 class FireEventAction:
     """A container that drives a persistent, event-driven action from a queue.
 
-    Unlike `OnceAction`, which fires its wrapped actions a single time, this
+    Unlike `OnceAction`, which fires its wrapped actions once per fire event, this
     container runs a long-lived background task that consumes items (e.g. video
     chunk file paths) from a shared `asyncio.Queue` and forwards each one to the
     wrapped action. It is intended for actions that must react to a stream of
