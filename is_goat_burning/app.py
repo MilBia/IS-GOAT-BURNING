@@ -14,6 +14,8 @@ from is_goat_burning.on_fire_actions import OnceAction
 from is_goat_burning.on_fire_actions import SendEmail
 from is_goat_burning.on_fire_actions import SendToDiscord
 from is_goat_burning.on_fire_actions import SendVideoToDiscord
+from is_goat_burning.service_notifier import ServiceNotifier
+from is_goat_burning.service_notifier import failure_reason
 
 logger = get_logger("Application")
 
@@ -37,6 +39,9 @@ class Application:
             forwards saved video chunk paths to its wrapped action.
         action_manager_task (asyncio.Task | None): The task managing the event
             queue and triggering actions.
+        service_notifier (ServiceNotifier): Sends service messages (startup, heartbeat,
+            stream outage, verifier health, shutdown) to `DISCORD__SERVICE_HOOKS`;
+            a no-op when no service webhooks are configured.
     """
 
     def __init__(self) -> None:
@@ -48,6 +53,19 @@ class Application:
         self.video_event_action: FireEventAction | None = None
         self.action_manager_task: asyncio.Task | None = None
         self._setup_actions()
+        self.service_notifier = ServiceNotifier(
+            settings.discord.service_hooks,
+            strategy=settings.detection_strategy,
+            source=settings.source,
+            heartbeat_interval=settings.discord.service_heartbeat_interval_seconds,
+            stream_down_threshold=settings.discord.service_stream_down_warning_seconds,
+            send_options={
+                "timeout": settings.discord.timeout_seconds,
+                "max_attempts": settings.discord.max_attempts,
+                "base_delay": settings.discord.retry_base_delay_seconds,
+                "max_delay": settings.discord.retry_max_delay_seconds,
+            },
+        )
 
     def _setup_actions(self) -> None:
         """Builds the list of notification actions based on settings."""
@@ -132,6 +150,7 @@ class Application:
         Args:
             unverified: True if the fire was reported while the verifier was unavailable.
         """
+        self.service_notifier.fire_event(unverified=unverified)
         await self.action_queue.put("FIRE_UNVERIFIED" if unverified else "FIRE")
 
     async def _queue_extinguished_event(self) -> None:
@@ -143,9 +162,11 @@ class Application:
         self.action_manager_task = asyncio.create_task(self._action_manager())
         if self.video_event_action:
             self.video_event_action.start()
+        self.service_notifier.start()
 
         while self.signal_handler.is_running():
             detector = None
+            failure = failure_reason(None)
             try:
                 logger.info(f"Attempting to start stream from source: {settings.source}")
                 detector = await StreamFireDetector.create(
@@ -157,6 +178,7 @@ class Application:
                     event_queue=self.video_event_queue if self._video_chunks_enabled else None,
                     on_extinguished_action=self._queue_extinguished_event,
                 )
+                self.service_notifier.stream_connected()
                 async with asyncio.TaskGroup() as tg:
                     detector_task = tg.create_task(detector())
                     self.signal_handler.set_main_task(detector_task)
@@ -168,6 +190,7 @@ class Application:
                 # running state to False, so we only need to log other errors.
                 _, others = exc_group.split(asyncio.CancelledError)
                 if others:
+                    failure = failure_reason(others)
                     logger.error("Detector or connection attempt failed", exc_info=others)
             finally:
                 if detector and detector.stream:
@@ -178,6 +201,7 @@ class Application:
                     await self._queue_extinguished_event()
 
                 if self.signal_handler.is_running():
+                    self.service_notifier.stream_failed(failure)
                     logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
                     try:
                         await asyncio.sleep(settings.reconnect_delay_seconds)
@@ -203,4 +227,6 @@ class Application:
 
         # Last: the detector has stopped by now, so no further escalations can be queued.
         await close_escalation_log()
+        # Last and bounded (stop_timeout): a slow service webhook must not eat the container's stop grace period.
+        await self.service_notifier.stop()
         logger.info("Application has shut down.")

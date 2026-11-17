@@ -128,6 +128,9 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `DISCORD__HOOKS` | JSON list of Discord webhook URLs, e.g. `["https://..."]`. | `""` |
 | `DISCORD__SEND_VIDEO_CHUNKS` | Set to `true` to upload saved video chunks to Discord as they are archived around a fire event. Requires `VIDEO__SAVE_VIDEO_CHUNKS=true`. | `false` |
 | `DISCORD__ATTACH_FRAME` | Attach a JPEG of the frame that triggered the alarm to the first Discord alert (downscaled to at most 1280 px wide). The text is sent even if the image cannot be produced. | `true` |
+| `DISCORD__SERVICE_HOOKS` | JSON list of webhook URLs of a **separate** service channel ("sign of life"): startup, heartbeat, stream outage longer than the threshold (once) and its recovery, verifier unavailable / recovered, shutdown. Lets you tell a quiet alert channel from a dead monitor. Independent of `DISCORD__USE_DISCORD`; must not repeat a URL from `DISCORD__HOOKS`. Empty disables it. | `[]` |
+| `DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS` | Interval of the service heartbeat (uptime, stream state, fire events since the last heartbeat, verifier availability). | `86400` |
+| `DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS` | A stream outage longer than this sends one warning to the service channel, and its recovery is reported. Shorter outages are silent. | `600` |
 | | | |
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |

@@ -291,3 +291,53 @@ def test_discord_attach_frame_defaults_to_true(monkeypatch: MonkeyPatch) -> None
     monkeypatch.setenv("SOURCE", "x")
     monkeypatch.setenv("DISCORD__ATTACH_FRAME", "false")
     assert Settings().discord.attach_frame is False
+
+
+def test_service_notification_defaults(monkeypatch: MonkeyPatch) -> None:
+    """Service notifications are off by default (no hooks), with a daily heartbeat and a 10 min stream-down warning."""
+    for name in (
+        "DISCORD__SERVICE_HOOKS",
+        "DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS",
+        "DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    discord = Settings(_env_file=None, source="mock://source").discord
+    assert discord.service_hooks == []
+    assert discord.service_heartbeat_interval_seconds == 86400.0
+    assert discord.service_stream_down_warning_seconds == 600.0
+
+
+def test_service_settings_are_read_from_env(monkeypatch: MonkeyPatch) -> None:
+    """Service settings use the DISCORD__ prefix and work without DISCORD__USE_DISCORD."""
+    monkeypatch.setenv("DISCORD__USE_DISCORD", "false")
+    monkeypatch.setenv("DISCORD__SERVICE_HOOKS", '["https://service.example/hook"]')
+    monkeypatch.setenv("DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS", "120")
+    discord = Settings(_env_file=None, source="mock://source").discord
+    assert discord.service_hooks == ["https://service.example/hook"]
+    assert discord.service_heartbeat_interval_seconds == 3600.0
+    assert discord.service_stream_down_warning_seconds == 120.0
+
+
+@pytest.mark.parametrize("field", ["service_heartbeat_interval_seconds", "service_stream_down_warning_seconds"])
+def test_service_intervals_must_be_positive(field: str) -> None:
+    """Zero or negative service intervals are rejected."""
+    with pytest.raises(ValidationError):
+        DiscordSettings(**{field: 0})
+
+
+def test_service_hooks_must_not_repeat_alert_hooks() -> None:
+    """Service messages must never land in the fire-alert channel; the error does not echo the URL."""
+    with pytest.raises(ValidationError) as exc_info:
+        DiscordSettings(use_discord=True, hooks=["https://a.example/secret"], service_hooks=["https://a.example/secret"])
+    assert "DISCORD__SERVICE_HOOKS" in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+
+
+def test_service_hooks_overlap_error_hides_url_at_startup() -> None:
+    """Through the real Settings path the overlap error does not echo the webhook URL either."""
+    hooks = ["https://a.example/secret"]
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(_env_file=None, source="mock://source", discord={"use_discord": True, "hooks": hooks, "service_hooks": hooks})
+    assert "DISCORD__SERVICE_HOOKS" in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
