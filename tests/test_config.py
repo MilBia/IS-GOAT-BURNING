@@ -280,3 +280,14 @@ def test_verifier_failure_settings_reject_invalid_values(overrides: dict) -> Non
     """Verifies an unknown policy, a zero error threshold and a non-positive timeout fail validation."""
     with pytest.raises(ValidationError):
         Settings(_env_file=None, source="mock://source", **overrides)
+
+
+def test_discord_attach_frame_defaults_to_true(monkeypatch: MonkeyPatch) -> None:
+    """Verifies ``DISCORD__ATTACH_FRAME`` defaults to true and can be disabled via the environment."""
+    for key in list(os.environ):
+        if key.startswith("DISCORD__"):
+            monkeypatch.delenv(key)
+    assert DiscordSettings().attach_frame is True
+    monkeypatch.setenv("SOURCE", "x")
+    monkeypatch.setenv("DISCORD__ATTACH_FRAME", "false")
+    assert Settings().discord.attach_frame is False

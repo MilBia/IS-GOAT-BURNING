@@ -77,7 +77,7 @@ class SendEmail:
         except Exception as e:
             logger.error(e)
 
-    async def __call__(self, *, unverified: bool = False) -> None:
+    async def __call__(self, *, unverified: bool = False, frame: object = None) -> None:
         """Asynchronously sends the email notification.
 
         This method schedules the blocking `_send_email_blocking` method to run
@@ -85,6 +85,7 @@ class SendEmail:
 
         Args:
             unverified: If True, the alert is marked as sent while the fire verifier was unavailable.
+            frame: The triggering frame; accepted for the common action interface but not attached to the email.
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._send_email_blocking, unverified)

@@ -1,12 +1,16 @@
 """Unit tests for the SendToDiscord action class."""
 
 from collections.abc import Iterator
+import json
 import logging
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aiohttp import ClientTimeout
+from aiohttp import FormData
+import cv2
+import numpy as np
 import pytest
 
 from is_goat_burning.on_fire_actions.send_to_discord import SendToDiscord
@@ -235,3 +239,82 @@ async def test_unverified_alert_carries_a_note() -> None:
 
         await sender()
         assert mock_post.call_args.kwargs["json"]["content"] == "x" * 2000
+
+
+# --- frame attachment (#177) ---
+
+
+def _frame(width: int = 64, height: int = 48) -> np.ndarray:
+    return np.random.default_rng(0).integers(0, 255, (height, width, 3), dtype=np.uint8)
+
+
+def _form_fields(form: FormData) -> dict[str, tuple[dict[str, str], object]]:
+    return {f[0]["name"]: (f[0], f[2]) for f in form._fields}
+
+
+@pytest.mark.asyncio
+async def test_frame_is_sent_as_multipart_jpeg() -> None:
+    """With a frame the request is multipart: payload_json plus files[0] holding a JPEG."""
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        assert await _sender()(frame=_frame()) is True
+    kwargs = mock_post.call_args.kwargs
+    assert "json" not in kwargs
+    fields = _form_fields(kwargs["data"])
+    assert json.loads(fields["payload_json"][1]) == {"content": "m"}
+    meta, content = fields["files[0]"]
+    assert meta["filename"] == "frame.jpg"
+    assert bytes(content)[:2] == b"\xff\xd8"
+    assert "application/json" not in kwargs["headers"].values()
+
+
+@pytest.mark.asyncio
+async def test_no_frame_sends_plain_json() -> None:
+    """Without a frame the text alert is unchanged."""
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        assert await _sender()() is True
+    assert mock_post.call_args.kwargs["json"] == {"content": "m"}
+
+
+@pytest.mark.asyncio
+async def test_attach_frame_disabled_sends_text_only() -> None:
+    """``attach_frame=False`` ignores the frame."""
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        assert await _sender(attach_frame=False)(frame=_frame()) is True
+    assert "json" in mock_post.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_encoding_failure_still_sends_the_text() -> None:
+    """A frame that cannot be encoded never blocks the alert."""
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        assert await _sender()(frame=np.zeros((0, 0, 3), dtype=np.uint8)) is True
+    assert mock_post.call_args.kwargs["json"] == {"content": "m"}
+
+
+@pytest.mark.asyncio
+async def test_large_frame_is_downscaled() -> None:
+    """Frames wider than 1280 px are downscaled before encoding."""
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        await _sender()(frame=_frame(2560, 1440))
+    content = _form_fields(mock_post.call_args.kwargs["data"])["files[0]"][1]
+    decoded = cv2.imdecode(np.frombuffer(bytes(content), np.uint8), cv2.IMREAD_COLOR)
+    assert decoded.shape[1] == 1280
+
+
+@pytest.mark.asyncio
+async def test_retry_rebuilds_the_form_with_the_image() -> None:
+    """Every attempt gets a fresh FormData that still carries the image."""
+    with (
+        patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+        patch("is_goat_burning.on_fire_actions.send_to_discord.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        mock_post.side_effect = [_resp(500), _resp(204)]
+        assert await _sender()(frame=_frame()) is True
+    forms = [c.kwargs["data"] for c in mock_post.call_args_list]
+    assert forms[0] is not forms[1]
+    assert all("files[0]" in _form_fields(f) for f in forms)

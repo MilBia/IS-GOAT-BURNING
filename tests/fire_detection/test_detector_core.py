@@ -220,3 +220,44 @@ async def test_frame_generator_handles_empty_stream(detector: StreamFireDetector
 
     # Assert
     assert len(yielded_frames) == 0
+
+
+# --- frame in the alert (#177) ---
+
+
+@pytest.mark.asyncio
+async def test_fire_signal_passes_a_copy_of_the_triggering_frame(detector: StreamFireDetector) -> None:
+    """The alert gets a copy of the frame that completed the debounce, not the live buffer."""
+    frame = np.full((4, 4, 3), 7, dtype=np.uint8)
+    with patch("time.monotonic", side_effect=[100, 101.1]):
+        await detector._handle_fire_detection(True, frame=frame)
+        await detector._handle_fire_detection(True, frame=frame)
+    sent = detector.on_fire_action.await_args.kwargs["frame"]
+    assert np.array_equal(sent, frame)
+    assert sent is not frame
+    frame[:] = 0
+    assert sent[0, 0, 0] == 7
+
+
+@pytest.mark.asyncio
+async def test_fire_signal_converts_umat_frames(detector: StreamFireDetector) -> None:
+    """GPU/UMat frames are downloaded to numpy before being queued."""
+    import cv2  # noqa: PLC0415
+
+    host = np.full((4, 4, 3), 5, dtype=np.uint8)
+    umat = cv2.UMat(host)
+    with patch("time.monotonic", side_effect=[100, 101.1]):
+        await detector._handle_fire_detection(True, frame=umat)
+        await detector._handle_fire_detection(True, frame=umat)
+    sent = detector.on_fire_action.await_args.kwargs["frame"]
+    assert isinstance(sent, np.ndarray)
+    assert np.array_equal(sent, host)
+
+
+@pytest.mark.asyncio
+async def test_fire_signal_without_frame_passes_no_frame_kwarg(detector: StreamFireDetector) -> None:
+    """No frame (or an unconvertible one) leaves the call as before."""
+    with patch("time.monotonic", side_effect=[100, 101.1]):
+        await detector._handle_fire_detection(True)
+        await detector._handle_fire_detection(True, frame=object())
+    detector.on_fire_action.assert_awaited_once_with()

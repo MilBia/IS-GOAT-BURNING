@@ -144,3 +144,14 @@ def test_setup_actions_skips_video_event_action_when_chunks_disabled(mock_once_a
 
     mock_fire_event_action.assert_not_called()
     assert app.video_event_action is None
+
+
+@patch("is_goat_burning.app.OnceAction")
+def test_setup_actions_passes_attach_frame_to_discord(mock_once_action: MagicMock) -> None:
+    """Verifies the Discord action receives ``DISCORD__ATTACH_FRAME`` (#177)."""
+    mock_settings = create_mock_settings(use_discord=True)
+    mock_settings.discord.attach_frame = False
+    with patch("is_goat_burning.app.settings", mock_settings):
+        Application()
+    _, kwargs = mock_once_action.call_args[0][0][0]
+    assert kwargs["attach_frame"] is False

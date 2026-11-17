@@ -345,3 +345,46 @@ async def test_deferred_alert_keeps_the_unverified_flag() -> None:
     await asyncio.sleep(0.1)
 
     assert action.await_args_list[-1].kwargs == {"unverified": True}
+
+
+# --- frame of the triggering event (#177) ---
+
+
+@pytest.mark.asyncio
+async def test_frame_is_forwarded_to_actions_and_dropped_after_send() -> None:
+    """The frame reaches every action as ``frame=``; it is released once the alert was sent."""
+    action = AsyncMock()
+    once_action = OnceAction(actions=[(action, {})])
+
+    await once_action(frame="F1")
+    assert action.await_args_list[-1].kwargs == {"frame": "F1"}
+    assert once_action._frame is None
+
+    await once_action.rearm()
+    await once_action()
+    assert action.await_args_list[-1].kwargs == {}
+
+
+@pytest.mark.asyncio
+async def test_deferred_alert_carries_the_latest_frame() -> None:
+    """A deferred alert is sent with the frame of the latest event; only one frame is held."""
+    action = AsyncMock()
+    clock = FakeClock()
+    once_action = OnceAction(actions=[(action, {})], cooldown_seconds=0.05, clock=clock)
+    await once_action()
+    await once_action.rearm()
+
+    await once_action(frame="old")
+    await once_action(frame="new")
+    await asyncio.sleep(0.1)
+
+    assert action.await_args_list[-1].kwargs == {"frame": "new"}
+
+
+@pytest.mark.asyncio
+async def test_frame_and_unverified_are_forwarded_together() -> None:
+    """Both keywords are passed when both apply."""
+    action = AsyncMock()
+    once_action = OnceAction(actions=[(action, {})])
+    await once_action(unverified=True, frame="F")
+    action.assert_awaited_once_with(unverified=True, frame="F")

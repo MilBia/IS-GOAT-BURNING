@@ -127,6 +127,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `DISCORD__USE_DISCORD` | Set to `true` to enable Discord notifications. | `false` |
 | `DISCORD__HOOKS` | JSON list of Discord webhook URLs, e.g. `["https://..."]`. | `""` |
 | `DISCORD__SEND_VIDEO_CHUNKS` | Set to `true` to upload saved video chunks to Discord as they are archived around a fire event. Requires `VIDEO__SAVE_VIDEO_CHUNKS=true`. | `false` |
+| `DISCORD__ATTACH_FRAME` | Attach a JPEG of the frame that triggered the alarm to the first Discord alert (downscaled to at most 1280 px wide). The text is sent even if the image cannot be produced. | `true` |
 | | | |
 | **Video Archiving** | | |
 | `VIDEO__SAVE_VIDEO_CHUNKS` | Set to `true` to enable saving video to disk. | `false` |
