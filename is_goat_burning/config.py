@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import AfterValidator
 from pydantic import BaseModel
+from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import SecretStr
 from pydantic import field_validator
@@ -102,7 +103,16 @@ class DiscordSettings(BaseModel):
         retry_base_delay_seconds: Delay before the first retry (doubles each retry).
         retry_max_delay_seconds: Cap for any wait between attempts, including
             server-requested `Retry-After` delays.
+        service_hooks: Webhook URLs of a separate service channel (startup, heartbeat, stream outage,
+            verifier health, shutdown). Empty disables service notifications. Independent of `use_discord`
+            and must not repeat a URL from `hooks`, so service messages never mix with fire alerts.
+        service_heartbeat_interval_seconds: Interval between heartbeat messages on the service channel.
+        service_stream_down_warning_seconds: Stream outage length after which a warning is sent (once per
+            outage); the recovery after such an outage is reported too.
     """
+
+    # Webhook URLs are secrets: never echo the raw input in validation errors.
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     use_discord: bool = Field(default=False)
     hooks: list[str] = Field(default_factory=list)
@@ -113,12 +123,18 @@ class DiscordSettings(BaseModel):
     max_attempts: int = Field(default=5, ge=1)
     retry_base_delay_seconds: float = Field(default=1.0, ge=0)
     retry_max_delay_seconds: float = Field(default=30.0, ge=0)
+    service_hooks: list[str] = Field(default_factory=list)
+    service_heartbeat_interval_seconds: float = Field(default=86400.0, gt=0)
+    service_stream_down_warning_seconds: float = Field(default=600.0, gt=0)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> DiscordSettings:
-        """Validates that webhook hooks are provided if Discord is enabled."""
+        """Validates that webhook hooks are provided if Discord is enabled and that the two channels differ."""
         if self.use_discord and not self.hooks:
             raise ValueError("DISCORD__HOOKS must be set when DISCORD__USE_DISCORD is true")
+        if set(self.hooks) & set(self.service_hooks):
+            # Never echo the URL: it is a secret.
+            raise ValueError("DISCORD__SERVICE_HOOKS must not contain a webhook from DISCORD__HOOKS (keep alerts separate)")
         return self
 
 
@@ -338,7 +354,12 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=(".env.tests", ".env"), env_file_encoding="utf-8", extra="ignore", env_nested_delimiter="__"
+        env_file=(".env.tests", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        env_nested_delimiter="__",
+        # Inputs include secrets (webhook URLs, API keys, passwords): never echo them in startup errors.
+        hide_input_in_errors=True,
     )
 
     source: str = Field(validation_alias="SOURCE")

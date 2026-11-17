@@ -6,7 +6,10 @@ settings, without involving the full application lifecycle.
 """
 
 from unittest.mock import MagicMock
+from unittest.mock import call
 from unittest.mock import patch
+
+import pytest
 
 from is_goat_burning.app import Application
 from is_goat_burning.on_fire_actions import SendEmail
@@ -39,6 +42,9 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False, se
     mock_settings.discord.message = "discord_message"
     mock_settings.discord.hooks = ["hook1"]
     mock_settings.discord.send_video_chunks = send_video_chunks
+    mock_settings.discord.service_hooks = []
+    mock_settings.source = "mock://source"
+    mock_settings.detection_strategy = "classic"
     mock_settings.alert_cooldown_seconds = 600.0
     return mock_settings
 
@@ -155,3 +161,38 @@ def test_setup_actions_passes_attach_frame_to_discord(mock_once_action: MagicMoc
         Application()
     _, kwargs = mock_once_action.call_args[0][0][0]
     assert kwargs["attach_frame"] is False
+
+
+@patch("is_goat_burning.app.OnceAction")
+def test_service_notifier_is_built_from_service_settings(mock_once_action: MagicMock) -> None:  # noqa: ARG001
+    """The service notifier gets the separate service webhooks, never the alert webhooks."""
+    mock_settings = create_mock_settings(use_discord=True)
+    mock_settings.discord.service_hooks = ["service-hook"]
+    mock_settings.discord.service_heartbeat_interval_seconds = 3600.0
+    mock_settings.discord.service_stream_down_warning_seconds = 120.0
+    mock_settings.detection_strategy = "classic"
+    mock_settings.source = "mock://source"
+    with (
+        patch("is_goat_burning.app.ServiceNotifier") as mock_notifier,
+        patch("is_goat_burning.app.settings", mock_settings),
+    ):
+        app = Application()
+
+    assert app.service_notifier is mock_notifier.return_value
+    args, kwargs = mock_notifier.call_args
+    assert args[0] == ["service-hook"]
+    assert kwargs["heartbeat_interval"] == 3600.0
+    assert kwargs["stream_down_threshold"] == 120.0
+    assert kwargs["strategy"] == "classic"
+
+
+@pytest.mark.asyncio
+@patch("is_goat_burning.app.OnceAction")
+async def test_fire_events_are_counted_by_the_service_notifier(mock_once_action: MagicMock) -> None:  # noqa: ARG001
+    """Each queued fire event is reported to the service notifier (for the heartbeat)."""
+    with patch("is_goat_burning.app.settings", create_mock_settings()):
+        app = Application()
+    app.service_notifier = MagicMock()
+    await app._queue_fire_event()
+    await app._queue_fire_event(unverified=True)
+    assert app.service_notifier.fire_event.call_args_list == [call(unverified=False), call(unverified=True)]

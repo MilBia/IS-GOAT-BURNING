@@ -8,6 +8,7 @@ using mocks for external dependencies like the fire detector itself.
 import asyncio
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import call
 from unittest.mock import patch
 
 import pytest
@@ -252,3 +253,44 @@ async def test_unverified_fire_event_reaches_the_alert_as_unverified(test_settin
     await asyncio.gather(manager, return_exceptions=True)
 
     alert.assert_awaited_once_with(unverified=True)
+
+
+@pytest.mark.asyncio
+@patch("is_goat_burning.app.asyncio.sleep", new_callable=AsyncMock)
+@patch("is_goat_burning.app.StreamFireDetector.create")
+async def test_run_loop_reports_stream_state_to_service_notifier(
+    mock_detector_factory: AsyncMock,
+    mock_sleep: AsyncMock,  # noqa: ARG001
+    test_settings: Settings,  # noqa: ARG001
+) -> None:
+    """A failed connection is reported as `stream_failed(<exception type>)`, a successful one as `stream_connected()`,
+    and a stream that ends without an error as `stream_failed("stream ended")`; the notifier is started and stopped.
+    """
+    app = Application()
+    app.service_notifier = MagicMock()
+    app.service_notifier.stop = AsyncMock()
+    app.signal_handler = MagicMock()
+    app.signal_handler.is_running.return_value = True
+    runs = 0
+
+    async def detector_run() -> None:
+        nonlocal runs
+        runs += 1
+        if runs == 2:
+            app.signal_handler.is_running.return_value = False
+
+    detector = AsyncMock(side_effect=detector_run)
+    mock_detector_factory.side_effect = [TimeoutError("resolve failed"), detector, detector]
+
+    await app.run()
+    await app.shutdown()
+
+    notifier = app.service_notifier
+    notifier.start.assert_called_once()
+    assert [c for c in notifier.method_calls if c[0] in {"stream_connected", "stream_failed"}] == [
+        call.stream_failed("TimeoutError"),
+        call.stream_connected(),
+        call.stream_failed("stream ended"),
+        call.stream_connected(),
+    ]
+    notifier.stop.assert_awaited_once()
