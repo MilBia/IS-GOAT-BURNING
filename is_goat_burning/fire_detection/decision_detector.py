@@ -52,6 +52,8 @@ class DecisionFireDetector:
         self.timeout_seconds = settings.decision.timeout_seconds
         self._question = {"type": "noul", "instructions": settings.decision.instructions}
         self._consecutive_errors = 0
+        #: ``P(fire)`` of the last successful ``verify()`` (None before it and after a failed call).
+        self.last_probability: float | None = None
 
     @staticmethod
     def _preprocess_frame(frame: np.ndarray) -> list[dict[str, str]]:
@@ -93,6 +95,7 @@ class DecisionFireDetector:
         Raises:
             VerifierError: If no verdict could be obtained (API error, timeout, malformed answer).
         """
+        self.last_probability = None
         try:
             image_input = await asyncio.to_thread(self._preprocess_frame, frame)
             response = await asyncio.wait_for(
@@ -121,6 +124,7 @@ class DecisionFireDetector:
             logger.info("Decisions API recovered after %d consecutive errors.", self._consecutive_errors)
             self._consecutive_errors = 0
 
+        self.last_probability = probability
         is_fire = probability >= self.threshold
         logger.debug("Decision result: P(fire)=%.3f threshold=%.2f is_fire=%s", probability, self.threshold, is_fire)
         return is_fire

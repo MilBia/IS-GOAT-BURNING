@@ -6,6 +6,7 @@ from typing import Any
 
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
+from is_goat_burning.fire_detection.escalation_log import close_escalation_log
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
 from is_goat_burning.on_fire_actions import FireEventAction
@@ -190,6 +191,8 @@ class Application:
             await self.video_event_action.stop()
         if self.on_fire_action_handler:
             await self.on_fire_action_handler.stop()
+
+        await close_escalation_log()
 
         tasks = []
         if self.action_manager_task and not self.action_manager_task.done():
