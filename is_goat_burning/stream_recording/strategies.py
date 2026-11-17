@@ -16,6 +16,7 @@ from datetime import datetime
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
@@ -320,6 +321,13 @@ class SegmentsBufferStrategy(BufferStrategy):
     analyses), so archiving costs almost no CPU and a small, bounded amount of RAM. On a fire event the newest
     segments are concatenated with ``-c copy`` into the pre-fire clip, and the segments written afterwards are
     collected into post-fire chunks until the fire is out (when ``record_during_fire``) plus the configured tail.
+
+    The ring survives a reconnect (a new strategy after the stream URL expired) and a quick process restart: the
+    directory is not wiped, only segments older than the pre-fire window (or outside the current ring's slots) are
+    deleted, and each ffmpeg run continues the slot numbering after the newest segment, so it overwrites the oldest
+    slots first. The pre-fire clip can therefore span a reconnect; the reconnect time is a gap in it (the joined clip
+    simply jumps ahead). Segments of an earlier run are used only when they match the current run's codec and
+    resolution (ffprobe); otherwise, or when joining them fails, the clip falls back to the current run's segments.
     """
 
     records_post_fire: ClassVar[bool] = True
@@ -330,6 +338,8 @@ class SegmentsBufferStrategy(BufferStrategy):
     COLLECT_INTERVAL_SECONDS: ClassVar[float] = 5.0
     STABLE_RUN_SECONDS: ClassVar[float] = 30.0
     MIN_FREE_BYTES: ClassVar[int] = 128 * 1024 * 1024
+    SEGMENT_NAME: ClassVar[re.Pattern[str]] = re.compile(r"seg(\d{3,})\.ts")
+    PROBE_TIMEOUT_SECONDS: ClassVar[float] = 10.0
 
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the segment ring parameters.
@@ -344,6 +354,8 @@ class SegmentsBufferStrategy(BufferStrategy):
         self.ring_size = math.ceil(self.buffer_seconds / self.segment_seconds) + self.RING_EXTRA_SEGMENTS
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._supervisor: asyncio.Task[None] | None = None
+        #: Wall-clock start of the current ffmpeg run; older segments come from an earlier run (or connection).
+        self._run_started: float | None = None
         logger.info(f"Segments ring: {self.ring_size} slots of >= {self.segment_seconds}s in {self.ring_dir}.")
 
     def add_frame(self, frame: np.ndarray) -> None:
@@ -352,8 +364,12 @@ class SegmentsBufferStrategy(BufferStrategy):
     def reset(self) -> None:
         """Nothing to reset: the ring keeps rolling across fire events."""
 
-    def ffmpeg_command(self) -> list[str]:
-        """Builds the ffmpeg command that stream-copies the source into the segment ring."""
+    def ffmpeg_command(self, start_number: int = 0) -> list[str]:
+        """Builds the ffmpeg command that stream-copies the source into the segment ring.
+
+        Args:
+            start_number: The first ring slot to write (see `_next_segment_number`).
+        """
         assert self.context.source_url is not None
         return [
             "ffmpeg",
@@ -380,6 +396,8 @@ class SegmentsBufferStrategy(BufferStrategy):
             str(self.segment_seconds),
             "-segment_wrap",
             str(self.ring_size),
+            "-segment_start_number",
+            str(start_number),
             "-reset_timestamps",
             "1",
             "-segment_format",
@@ -387,10 +405,30 @@ class SegmentsBufferStrategy(BufferStrategy):
             str(self.ring_dir / "seg%03d.ts"),
         ]
 
+    def _slot(self, path: Path) -> int | None:
+        """Returns the ring slot of a segment file, or None when it is not a slot of the current ring."""
+        match = self.SEGMENT_NAME.fullmatch(path.name)
+        if match is None or int(match.group(1)) >= self.ring_size:
+            return None
+        return int(match.group(1))
+
     def _prepare_ring(self) -> None:
+        """Creates the ring directory and deletes the segments that can no longer be used.
+
+        Segments younger than the pre-fire window are kept, so a reconnect or a quick restart keeps the pre-fire
+        history. Older ones (and files outside the current ring's slots, e.g. after the ring size changed) are deleted;
+        the young ones live in ring slots that the next ffmpeg run overwrites oldest first, so the ring never holds more
+        than `ring_size` segments.
+        """
         self.ring_dir.mkdir(parents=True, exist_ok=True)
-        for old in self.ring_dir.glob(self.SEGMENT_GLOB):
-            old.unlink(missing_ok=True)
+        cutoff = time.time() - self.buffer_seconds - self.segment_seconds
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            try:
+                stale = self._slot(path) is None or path.stat().st_mtime < cutoff
+            except OSError:
+                continue
+            if stale:
+                path.unlink(missing_ok=True)
         free = shutil.disk_usage(self.ring_dir).free
         if free < self.MIN_FREE_BYTES:
             logger.warning(
@@ -401,11 +439,14 @@ class SegmentsBufferStrategy(BufferStrategy):
     async def _supervise_ffmpeg(self) -> None:
         """Keeps the ffmpeg archiver running, restarting it with a back-off when it exits."""
         delay = self.RESTART_DELAY_MIN
+        loop = asyncio.get_running_loop()
         while True:
             started = time.monotonic()
             try:
+                start_number = await loop.run_in_executor(None, self._next_segment_number)
+                self._run_started = time.time()
                 self._ffmpeg = await asyncio.create_subprocess_exec(
-                    *self.ffmpeg_command(),
+                    *self.ffmpeg_command(start_number),
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
@@ -421,6 +462,21 @@ class SegmentsBufferStrategy(BufferStrategy):
             logger.info(f"Restarting segment archiver in {delay:.0f}s.")
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.RESTART_DELAY_MAX)
+
+    def _next_segment_number(self) -> int:
+        """Returns the slot after the newest segment, so a new ffmpeg run overwrites the oldest slots first."""
+        newest: tuple[float, int] | None = None
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            slot = self._slot(path)
+            if slot is None:
+                continue
+            try:
+                candidate = (path.stat().st_mtime, slot)
+            except OSError:
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+        return 0 if newest is None else (newest[1] + 1) % self.ring_size
 
     def _drop_truncated_segment(self) -> None:
         """Deletes the newest segment after an ffmpeg exit: it was being written and may be cut off mid-frame."""
@@ -448,9 +504,15 @@ class SegmentsBufferStrategy(BufferStrategy):
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
+                # Killed mid-write: its last segment may be cut off, and it now outlives the run (the ring is kept).
+                await asyncio.get_running_loop().run_in_executor(None, self._drop_truncated_segment)
 
     def _complete_segments(self) -> list[tuple[float, Path]]:
-        """Returns (mtime, path) of finished segments, oldest first; the newest (still being written) is left out."""
+        """Returns (mtime, path) of finished segments, oldest first.
+
+        The newest segment is left out while it may still be written, i.e. unless it predates the current ffmpeg run
+        (the last segment of the previous connection is complete).
+        """
         found = []
         for path in self.ring_dir.glob(self.SEGMENT_GLOB):
             try:
@@ -458,7 +520,9 @@ class SegmentsBufferStrategy(BufferStrategy):
             except OSError:
                 continue  # overwritten by the ring between glob and stat
         found.sort()
-        return found[:-1]
+        if found and (self._run_started is None or found[-1][0] >= self._run_started):
+            return found[:-1]
+        return found
 
     def _select_since(self, after_mtime: float | None) -> list[tuple[float, Path]]:
         """Selects complete segments newer than `after_mtime` (or, without it, within the pre-fire window)."""
@@ -486,6 +550,41 @@ class SegmentsBufferStrategy(BufferStrategy):
             logger.error(f"Segment concat failed: {result.stderr.decode(errors='ignore')[-300:]}")
             return False
         return True
+
+    @classmethod
+    def _probe_blocking(cls, path: Path) -> str | None:
+        """Returns the video stream parameters that must match for a ``-c copy`` join, or None when unknown."""
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-of", "csv=p=0"]
+                + ["-show_entries", "stream=codec_name,profile,width,height,pix_fmt", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=cls.PROBE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError):  # fmt: skip
+            return None
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return lines[0] if result.returncode == 0 and lines else None
+
+    def _join_across_runs_blocking(self, earlier: list[Path], current: list[Path]) -> list[Path]:
+        """Returns the parts of the pre-fire clip: all of them when the earlier run's segments can be joined.
+
+        Args:
+            earlier: Copies of the segments written before the current ffmpeg run (previous connection), oldest first.
+            current: Copies of the segments of the current ffmpeg run, oldest first.
+        """
+        if not earlier or not current:
+            return earlier + current
+        reference = self._probe_blocking(current[0])
+        if reference is not None and all(self._probe_blocking(p) == reference for p in (earlier[0], earlier[-1])):
+            return earlier + current
+        logger.warning(
+            f"Segments from before the reconnect do not match the current stream ({reference or 'probe failed'}); "
+            "the pre-fire clip starts at the reconnect."
+        )
+        return current
 
     @staticmethod
     def _copy_blocking(paths: list[Path], dest_dir: Path) -> list[Path]:
@@ -515,6 +614,34 @@ class SegmentsBufferStrategy(BufferStrategy):
             return True
         return False
 
+    async def _write_pre_fire_clip(self, event_dir: str, staging: Path) -> float:
+        """Joins the segments of the pre-fire window into the pre-fire clip, across a reconnect when possible.
+
+        Args:
+            event_dir: The destination directory for the clip.
+            staging: The directory for the copies of the segments.
+
+        Returns:
+            The mtime of the newest segment used (post-fire collection resumes after it), or now when there was none.
+        """
+        loop = asyncio.get_running_loop()
+        selected = await loop.run_in_executor(None, self._select_since, None)
+        last_mtime = selected[-1][0] if selected else time.time()
+        run_started = self._run_started
+        earlier = [p for m, p in selected if run_started is not None and m < run_started]
+        current = [p for m, p in selected if run_started is None or m >= run_started]
+        # Copy first (the ring keeps overwriting the oldest slots), then join from the stable copies.
+        earlier_parts = await loop.run_in_executor(None, self._copy_blocking, earlier, staging)
+        current_parts = await loop.run_in_executor(None, self._copy_blocking, current, staging)
+        parts = await loop.run_in_executor(None, self._join_across_runs_blocking, earlier_parts, current_parts)
+        written = await self._write_clip(parts, event_dir, "pre-fire-buffer")
+        if not written and current_parts and len(parts) > len(current_parts):
+            logger.warning("Joining segments across the reconnect failed; retrying with the current run only.")
+            await self._write_clip(current_parts, event_dir, "pre-fire-buffer")
+        for part in earlier_parts + current_parts:
+            part.unlink(missing_ok=True)
+        return last_mtime
+
     async def handle_fire_event(self, event_dir: str) -> None:
         """Writes the pre-fire clip and then the post-fire chunks, entirely from ring segments.
 
@@ -524,13 +651,7 @@ class SegmentsBufferStrategy(BufferStrategy):
         loop = asyncio.get_running_loop()
         staging = Path(event_dir) / ".parts"
         try:
-            selected = await loop.run_in_executor(None, self._select_since, None)
-            last_mtime = selected[-1][0] if selected else time.time()
-            # Copy first (the ring keeps overwriting the oldest slots), then join from the stable copies.
-            parts = await loop.run_in_executor(None, self._copy_blocking, [p for _, p in selected], staging)
-            await self._write_clip(parts, event_dir, "pre-fire-buffer")
-            for part in parts:
-                part.unlink(missing_ok=True)
+            last_mtime = await self._write_pre_fire_clip(event_dir, staging)
             logger.info("Pre-fire clip written. Collecting post-fire segments.")
 
             chunk_seconds = self.context.chunk_length_seconds
