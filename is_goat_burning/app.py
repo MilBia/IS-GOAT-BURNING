@@ -15,6 +15,7 @@ from is_goat_burning.on_fire_actions import SendEmail
 from is_goat_burning.on_fire_actions import SendToDiscord
 from is_goat_burning.on_fire_actions import SendVideoToDiscord
 from is_goat_burning.service_notifier import ServiceNotifier
+from is_goat_burning.service_notifier import failure_reason
 
 logger = get_logger("Application")
 
@@ -165,7 +166,7 @@ class Application:
 
         while self.signal_handler.is_running():
             detector = None
-            failure = "stream ended"
+            failure = failure_reason(None)
             try:
                 logger.info(f"Attempting to start stream from source: {settings.source}")
                 detector = await StreamFireDetector.create(
@@ -189,10 +190,7 @@ class Application:
                 # running state to False, so we only need to log other errors.
                 _, others = exc_group.split(asyncio.CancelledError)
                 if others:
-                    first: BaseException = others
-                    while isinstance(first, BaseExceptionGroup):
-                        first = first.exceptions[0]
-                    failure = type(first).__name__
+                    failure = failure_reason(others)
                     logger.error("Detector or connection attempt failed", exc_info=others)
             finally:
                 if detector and detector.stream:

@@ -542,3 +542,63 @@ def test_input_size_mismatch_after_model_swap_falls_back_and_drops_cache(
     assert len(messages) == 1
     assert "expects a 16x16 input" in messages[0]
     assert len(detectors._edge_verifier_cache) == 0
+
+
+def _recording_listener() -> tuple[list, object]:
+    """Registers a listener collecting published verifier statuses; returns (statuses, listener)."""
+    from is_goat_burning.fire_detection.verifier_health import add_verifier_status_listener
+
+    statuses: list = []
+    listener = statuses.append
+    add_verifier_status_listener(listener)
+    return statuses, listener
+
+
+def test_edge_fallback_publishes_verifier_unavailable() -> None:
+    """A model load failure is published as an unavailable EdgeInferenceDetector, so the service channel knows."""
+    from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+
+    statuses, listener = _recording_listener()
+    try:
+        with patch(
+            "is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector",
+            MagicMock(side_effect=EdgeModelError("corrupt")),
+        ):
+            detector = _create_edge()
+            _create_edge()  # A repeated failure (reconnect) is not announced twice.
+    finally:
+        remove_verifier_status_listener(listener)
+
+    assert isinstance(detector, CPUFireDetector)
+    assert len(statuses) == 1
+    status = statuses[0]
+    assert status.available is False
+    assert status.verifier == "EdgeInferenceDetector"
+    assert "EdgeModelError" in status.reason
+    # The fallback always reports fires (unverified), whatever VERIFIER_FAILURE_POLICY says.
+    assert status.policy == "alert_unverified"
+
+
+def test_edge_build_after_fallback_publishes_recovery() -> None:
+    """A later successful build (e.g. after a reconnect with a fixed model) publishes the recovery once."""
+    from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+
+    statuses, listener = _recording_listener()
+    factory = _edge_factory(0.9)
+    healthy_build = _edge_factory(0.9).side_effect  # Built outside the patch (it imports the real class).
+    try:
+        with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", factory):
+            _create_edge()  # Healthy from the start: nothing to announce.
+            assert statuses == []
+            factory.side_effect = EdgeModelError("corrupt")
+            clear_edge_verifier_cache()
+            _create_edge()
+            factory.side_effect = healthy_build
+            detector = _create_edge()
+            _create_edge()
+    finally:
+        remove_verifier_status_listener(listener)
+
+    assert isinstance(detector, HybridFireDetector)
+    assert [s.available for s in statuses] == [False, True]
+    assert statuses[1].verifier == "EdgeInferenceDetector"

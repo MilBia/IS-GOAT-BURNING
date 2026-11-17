@@ -79,6 +79,23 @@ def describe_source(source: str) -> str:
     return f"{host} (video {video_id})" if video_id else host
 
 
+def failure_reason(exc: BaseException | None) -> str:
+    """Names the cause of a stream stop for :meth:`ServiceNotifier.stream_failed` (no message text, no secrets).
+
+    Args:
+        exc: The exception (or exception group, flattened to its first leaf) that stopped the stream, or None when
+            the stream ended without an error.
+
+    Returns:
+        The exception type name, or ``"stream ended"`` for None.
+    """
+    if exc is None:
+        return "stream ended"
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return type(exc).__name__
+
+
 class ServiceNotifier:
     """Sends service messages about the monitor's own health to dedicated webhooks.
 

@@ -45,6 +45,10 @@ if TYPE_CHECKING:
     from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
 
 _factory_logger = get_logger("create_fire_detector")
+# Name under which edge verifier availability is published (matches HybridFireDetector's type(verifier).__name__).
+EDGE_VERIFIER_NAME = "EdgeInferenceDetector"
+# True while the last hybrid_edge build fell back to the local detector (a model load failure was published).
+_edge_load_failed = False
 
 # Successfully built edge verifiers, kept across factory calls (i.e. stream reconnects) so the ONNX model is not
 # re-read, re-warmed-up and its CUDA session not recreated each time. Only successes are stored.
@@ -739,9 +743,12 @@ def clear_edge_verifier_cache() -> None:
     """Drops every cached ``EdgeInferenceDetector`` so the next ``hybrid_edge`` factory call rebuilds it.
 
     Intended for tests (to prevent state leaking between them) and for callers that need to force a model reload.
+    Also forgets an earlier model load failure (see ``create_fire_detector``).
     """
+    global _edge_load_failed  # noqa: PLW0603
     with _edge_verifier_cache_lock:
         _edge_verifier_cache.clear()
+        _edge_load_failed = False
 
 
 def _edge_cache_key(edge_settings: EdgeSettings) -> tuple:
@@ -854,6 +861,7 @@ def create_fire_detector(
         successes are cached, a failed build is retried (and re-logged) on the next call. The local detector is
         always created fresh (its motion baseline must not survive a reconnect).
     """
+    global _edge_load_failed  # noqa: PLW0603 - module-level load-failure state, like the verifier cache
     selected_strategy = strategy if strategy is not None else settings.detection_strategy
 
     # "hybrid" is the deprecated alias for "hybrid_cloud" (see Settings migration).
@@ -864,7 +872,7 @@ def create_fire_detector(
 
         edge_local_detector = _create_local_detector(margin, lower, upper, use_open_cl, use_cuda)
         try:
-            return HybridFireDetector(edge_local_detector, _get_edge_verifier(settings.edge))
+            edge_detector = HybridFireDetector(edge_local_detector, _get_edge_verifier(settings.edge))
         except Exception as exc:  # noqa: BLE001 - any load failure must degrade to the local detector, never abort startup
             _factory_logger.critical(
                 "hybrid_edge verification is unavailable (%s). Falling back to the local detector (classic rule): "
@@ -872,7 +880,26 @@ def create_fire_detector(
                 exc,
                 exc_info=not isinstance(exc, EdgeModelError),
             )
+            # The fallback reports every fire regardless of VERIFIER_FAILURE_POLICY, hence "alert_unverified".
+            _edge_load_failed = True
+            publish_verifier_status(
+                VerifierStatus(
+                    available=False,
+                    verifier=EDGE_VERIFIER_NAME,
+                    reason=f"model load failed: {type(exc).__name__}",
+                    policy="alert_unverified",
+                )
+            )
             return edge_local_detector
+        if _edge_load_failed:
+            # Only a load failure is cleared here; runtime unavailability (errors, call cap) recovers on a real verdict.
+            _edge_load_failed = False
+            publish_verifier_status(
+                VerifierStatus(
+                    available=True, verifier=EDGE_VERIFIER_NAME, reason="model loaded", policy=edge_detector.failure_policy
+                )
+            )
+        return edge_detector
 
     if selected_strategy in ("gemini_decision", "hybrid_decision"):
         from is_goat_burning.fire_detection.decision_detector import DecisionFireDetector

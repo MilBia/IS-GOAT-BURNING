@@ -5,15 +5,19 @@ from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 import pytest_asyncio
 
-from is_goat_burning.fire_detection import verifier_health
+from is_goat_burning.fire_detection.detectors import clear_edge_verifier_cache
+from is_goat_burning.fire_detection.detectors import create_fire_detector
+from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 from is_goat_burning.fire_detection.verifier_health import VerifierStatus
 from is_goat_burning.fire_detection.verifier_health import publish_verifier_status
 from is_goat_burning.fire_detection.verifier_health import reset_verifier_status
 from is_goat_burning.service_notifier import ServiceNotifier
 from is_goat_burning.service_notifier import describe_source
+from is_goat_burning.service_notifier import failure_reason
 from is_goat_burning.service_notifier import format_duration
 
 HOOKS = ["https://discord.example/api/webhooks/1/secret-token"]
@@ -235,7 +239,10 @@ async def test_stop_sends_a_shutdown_message_and_removes_listener(clock: FakeClo
     await instance.stop()
 
     assert "stopped" in sent(send)[-1].lower()
-    assert instance.on_verifier_status not in verifier_health._listeners
+    count = send.await_count
+    publish_verifier_status(VerifierStatus(available=False, verifier="V", reason="r", policy="alert_unverified"))
+    await asyncio.sleep(0)
+    assert send.await_count == count  # The listener is gone: nothing is queued or sent after stop().
 
 
 @pytest.mark.asyncio
@@ -283,7 +290,7 @@ async def test_disabled_without_hooks(clock: FakeClock, send: AsyncMock) -> None
     instance = ServiceNotifier([], strategy="classic", source="mock://source", send=send, clock=clock)
     assert instance.enabled is False
     instance.start()
-    assert instance.on_verifier_status not in verifier_health._listeners
+    publish_verifier_status(VerifierStatus(available=False, verifier="V", reason="r", policy="alert_unverified"))
     instance.stream_failed("TimeoutError")
     clock.advance(THRESHOLD * 10)
     instance.check_timers()
@@ -336,3 +343,38 @@ def test_describe_source_keeps_only_host_and_video_id(source: str, expected: str
 def test_format_duration(seconds: float, expected: str) -> None:
     """Durations are short and human readable."""
     assert format_duration(seconds) == expected
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_after_edge_fallback_reports_verifier_unavailable(
+    notifier: ServiceNotifier, clock: FakeClock, send: AsyncMock
+) -> None:
+    """When the edge model fails to load, the heartbeat must not claim a healthy verifier."""
+    clear_edge_verifier_cache()
+    notifier.stream_connected()
+    with patch(
+        "is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector",
+        side_effect=EdgeModelError("corrupt"),
+    ):
+        create_fire_detector(
+            100, np.zeros(3, np.uint8), np.full(3, 255, np.uint8), use_open_cl=False, use_cuda=False, strategy="hybrid_edge"
+        )
+    clear_edge_verifier_cache()
+    await notifier.drain()
+    clock.advance(HEARTBEAT)
+    notifier.check_timers()
+    await notifier.drain()
+
+    down, heartbeat = sent(send)
+    assert "EdgeInferenceDetector" in down
+    assert "unavailable" in down.lower()
+    assert "verifier: unavailable" in heartbeat.lower()
+    assert "EdgeModelError" in heartbeat
+
+
+def test_failure_reason_names_the_first_real_exception() -> None:
+    """The outage cause is the type name of the first non-cancellation exception, nested groups flattened."""
+    nested = ExceptionGroup("outer", [ExceptionGroup("inner", [TimeoutError("x")]), ValueError("y")])
+    assert failure_reason(nested) == "TimeoutError"
+    assert failure_reason(ConnectionError("z")) == "ConnectionError"
+    assert failure_reason(None) == "stream ended"
