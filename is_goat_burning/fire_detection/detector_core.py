@@ -69,8 +69,10 @@ class StreamFireDetector:
         video_output: bool,
         checks_per_second: float | None,
         on_extinguished_action: Callable[[], Any] | None = None,
+        on_first_frame: Callable[[], None] | None = None,
     ) -> None:
         """Initializes the StreamFireDetector. Private, use `create`."""
+        self.on_first_frame = on_first_frame
         self.on_fire_action = on_fire_action
         self.on_extinguished_action = on_extinguished_action
         self.video_output = video_output
@@ -94,6 +96,7 @@ class StreamFireDetector:
         upper_hsv: np.ndarray | None = None,
         event_queue: asyncio.Queue[str] | None = None,
         on_extinguished_action: Callable[[], Any] | None = None,
+        on_first_frame: Callable[[], None] | None = None,
     ) -> StreamFireDetector:
         """Creates and asynchronously initializes a StreamFireDetector instance.
 
@@ -115,11 +118,13 @@ class StreamFireDetector:
                 publishes the paths of saved chunks for event-driven actions.
             on_extinguished_action: An optional awaitable callback executed when
                 the fire is no longer detected (after the extinguish debounce).
+            on_first_frame: An optional synchronous callback called once, after the first frame of the stream was
+                analysed (the proof that the connection delivers video).
 
         Returns:
             A fully initialized StreamFireDetector instance.
         """
-        instance = cls(on_fire_action, video_output, checks_per_second, on_extinguished_action)
+        instance = cls(on_fire_action, video_output, checks_per_second, on_extinguished_action, on_first_frame)
 
         # Resolve the stream URL
         resolver = YouTubeStream(url=src)
@@ -256,6 +261,9 @@ class StreamFireDetector:
         try:
             async for frame in self._frame_generator():
                 fire_in_frame, annotated_frame = await self.fire_detector.detect(frame)
+                if self.on_first_frame is not None:
+                    callback, self.on_first_frame = self.on_first_frame, None
+                    callback()
                 await self._handle_fire_detection(fire_in_frame, frame)
 
                 if self.video_output:

@@ -261,3 +261,21 @@ async def test_fire_signal_without_frame_passes_no_frame_kwarg(detector: StreamF
         await detector._handle_fire_detection(True)
         await detector._handle_fire_detection(True, frame=object())
     detector.on_fire_action.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_on_first_frame_is_called_once_after_the_first_analysed_frame(detector: StreamFireDetector) -> None:
+    """The first-frame callback fires after the first frame was analysed, and only once."""
+    order: list[str] = []
+    detector.on_first_frame = lambda: order.append("first_frame")
+    detector.fire_detector.detect = AsyncMock(side_effect=lambda _f: order.append("detect") or (False, np.zeros((1, 1, 3))))
+    detector.stream = MagicMock(stop=AsyncMock())
+
+    async def frames() -> AsyncGenerator[np.ndarray]:
+        for _ in range(3):
+            yield np.zeros((1, 1, 3))
+
+    detector._frame_generator = frames  # type: ignore[method-assign]
+    await detector()
+
+    assert order == ["detect", "first_frame", "detect", "detect"]

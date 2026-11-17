@@ -72,11 +72,11 @@ class YouTubeStream:
                     logger.info(f"Successfully resolved stream URL for {self.url} with fallback format.")
                     return info["url"]
                 except DownloadError as fallback_e:
-                    logger.error(f"Fallback format also failed for {self.url}: {fallback_e}")
+                    logger.debug(f"Fallback format also failed for {self.url}: {fallback_e}")  # reported once by the caller
                     raise ValueError("Failed to resolve stream URL.") from fallback_e
             else:
                 # The error was not about format, so re-raise
-                logger.error(f"Failed to resolve stream URL for {self.url}: {e}")
+                logger.debug(f"Failed to resolve stream URL for {self.url}: {e}")  # reported once by the caller
                 raise ValueError("Failed to resolve stream URL.") from e
 
     async def _get_stream_info(self, opts: dict) -> dict:
