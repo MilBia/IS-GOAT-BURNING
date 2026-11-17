@@ -115,7 +115,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |
 | `EMAIL__SENDER` | Your sender email address. | `""` |
 | `EMAIL__SENDER_PASSWORD` | Your email password or app password. | `""` |
-| `EMAIL__RECIPIENTS` | Comma-separated list of recipient emails. | `""` |
+| `EMAIL__RECIPIENTS` | JSON list of recipient emails, e.g. `["a@example.com","b@example.com"]` (a comma-separated value fails at startup; in a Docker `--env-file` write it unquoted). | `""` |
 | `EMAIL__EMAIL_HOST` | SMTP server host (e.g., `smtp.gmail.com`). | `""` |
 | `EMAIL__EMAIL_PORT` | SMTP server port (e.g., `587`). | `""` |
 | | | |
