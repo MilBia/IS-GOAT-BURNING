@@ -2,7 +2,10 @@
 
 import asyncio
 from collections.abc import Callable
+import re
 from typing import Any
+
+from yt_dlp.utils import DownloadError
 
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
@@ -18,6 +21,35 @@ from is_goat_burning.service_notifier import ServiceNotifier
 from is_goat_burning.service_notifier import failure_reason
 
 logger = get_logger("Application")
+
+_SLEEP_SLICE_SECONDS = 1.0
+_MAX_MESSAGE_LENGTH = 200
+_URL_PATTERN = re.compile(r"https?://\S+")
+_EXPECTED_MESSAGE_PREFIXES = ("Failed to resolve stream URL", "Could not extract stream URL", "Could not open video stream")
+
+
+def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
+    """Flattens an exception group into its leaf exceptions."""
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for inner in exc.exceptions for leaf in _leaf_exceptions(inner)]
+    return [exc]
+
+
+def _is_expected_failure(exc: BaseException) -> bool:
+    """Whether the exception is a known, routine stream failure (offline stream, resolution error, timeout)."""
+    if isinstance(exc, DownloadError | ConnectionError | TimeoutError):
+        return True
+    return isinstance(exc, ValueError | RuntimeError) and str(exc).startswith(_EXPECTED_MESSAGE_PREFIXES)
+
+
+def _short_message(exc: BaseException) -> str:
+    """A one-line, URL-free description of the failure (a yt-dlp cause is preferred: it says why)."""
+    cause = exc.__cause__ if isinstance(exc.__cause__, DownloadError) else exc
+    first_line = (str(cause).strip().splitlines() or [""])[0]
+    text = _URL_PATTERN.sub("<url>", first_line)
+    if len(text) > _MAX_MESSAGE_LENGTH:
+        text = text[: _MAX_MESSAGE_LENGTH - 3] + "..."
+    return text
 
 
 class Application:
@@ -157,6 +189,38 @@ class Application:
         """A callback for the detector to queue a fire-extinguished event."""
         await self.action_queue.put("EXTINGUISHED")
 
+    @staticmethod
+    def _failure_log(group: BaseException) -> Callable[[float], None]:
+        """Builds the logging call for a failed connection attempt or stream.
+
+        Known failures (stream offline, URL resolution, connection, timeouts) are one WARNING line without a traceback
+        or stream URL; anything else keeps its traceback at ERROR.
+
+        Args:
+            group: The exception group raised by the detector or the connection attempt.
+
+        Returns:
+            A function taking the delay before the next attempt and logging the failure.
+        """
+        leaves = _leaf_exceptions(group)
+        if all(_is_expected_failure(leaf) for leaf in leaves):
+            first = leaves[0]
+            summary = f"{type(first).__name__}: {_short_message(first)}"
+            return lambda delay: logger.warning(f"Stream unavailable ({summary}). Reconnecting in {delay}s...")
+        return lambda delay: logger.error(f"Detector or connection attempt failed. Reconnecting in {delay}s...", exc_info=group)
+
+    async def _backoff_sleep(self, delay: float) -> None:
+        """Sleeps up to ``delay`` seconds, returning within about a second once a shutdown was requested.
+
+        Args:
+            delay: The wait in seconds.
+        """
+        remaining = delay
+        while remaining > 0 and self.signal_handler.is_running():
+            step = min(_SLEEP_SLICE_SECONDS, remaining)
+            await asyncio.sleep(step)
+            remaining -= step
+
     async def run(self) -> None:
         """Starts and manages the main application tasks with a retry loop."""
         self.action_manager_task = asyncio.create_task(self._action_manager())
@@ -164,9 +228,18 @@ class Application:
             self.video_event_action.start()
         self.service_notifier.start()
 
+        delay = settings.reconnect_delay_seconds
         while self.signal_handler.is_running():
             detector = None
             failure = failure_reason(None)
+            failure_log: Callable[[float], None] | None = None
+            session_ok = False
+
+            def on_first_frame() -> None:
+                nonlocal session_ok
+                session_ok = True
+                self.service_notifier.stream_connected()
+
             try:
                 logger.info(f"Attempting to start stream from source: {settings.source}")
                 detector = await StreamFireDetector.create(
@@ -177,8 +250,8 @@ class Application:
                     checks_per_second=settings.checks_per_second,
                     event_queue=self.video_event_queue if self._video_chunks_enabled else None,
                     on_extinguished_action=self._queue_extinguished_event,
+                    on_first_frame=on_first_frame,
                 )
-                self.service_notifier.stream_connected()
                 async with asyncio.TaskGroup() as tg:
                     detector_task = tg.create_task(detector())
                     self.signal_handler.set_main_task(detector_task)
@@ -191,7 +264,7 @@ class Application:
                 _, others = exc_group.split(asyncio.CancelledError)
                 if others:
                     failure = failure_reason(others)
-                    logger.error("Detector or connection attempt failed", exc_info=others)
+                    failure_log = self._failure_log(others)
             finally:
                 if detector and detector.stream:
                     await detector.stream.stop()
@@ -201,13 +274,29 @@ class Application:
                     await self._queue_extinguished_event()
 
                 if self.signal_handler.is_running():
-                    self.service_notifier.stream_failed(failure)
-                    logger.info(f"Stream has stopped. Reconnecting in {settings.reconnect_delay_seconds} seconds...")
-                    try:
-                        await asyncio.sleep(settings.reconnect_delay_seconds)
-                    except asyncio.CancelledError:
-                        # If a shutdown signal arrives during sleep, we exit gracefully.
-                        logger.info("Reconnect wait cancelled by shutdown signal.")
+                    if session_ok:
+                        delay = settings.reconnect_delay_seconds  # The stream worked: start the backoff over.
+                    await self._wait_before_reconnect(delay, failure, failure_log)
+                    delay = min(delay * 2, settings.reconnect_max_delay_seconds)
+
+    async def _wait_before_reconnect(self, delay: float, failure: str, failure_log: Callable[[float], None] | None) -> None:
+        """Reports the stopped stream and waits ``delay`` seconds (cut short by a shutdown request).
+
+        Args:
+            delay: The wait before the next connection attempt.
+            failure: The failure reason for the service notifier.
+            failure_log: The logging call built by :meth:`_failure_log`, or None when the stream just ended.
+        """
+        self.service_notifier.stream_failed(failure)
+        if failure_log is not None:
+            failure_log(delay)
+        else:
+            logger.info(f"Stream has stopped. Reconnecting in {delay}s...")
+        try:
+            await self._backoff_sleep(delay)
+        except asyncio.CancelledError:
+            # If a shutdown signal arrives during sleep, we exit gracefully.
+            logger.info("Reconnect wait cancelled by shutdown signal.")
 
     async def shutdown(self) -> None:
         """Gracefully shuts down all running application tasks."""

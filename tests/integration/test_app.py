@@ -263,8 +263,9 @@ async def test_run_loop_reports_stream_state_to_service_notifier(
     mock_sleep: AsyncMock,  # noqa: ARG001
     test_settings: Settings,  # noqa: ARG001
 ) -> None:
-    """A failed connection is reported as `stream_failed(<exception type>)`, a successful one as `stream_connected()`,
-    and a stream that ends without an error as `stream_failed("stream ended")`; the notifier is started and stopped.
+    """A failed connection is reported as `stream_failed(<exception type>)`, a stream with a first frame as
+    `stream_connected()`, and a stream that ends without an error as `stream_failed("stream ended")`; the notifier
+    is started and stopped.
     """
     app = Application()
     app.service_notifier = MagicMock()
@@ -276,6 +277,7 @@ async def test_run_loop_reports_stream_state_to_service_notifier(
     async def detector_run() -> None:
         nonlocal runs
         runs += 1
+        mock_detector_factory.call_args.kwargs["on_first_frame"]()  # the first frame arrived
         if runs == 2:
             app.signal_handler.is_running.return_value = False
 

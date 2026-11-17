@@ -93,7 +93,8 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `VERIFIER_ERRORS_BEFORE_POLICY` | `hybrid_*` only: consecutive verifier errors before the policy applies (an error is never cached; the verifier is asked again on the next check; until then a check is inconclusive and the detection state is kept). | `3` |
 | `OPEN_CL` | Enable OpenCL for acceleration (experimental). | `false` |
 | `CUDA` | Enable CUDA for NVIDIA GPU acceleration. | `false` |
-| `RECONNECT_DELAY_SECONDS` | Seconds to wait before reconnecting to a failed stream. | `5` |
+| `RECONNECT_DELAY_SECONDS` | Seconds to wait before the first reconnect to a failed stream; the wait doubles after every consecutive failure (exponential backoff) and resets after a session that received a frame. | `5` |
+| `RECONNECT_MAX_DELAY_SECONDS` | Upper limit of the reconnect wait (must be at least `RECONNECT_DELAY_SECONDS`). | `300` |
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
 | **Detection Strategy** | | |

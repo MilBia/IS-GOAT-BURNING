@@ -341,3 +341,17 @@ def test_service_hooks_overlap_error_hides_url_at_startup() -> None:
         Settings(_env_file=None, source="mock://source", discord={"use_discord": True, "hooks": hooks, "service_hooks": hooks})
     assert "DISCORD__SERVICE_HOOKS" in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
+
+
+def test_reconnect_max_delay_default_and_override(monkeypatch: MonkeyPatch) -> None:
+    """RECONNECT_MAX_DELAY_SECONDS defaults to 300 and is read from the environment (isolated from a local .env)."""
+    monkeypatch.delenv("RECONNECT_MAX_DELAY_SECONDS", raising=False)
+    assert Settings(_env_file=None, source="mock://source").reconnect_max_delay_seconds == 300  # noqa: PLR2004
+    monkeypatch.setenv("RECONNECT_MAX_DELAY_SECONDS", "42")
+    assert Settings(_env_file=None, source="mock://source").reconnect_max_delay_seconds == 42  # noqa: PLR2004
+
+
+def test_reconnect_max_delay_below_base_delay_is_rejected() -> None:
+    """The cap must not be lower than the base delay."""
+    with pytest.raises(ValidationError, match="RECONNECT_MAX_DELAY_SECONDS"):
+        Settings(_env_file=None, source="mock://source", reconnect_delay_seconds=10, reconnect_max_delay_seconds=5)

@@ -385,6 +385,7 @@ class Settings(BaseSettings):
     open_cl: bool = Field(validation_alias="OPEN_CL", default=False)
     cuda: bool = Field(validation_alias="CUDA", default=False)
     reconnect_delay_seconds: int = Field(default=5, validation_alias="RECONNECT_DELAY_SECONDS")
+    reconnect_max_delay_seconds: int = Field(default=300, ge=1, validation_alias="RECONNECT_MAX_DELAY_SECONDS")
     stream_inactivity_timeout: int = Field(default=60, validation_alias="STREAM_INACTIVITY_TIMEOUT")
     fire_detected_debounce_seconds: float = Field(default=0.0, validation_alias="FIRE_DETECTED_DEBOUNCE_SECONDS")
     fire_extinguished_debounce_seconds: float = Field(default=5.0, validation_alias="FIRE_EXTINGUISHED_DEBOUNCE_SECONDS")
@@ -435,6 +436,20 @@ class Settings(BaseSettings):
                 raise ValueError("EDGE__MODEL_PATH must be set when DETECTION_STRATEGY is 'hybrid_edge'")
             if not Path(self.edge.model_path).is_file():
                 raise ValueError(f"EDGE__MODEL_PATH points to a non-existent file: {self.edge.model_path}")
+        return self
+
+    @model_validator(mode="after")
+    def check_reconnect_delays(self) -> Settings:
+        """Validates that the reconnect backoff cap is not lower than the base delay.
+
+        Returns:
+            The validated Settings instance.
+
+        Raises:
+            ValueError: If ``RECONNECT_MAX_DELAY_SECONDS`` is lower than ``RECONNECT_DELAY_SECONDS``.
+        """
+        if self.reconnect_max_delay_seconds < self.reconnect_delay_seconds:
+            raise ValueError("RECONNECT_MAX_DELAY_SECONDS must not be lower than RECONNECT_DELAY_SECONDS")
         return self
 
 
