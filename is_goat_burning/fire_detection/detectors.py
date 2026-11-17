@@ -12,8 +12,10 @@ detector based on the application's configuration.
 """
 
 import asyncio
+from collections import deque
 from pathlib import Path
 import threading
+import time
 from typing import TYPE_CHECKING
 from typing import Protocol
 
@@ -159,6 +161,9 @@ class CPUFireDetector:
         self.motion_threshold = motion_threshold
         self.relative_threshold = relative_threshold
         self._previous_frame: np.ndarray | cv2.UMat | None = None
+        #: When False the masked "annotated" frame is not built and the input frame is returned instead
+        #: (saves ~7 ms per check on a Raspberry Pi 4). Only the debug window (`VIDEO_OUTPUT`) needs the real one.
+        self.annotate: bool = True
 
     def _detect_logic(self, frame: np.ndarray | cv2.UMat) -> tuple[bool, np.ndarray | cv2.UMat]:
         """Core fire detection logic with temporal motion verification.
@@ -240,6 +245,8 @@ class CPUFireDetector:
             frame_area = gray_shape[0] * gray_shape[1]
         is_fire = is_fire_by_pixels(no_red, warm, self.margin, self.relative_threshold, frame_area)
         self._logger.debug("Detection result: pixels=%d, warm=%d, margin=%d, fire=%s", no_red, warm, self.margin, is_fire)
+        if not self.annotate:
+            return is_fire, frame
         return is_fire, cv2.bitwise_and(frame, frame, mask=final_mask)
 
     async def detect(self, frame: np.ndarray) -> tuple[bool, np.ndarray]:
@@ -457,17 +464,45 @@ class HybridFireDetector:
         self,
         local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector,
         verifier: FireVerifier,
+        cooldown_seconds: float | None = None,
+        max_calls_per_hour: int | None = None,
     ) -> None:
         """Initializes the HybridFireDetector.
 
         Args:
             local_detector: A local CV-based detector for the fast first pass.
             verifier: The second-stage verifier (any `FireVerifier`) used to confirm detections.
+            cooldown_seconds: Minimum time between verifier calls. While it runs, the last verdict is reused (so the
+                debounce is not reset by a gap). Defaults to ``settings.verifier_cooldown_seconds``; 0 disables it.
+            max_calls_per_hour: Hard cap of verifier calls in a rolling hour; once reached the verifier is not called
+                and the result is "no fire" (a cost guard). Defaults to ``settings.verifier_max_calls_per_hour``;
+                0 means unlimited.
         """
         self.local_detector = local_detector
         self.verifier = verifier
+        self.cooldown_seconds = settings.verifier_cooldown_seconds if cooldown_seconds is None else cooldown_seconds
+        self.max_calls_per_hour = settings.verifier_max_calls_per_hour if max_calls_per_hour is None else max_calls_per_hour
+        self._last_call_time: float | None = None
+        self._last_verdict = False
+        self._call_times: deque[float] = deque()
+        self._limit_warned = False
         self._logger = get_logger("HybridFireDetector")
         self._logger.info(f"Initialized hybrid detector with verifier {type(verifier).__name__}")
+
+    def _cap_reached(self, now: float) -> bool:
+        """Applies the rolling hourly cap; records the call when it is allowed."""
+        if not self.max_calls_per_hour:
+            return False
+        while self._call_times and now - self._call_times[0] >= 3600:
+            self._call_times.popleft()
+        if len(self._call_times) >= self.max_calls_per_hour:
+            if not self._limit_warned:
+                self._logger.warning("Verifier call limit (%d/h) reached; reporting no fire.", self.max_calls_per_hour)
+                self._limit_warned = True
+            return True
+        self._limit_warned = False
+        self._call_times.append(now)
+        return False
 
     async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
         """Analyzes a frame for fire using two-stage detection.
@@ -503,7 +538,20 @@ class HybridFireDetector:
         else:
             numpy_frame = frame
 
-        verified, _ = await self.verifier.detect(numpy_frame)
+        now = time.monotonic()
+        if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
+            return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
+        if self._cap_reached(now):
+            return False, annotated_frame
+        previous_call_time = self._last_call_time
+        self._last_call_time = now
+
+        try:
+            verified, _ = await self.verifier.detect(numpy_frame)
+        except BaseException:
+            self._last_call_time = previous_call_time  # a failed call must not start the cooldown
+            raise
+        self._last_verdict = verified
 
         if not verified:
             self._logger.info(

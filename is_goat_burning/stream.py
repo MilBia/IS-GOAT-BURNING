@@ -120,6 +120,8 @@ class VideoStreamer:
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame_shape = (width, height)
         self._running = False
+        #: True when frames need not be archived from decoded video, so only analysed frames are decoded (`grab()`).
+        self.skips_decode: bool = settings.video.save_video_chunks and settings.video.buffer_mode == "segments"
 
         # Determine backend
         self.backend: Backend = "cpu"
@@ -137,6 +139,7 @@ class VideoStreamer:
             max_chunks=settings.video.max_video_chunks,
             chunks_to_keep_after_fire=settings.video.chunks_to_keep_after_fire,
             event_queue=event_queue,
+            source_url=url,
         )
         self.video_saver.start()
         logger.info(f"VideoStreamer initialized for backend '{self.backend}' at {self.framerate} FPS.")
@@ -189,14 +192,22 @@ class VideoStreamer:
             return cv2.UMat(frame)
         return frame
 
-    async def frames(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
+    async def frames(self, every: int = 1) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
         """An async generator that yields processed frames from the stream.
 
         This is the main loop that reads from the camera, queues the raw frame
         for saving, processes it for the target backend, and yields it.
+
+        Args:
+            every: Only when `skips_decode` is set: decode and yield one frame out of `every` (the others are only
+                `grab()`bed, which costs about half as much as a full `read()`). Ignored otherwise.
         """
         loop = asyncio.get_running_loop()
         self._running = True
+        if self.skips_decode and every > 1:
+            async for frame in self._sampled_frames(loop, every):
+                yield frame
+            return
         while self._running:
             # Run the blocking cap.read() in an executor
             grabbed, frame = await loop.run_in_executor(None, self.cap.read)
@@ -211,6 +222,29 @@ class VideoStreamer:
             # Process and yield the frame for the detector
             processed_frame = self._process_frame(frame)
             yield processed_frame
+
+    def _grab_and_maybe_retrieve(self, decode: bool) -> tuple[bool, np.ndarray | None]:
+        """Grabs the next frame and decodes it only when `decode` is set (runs in a worker thread)."""
+        if not self.cap.grab():
+            return False, None
+        if not decode:
+            return True, None
+        return self.cap.retrieve()
+
+    async def _sampled_frames(
+        self, loop: asyncio.AbstractEventLoop, every: int
+    ) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
+        """Yields one decoded frame out of `every`; the rest are only grabbed (archiving is done by ffmpeg)."""
+        index = 0
+        while self._running:
+            decode = index % every == 0
+            index += 1
+            grabbed, frame = await loop.run_in_executor(None, self._grab_and_maybe_retrieve, decode)
+            if not grabbed:
+                logger.warning("Stream ended or frame could not be grabbed.")
+                break
+            if decode and frame is not None:
+                yield self._process_frame(frame)
 
     async def stop(self) -> None:
         """Stops the frame grabbing loop and cleans up resources."""

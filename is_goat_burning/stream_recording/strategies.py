@@ -11,9 +11,14 @@ from abc import ABC
 from abc import abstractmethod
 import asyncio
 from collections import deque
+import contextlib
 from datetime import datetime
+import math
 import os
+from pathlib import Path
 import shutil
+import subprocess
+import time
 from typing import TYPE_CHECKING
 from typing import ClassVar
 
@@ -32,6 +37,9 @@ logger = get_logger("BufferStrategy")
 
 class BufferStrategy(ABC):
     """Abstract base class defining the interface for a video buffer strategy."""
+
+    #: True when the strategy records the post-fire video itself (the saver then skips its frame-queue based recording).
+    records_post_fire: ClassVar[bool] = False
 
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the strategy with a reference to its context.
@@ -302,3 +310,285 @@ class MemoryBufferStrategy(BufferStrategy):
             raise
         finally:
             self.context._release_writer()
+
+
+class SegmentsBufferStrategy(BufferStrategy):
+    """Archives the source stream without decoding it, using a ring of segments in RAM (tmpfs).
+
+    One supervised ``ffmpeg -c copy`` process writes the original stream into short ``.ts`` segments that wrap around
+    in ``settings.video.segments_directory``. Frames never reach `add_frame` (the streamer decodes only the frames it
+    analyses), so archiving costs almost no CPU and a small, bounded amount of RAM. On a fire event the newest
+    segments are concatenated with ``-c copy`` into the pre-fire clip, and the segments written afterwards are
+    collected into post-fire chunks until the fire is out (when ``record_during_fire``) plus the configured tail.
+    """
+
+    records_post_fire: ClassVar[bool] = True
+    SEGMENT_GLOB: ClassVar[str] = "seg*.ts"
+    RING_EXTRA_SEGMENTS: ClassVar[int] = 4
+    RESTART_DELAY_MIN: ClassVar[float] = 1.0
+    RESTART_DELAY_MAX: ClassVar[float] = 30.0
+    COLLECT_INTERVAL_SECONDS: ClassVar[float] = 5.0
+    STABLE_RUN_SECONDS: ClassVar[float] = 30.0
+    MIN_FREE_BYTES: ClassVar[int] = 128 * 1024 * 1024
+
+    def __init__(self, context: AsyncVideoChunkSaver) -> None:
+        """Initializes the segment ring parameters.
+
+        Args:
+            context: The AsyncVideoChunkSaver instance that uses this strategy.
+        """
+        super().__init__(context)
+        self.ring_dir = Path(settings.video.segments_directory)
+        self.segment_seconds = max(1, settings.video.segment_seconds)
+        self.buffer_seconds = settings.video.memory_buffer_seconds
+        self.ring_size = math.ceil(self.buffer_seconds / self.segment_seconds) + self.RING_EXTRA_SEGMENTS
+        self._ffmpeg: asyncio.subprocess.Process | None = None
+        self._supervisor: asyncio.Task[None] | None = None
+        logger.info(f"Segments ring: {self.ring_size} slots of >= {self.segment_seconds}s in {self.ring_dir}.")
+
+    def add_frame(self, frame: np.ndarray) -> None:
+        """Does nothing: archiving is done by ffmpeg from the source, not from decoded frames."""
+
+    def reset(self) -> None:
+        """Nothing to reset: the ring keeps rolling across fire events."""
+
+    def ffmpeg_command(self) -> list[str]:
+        """Builds the ffmpeg command that stream-copies the source into the segment ring."""
+        assert self.context.source_url is not None
+        return [
+            "ffmpeg",
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+            "-rw_timeout",
+            "15000000",
+            "-i",
+            self.context.source_url,
+            "-map",
+            "0:v:0",
+            "-c",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(self.segment_seconds),
+            "-segment_wrap",
+            str(self.ring_size),
+            "-reset_timestamps",
+            "1",
+            "-segment_format",
+            "mpegts",
+            str(self.ring_dir / "seg%03d.ts"),
+        ]
+
+    def _prepare_ring(self) -> None:
+        self.ring_dir.mkdir(parents=True, exist_ok=True)
+        for old in self.ring_dir.glob(self.SEGMENT_GLOB):
+            old.unlink(missing_ok=True)
+        free = shutil.disk_usage(self.ring_dir).free
+        if free < self.MIN_FREE_BYTES:
+            logger.warning(
+                f"Only {free // 2**20} MB free in the segment ring directory (need >= {self.MIN_FREE_BYTES // 2**20} MB). "
+                "The ring may fill up and archiving fail; in Docker raise --shm-size."
+            )
+
+    async def _supervise_ffmpeg(self) -> None:
+        """Keeps the ffmpeg archiver running, restarting it with a back-off when it exits."""
+        delay = self.RESTART_DELAY_MIN
+        while True:
+            started = time.monotonic()
+            try:
+                self._ffmpeg = await asyncio.create_subprocess_exec(
+                    *self.ffmpeg_command(),
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                logger.info("Segment archiver (ffmpeg -c copy) started.")
+                code = await self._ffmpeg.wait()
+                logger.warning(f"Segment archiver exited with code {code}.")
+                self._drop_truncated_segment()
+            except OSError:
+                logger.exception("Could not start the segment archiver (is ffmpeg installed?).")
+            if time.monotonic() - started >= self.STABLE_RUN_SECONDS:
+                delay = self.RESTART_DELAY_MIN
+            logger.info(f"Restarting segment archiver in {delay:.0f}s.")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, self.RESTART_DELAY_MAX)
+
+    def _drop_truncated_segment(self) -> None:
+        """Deletes the newest segment after an ffmpeg exit: it was being written and may be cut off mid-frame."""
+        newest: tuple[float, Path] | None = None
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            try:
+                candidate = (path.stat().st_mtime, path)
+            except OSError:
+                continue
+            if newest is None or candidate > newest:
+                newest = candidate
+        if newest is not None:
+            newest[1].unlink(missing_ok=True)
+
+    async def _stop_ffmpeg(self) -> None:
+        if self._supervisor and not self._supervisor.done():
+            self._supervisor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._supervisor
+        proc = self._ffmpeg
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+
+    def _complete_segments(self) -> list[tuple[float, Path]]:
+        """Returns (mtime, path) of finished segments, oldest first; the newest (still being written) is left out."""
+        found = []
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            try:
+                found.append((path.stat().st_mtime, path))
+            except OSError:
+                continue  # overwritten by the ring between glob and stat
+        found.sort()
+        return found[:-1]
+
+    def _select_since(self, after_mtime: float | None) -> list[tuple[float, Path]]:
+        """Selects complete segments newer than `after_mtime` (or, without it, within the pre-fire window)."""
+        segments = self._complete_segments()
+        if after_mtime is not None:
+            return [seg for seg in segments if seg[0] > after_mtime]
+        cutoff = time.time() - self.buffer_seconds - self.segment_seconds
+        return [seg for seg in segments if seg[0] >= cutoff]
+
+    @staticmethod
+    def _concat_blocking(paths: list[Path], out_path: str) -> bool:
+        """Joins segments into one mp4 with ``-c copy``; returns True on success."""
+        listing = Path(out_path).with_suffix(".txt")
+        listing.write_text("".join(f"file '{p}'\n" for p in paths))
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing)]
+                + ["-c", "copy", out_path],
+                capture_output=True,
+                check=False,
+            )
+        finally:
+            listing.unlink(missing_ok=True)
+        if result.returncode != 0:
+            logger.error(f"Segment concat failed: {result.stderr.decode(errors='ignore')[-300:]}")
+            return False
+        return True
+
+    @staticmethod
+    def _copy_blocking(paths: list[Path], dest_dir: Path) -> list[Path]:
+        """Copies segments out of the ring (which keeps overwriting) into `dest_dir`."""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        copied = []
+        for src in paths:
+            try:
+                dest = dest_dir / f"{int(src.stat().st_mtime * 1000)}_{src.name}"
+                shutil.copy2(src, dest)
+                copied.append(dest)
+            except OSError:
+                logger.warning("A segment was overwritten before it could be copied.")
+        return copied
+
+    async def _write_clip(self, parts: list[Path], event_dir: str, label: str) -> bool:
+        """Joins `parts` into one clip. Returns True when the clip was written (or there was nothing to write)."""
+        if not parts:
+            return True
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out = os.path.join(event_dir, f"{self.context.FILENAME_PREFIX}{label}_{timestamp}{self.context.FILENAME_SUFFIX}")
+        loop = asyncio.get_running_loop()
+        if await loop.run_in_executor(None, self._concat_blocking, parts, out):
+            self.context.current_video_path = out
+            self.context._publish_chunk_path(out)
+            logger.info(f"Saved {label} clip {os.path.basename(out)} ({len(parts)} segments).")
+            return True
+        return False
+
+    async def handle_fire_event(self, event_dir: str) -> None:
+        """Writes the pre-fire clip and then the post-fire chunks, entirely from ring segments.
+
+        Args:
+            event_dir: The destination directory for the archived videos.
+        """
+        loop = asyncio.get_running_loop()
+        staging = Path(event_dir) / ".parts"
+        try:
+            selected = await loop.run_in_executor(None, self._select_since, None)
+            last_mtime = selected[-1][0] if selected else time.time()
+            # Copy first (the ring keeps overwriting the oldest slots), then join from the stable copies.
+            parts = await loop.run_in_executor(None, self._copy_blocking, [p for _, p in selected], staging)
+            await self._write_clip(parts, event_dir, "pre-fire-buffer")
+            for part in parts:
+                part.unlink(missing_ok=True)
+            logger.info("Pre-fire clip written. Collecting post-fire segments.")
+
+            chunk_seconds = self.context.chunk_length_seconds
+            tail = self.context.chunks_to_keep_after_fire * chunk_seconds
+            pending: list[Path] = []
+            pending_since = time.monotonic()
+            tail_deadline: float | None = None if settings.video.record_during_fire else time.monotonic() + tail
+            while True:
+                await asyncio.sleep(self.COLLECT_INTERVAL_SECONDS)
+                fresh = await loop.run_in_executor(None, self._select_since, last_mtime)
+                if fresh:
+                    last_mtime = fresh[-1][0]
+                    pending += await loop.run_in_executor(None, self._copy_blocking, [p for _, p in fresh], staging)
+                if tail_deadline is None and self.context.signal_handler.is_fire_extinguished():
+                    logger.info("Fire extinguished signal received.")
+                    tail_deadline = time.monotonic() + tail
+                done = tail_deadline is not None and time.monotonic() >= tail_deadline
+                if pending and (done or time.monotonic() - pending_since >= chunk_seconds):
+                    if await self._write_clip(pending, event_dir, "post-fire"):
+                        for part in pending:
+                            part.unlink(missing_ok=True)
+                        pending = []
+                    elif done:
+                        logger.error("Could not write the last post-fire clip; %d segments were discarded.", len(pending))
+                    else:
+                        logger.warning("Writing a post-fire clip failed; will retry with the next segments.")
+                    pending_since = time.monotonic()
+                if done:
+                    break
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        logger.info("Post-fire recording from segments is complete.")
+
+    async def _run_main_loop(self) -> None:
+        """Runs the archiver and waits for fire events, like the memory strategy."""
+        if not self.context.source_url:
+            logger.error("Segments mode needs the stream URL; archiving is inactive.")
+        elif shutil.which("ffmpeg") is None:
+            logger.error("ffmpeg not found; segments archiving is inactive.")
+        else:
+            await asyncio.get_running_loop().run_in_executor(None, self._prepare_ring)
+            self._supervisor = asyncio.create_task(self._supervise_ffmpeg())
+        try:
+            while True:
+                await self.context.signal_handler.fire_detected_event.wait()
+                async with self.context._fire_handling_lock:
+                    if not self.context.signal_handler.is_fire_detected():
+                        continue
+                    try:
+                        await self.context._handle_fire_event_async()
+                    except asyncio.CancelledError:
+                        raise
+                    except (OSError, shutil.Error, subprocess.SubprocessError):  # fmt: skip
+                        logger.exception("Unexpected but recoverable error during segments fire event handling.")
+                    finally:
+                        self.context.reset_after_fire()
+        except asyncio.CancelledError:
+            logger.info("Segments strategy main loop was cancelled.")
+            raise
+        finally:
+            await asyncio.shield(self._stop_ffmpeg())

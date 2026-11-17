@@ -125,8 +125,15 @@ class VideoSettings(BaseModel):
         buffer_mode: The buffering strategy. "disk" saves chunks to disk
             continuously. "memory" holds frames in RAM and only saves to
             disk when a fire is detected.
+            "segments" stream-copies the source with ffmpeg (no decode, no
+            re-encode) into a ring of short segments in `segments_directory`
+            and only concatenates them on a fire event.
         memory_buffer_seconds: The duration in seconds of pre-fire video to
-            hold in RAM when using "memory" buffer mode.
+            hold in RAM when using "memory" or "segments" buffer mode.
+        segments_directory: Directory of the segment ring for "segments" mode.
+            Should be a tmpfs (RAM) path; in Docker raise `--shm-size` for it.
+        segment_seconds: Minimum duration of one ring segment (segments are cut
+            on keyframes, so real segments can be longer).
         record_during_fire: If True, recording will continue for the entire
             duration of the fire event.
         flush_num_threads: The number of threads to use when flushing the
@@ -146,8 +153,10 @@ class VideoSettings(BaseModel):
     video_chunk_length_seconds: int = Field(default=300)
     max_video_chunks: int = Field(default=20)
     chunks_to_keep_after_fire: int = Field(default=10)
-    buffer_mode: Literal["disk", "memory"] = Field(default="memory")
+    buffer_mode: Literal["disk", "memory", "segments"] = Field(default="memory")
     memory_buffer_seconds: int = Field(default=60)
+    segments_directory: str = Field(default="/dev/shm/goat-ring")  # noqa: S108 - tmpfs by design, keeps the ring in RAM
+    segment_seconds: int = Field(default=2, ge=1)
     record_during_fire: bool = Field(default=False)
     flush_num_threads: int = Field(default=1)
     flush_throttle_frame_interval: int = Field(default=10)
@@ -312,6 +321,8 @@ class Settings(BaseSettings):
         default="frame_fraction", validation_alias="FIRE_DETECTION_MODE"
     )
     area_relative_threshold: float = Field(default=0.23, gt=0.0, le=1.0, validation_alias="AREA_RELATIVE_THRESHOLD")
+    verifier_cooldown_seconds: float = Field(default=60.0, ge=0.0, validation_alias="VERIFIER_COOLDOWN_SECONDS")
+    verifier_max_calls_per_hour: int = Field(default=0, ge=0, validation_alias="VERIFIER_MAX_CALLS_PER_HOUR")
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(default="INFO", validation_alias="LOGGING")
     video_output: bool = Field(validation_alias="VIDEO_OUTPUT", default=False)
     checks_per_second: float = Field(validation_alias="CHECKS_PER_SECOND", default=1.0)

@@ -33,6 +33,7 @@ from is_goat_burning.logger import get_logger
 from is_goat_burning.stream_recording.strategies import BufferStrategy
 from is_goat_burning.stream_recording.strategies import DiskBufferStrategy
 from is_goat_burning.stream_recording.strategies import MemoryBufferStrategy
+from is_goat_burning.stream_recording.strategies import SegmentsBufferStrategy
 
 logger = get_logger("AsyncVideoChunkSaver")
 
@@ -56,6 +57,7 @@ class AsyncVideoChunkSaver:
         chunks_to_keep_after_fire: The number of chunk-lengths of video to save after a
             fire is detected.
         fps (float): The frames per second of the video stream.
+        source_url (str | None): The direct stream URL; only the 'segments' strategy uses it (never logged).
         frame_queue (asyncio.Queue): A queue for incoming frames to be written
             to disk, primarily used by the DiskBufferStrategy or during
             post-fire recording.
@@ -77,6 +79,7 @@ class AsyncVideoChunkSaver:
     chunks_to_keep_after_fire: int
     fps: float = 30.0
     event_queue: asyncio.Queue[str] | None = None
+    source_url: str | None = None
     FILENAME_PREFIX: ClassVar[str] = "goat-cam_"
     FILENAME_SUFFIX: ClassVar[str] = ".mp4"
     VIDEO_CODEC: ClassVar[str] = "mp4v"
@@ -84,15 +87,21 @@ class AsyncVideoChunkSaver:
     FRAME_QUEUE_POLL_TIMEOUT: ClassVar[float] = 1.0
     POST_FIRE_FRAME_TIMEOUT: ClassVar[float] = 5.0
     FRAME_WRITE_BATCH_SIZE: ClassVar[int] = 30
+    #: Bound of `frame_queue`; when the writer falls behind, the newest frames are dropped instead of growing RAM
+    #: without limit (raw 1080p frames are ~6 MB each, so 60 of them are ~370 MB).
+    FRAME_QUEUE_MAX_FRAMES: ClassVar[int] = 60
     STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
 
     # --- Internal State ---
-    frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(init=False, default_factory=asyncio.Queue)
+    frame_queue: asyncio.Queue[np.ndarray | bytes | None] = field(
+        init=False, default_factory=lambda: asyncio.Queue(maxsize=AsyncVideoChunkSaver.FRAME_QUEUE_MAX_FRAMES)
+    )
     archive_queue: asyncio.Queue[tuple[str, str] | None] = field(init=False, default_factory=asyncio.Queue)
     writer: cv2.VideoWriter | None = field(init=False, default=None, repr=False)
     chunk_start_time: float = field(init=False, default=0.0)
     current_video_path: str | None = field(init=False, default=None)
     _archive_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
+    _strategy_task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
     chunk_limit_action: Callable[[], None] = field(init=False, repr=False)
     makedirs_callable: Callable[..., None] = field(init=False, repr=False)
     signal_handler: SignalHandler = field(init=False, default_factory=SignalHandler)
@@ -119,6 +128,9 @@ class AsyncVideoChunkSaver:
             self.pre_fire_buffer = deque(maxlen=self.max_chunks)
             if self.max_chunks > 0:
                 self.chunk_limit_action = self._enforce_chunk_limit_blocking
+        elif buffer_mode == "segments":
+            logger.info("Video saver initializing with SEGMENTS buffer strategy.")
+            self.strategy = SegmentsBufferStrategy(context=self)
         else:
             raise NotImplementedError(f"Buffer mode '{buffer_mode}' is not implemented.")
 
@@ -137,7 +149,7 @@ class AsyncVideoChunkSaver:
             return
 
         self._archive_task = asyncio.create_task(self.archive_task())
-        asyncio.create_task(self.strategy.start())
+        self._strategy_task = asyncio.create_task(self.strategy.start())
 
     async def stop(self) -> None:
         """Signals the background tasks to stop and waits for them to finish."""
@@ -498,7 +510,8 @@ class AsyncVideoChunkSaver:
 
         try:
             await self.strategy.handle_fire_event(event_dir)
-            await self._save_post_fire_chunks_async(event_dir)
+            if not self.strategy.records_post_fire:
+                await self._save_post_fire_chunks_async(event_dir)
             logger.info("Fire event handled. Restoring normal chunk rotation policy.")
         finally:
             self.chunk_limit_action = original_cleanup_action

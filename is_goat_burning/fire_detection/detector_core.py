@@ -108,6 +108,11 @@ class StreamFireDetector:
             upper=upper,
             strategy=settings.detection_strategy,
         )
+        if not video_output:
+            # Nobody reads the annotated frame (verifiers get the original), so do not build it.
+            local = getattr(instance.fire_detector, "local_detector", instance.fire_detector)
+            if isinstance(getattr(local, "annotate", None), bool):
+                local.annotate = False
         return instance
 
     async def _frame_generator(self) -> AsyncGenerator[np.ndarray | cv2.UMat | cv2.cuda.GpuMat]:
@@ -118,7 +123,14 @@ class StreamFireDetector:
         if self.checks_per_second and self.checks_per_second < self.stream.framerate > 0:
             frames_between_step = self.stream.framerate / self.checks_per_second
 
-        async for frame in self.stream.frames():
+        if getattr(self.stream, "skips_decode", False) is True and frames_between_step:
+            # The streamer decodes only the analysed frames itself (archiving does not need them), so no extra throttle.
+            stream_frames = self.stream.frames(every=max(1, round(frames_between_step)))
+            frames_between_step = 0.0
+        else:
+            stream_frames = self.stream.frames()
+
+        async for frame in stream_frames:
             if frame is None:
                 break
 
