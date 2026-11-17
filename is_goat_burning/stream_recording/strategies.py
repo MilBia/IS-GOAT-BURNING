@@ -479,7 +479,11 @@ class SegmentsBufferStrategy(BufferStrategy):
         return 0 if newest is None else (newest[1] + 1) % self.ring_size
 
     def _drop_truncated_segment(self) -> None:
-        """Deletes the newest segment after an ffmpeg exit: it was being written and may be cut off mid-frame."""
+        """Deletes the newest segment after an ffmpeg exit: it was being written and may be cut off mid-frame.
+
+        A segment older than the run that exited is complete and is kept: a run that fails at input open (e.g. the
+        expired URL, retried until the app reconnects) writes nothing, and must not eat the kept pre-fire history.
+        """
         newest: tuple[float, Path] | None = None
         for path in self.ring_dir.glob(self.SEGMENT_GLOB):
             try:
@@ -488,7 +492,7 @@ class SegmentsBufferStrategy(BufferStrategy):
                 continue
             if newest is None or candidate > newest:
                 newest = candidate
-        if newest is not None:
+        if newest is not None and (self._run_started is None or newest[0] >= self._run_started):
             newest[1].unlink(missing_ok=True)
 
     async def _stop_ffmpeg(self) -> None:

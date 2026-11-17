@@ -515,3 +515,17 @@ def test_drop_truncated_segment_removes_only_the_newest(ring: Path, context: Mag
     SegmentsBufferStrategy(context)._drop_truncated_segment()
 
     assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
+
+
+def test_drop_truncated_segment_spares_segments_of_earlier_runs(ring: Path, context: MagicMock) -> None:
+    import time
+
+    # The expired URL: each restart fails at input open without writing a segment; the earlier ones are complete.
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 3)
+    strategy = SegmentsBufferStrategy(context)
+    strategy._run_started = time.time() - 1
+
+    strategy._drop_truncated_segment()
+
+    assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
