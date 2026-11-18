@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 import re
 from typing import Any
 
@@ -26,6 +27,21 @@ _SLEEP_SLICE_SECONDS = 1.0
 _MAX_MESSAGE_LENGTH = 200
 _URL_PATTERN = re.compile(r"https?://\S+")
 _EXPECTED_MESSAGE_PREFIXES = ("Failed to resolve stream URL", "Could not extract stream URL", "Could not open video stream")
+
+
+@dataclass(frozen=True, eq=False, slots=True)
+class ActionEvent:
+    """An item of the application's action queue.
+
+    Attributes:
+        kind: ``"FIRE"`` or ``"EXTINGUISHED"``.
+        unverified: True if the fire was reported while the verifier was unavailable.
+        frame: The host copy of the frame that triggered the fire (``np.ndarray``), or None.
+    """
+
+    kind: str
+    unverified: bool = False
+    frame: Any = None
 
 
 def _leaf_exceptions(exc: BaseException) -> list[BaseException]:
@@ -62,7 +78,7 @@ class Application:
 
     Attributes:
         signal_handler (SignalHandler): The application-wide signal handler.
-        action_queue (asyncio.Queue[str]): A queue for communicating events.
+        action_queue (asyncio.Queue[ActionEvent]): A queue for communicating events (with the fire's frame).
         video_event_queue (asyncio.Queue[str]): A queue carrying the paths of
             saved video chunks to event-driven actions.
         on_fire_action_handler (OnceAction | None): The handler that sends one
@@ -79,7 +95,7 @@ class Application:
     def __init__(self) -> None:
         """Initializes the Application instance."""
         self.signal_handler = SignalHandler()
-        self.action_queue: asyncio.Queue[str] = asyncio.Queue()
+        self.action_queue: asyncio.Queue[ActionEvent] = asyncio.Queue()
         self.video_event_queue: asyncio.Queue[str] = asyncio.Queue()
         self.on_fire_action_handler: OnceAction | None = None
         self.video_event_action: FireEventAction | None = None
@@ -157,15 +173,12 @@ class Application:
             try:
                 event = await self.action_queue.get()
                 try:
-                    if event == "FIRE":
-                        logger.info("Action manager received FIRE event. Triggering actions.")
+                    if event.kind == "FIRE":
+                        label = "an UNVERIFIED FIRE" if event.unverified else "FIRE"
+                        logger.info(f"Action manager received {label} event. Triggering actions.")
                         if self.on_fire_action_handler:
-                            await self.on_fire_action_handler()
-                    elif event == "FIRE_UNVERIFIED":
-                        logger.info("Action manager received an UNVERIFIED FIRE event. Triggering actions.")
-                        if self.on_fire_action_handler:
-                            await self.on_fire_action_handler(unverified=True)
-                    elif event == "EXTINGUISHED":
+                            await self.on_fire_action_handler(unverified=event.unverified, frame=event.frame)
+                    elif event.kind == "EXTINGUISHED":
                         logger.info("Action manager received EXTINGUISHED event. Re-arming the fire alert.")
                         if self.on_fire_action_handler:
                             await self.on_fire_action_handler.rearm()
@@ -177,18 +190,19 @@ class Application:
             except Exception:
                 logger.exception("Action manager encountered an error, but will continue running.")
 
-    async def _queue_fire_event(self, unverified: bool = False) -> None:
-        """A callback for the detector to queue a fire event.
+    async def _queue_fire_event(self, unverified: bool = False, frame: Any = None) -> None:
+        """A callback for the detector to queue a fire event (``StreamFireDetector`` ``on_fire_action``).
 
         Args:
             unverified: True if the fire was reported while the verifier was unavailable.
+            frame: The host copy of the triggering frame (``np.ndarray``), forwarded to the alert actions.
         """
         self.service_notifier.fire_event(unverified=unverified)
-        await self.action_queue.put("FIRE_UNVERIFIED" if unverified else "FIRE")
+        await self.action_queue.put(ActionEvent("FIRE", unverified=unverified, frame=frame))
 
     async def _queue_extinguished_event(self) -> None:
         """A callback for the detector to queue a fire-extinguished event."""
-        await self.action_queue.put("EXTINGUISHED")
+        await self.action_queue.put(ActionEvent("EXTINGUISHED"))
 
     @staticmethod
     def _failure_log(group: BaseException) -> Callable[[float], None]:
