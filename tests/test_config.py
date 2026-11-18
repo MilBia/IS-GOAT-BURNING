@@ -155,6 +155,20 @@ def test_alert_cooldown_rejects_negative_values() -> None:
         Settings(_env_file=None, source="mock://source", alert_cooldown_seconds=-1)
 
 
+def test_alert_retry_defaults_to_60_seconds(monkeypatch: MonkeyPatch) -> None:
+    """Verifies the alert retry default, isolated from any local ``.env``."""
+    monkeypatch.delenv("ALERT_RETRY_SECONDS", raising=False)
+    assert Settings(_env_file=None, source="mock://source").alert_retry_seconds == 60.0
+
+
+def test_alert_retry_is_read_from_env_and_rejects_negative(monkeypatch: MonkeyPatch) -> None:
+    """Verifies ``ALERT_RETRY_SECONDS`` overrides the default and must not be negative."""
+    monkeypatch.setenv("ALERT_RETRY_SECONDS", "15")
+    assert Settings(_env_file=None, source="mock://source").alert_retry_seconds == 15.0
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, source="mock://source", alert_retry_seconds=-1)
+
+
 def test_edge_settings_defaults() -> None:
     """Verifies EdgeSettings applies the documented defaults."""
     edge = EdgeSettings()

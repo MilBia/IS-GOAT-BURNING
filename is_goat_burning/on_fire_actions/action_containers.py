@@ -38,10 +38,12 @@ class OnceAction:
     returning ``False``; any other return value (``None``, ``True``) is success.
     The alert counts as sent (container disarmed, cooldown started) when at least
     one action succeeded; failed actions are logged. If every action failed, the
-    container stays armed and the next call retries. The detector only signals
-    on a no-fire -> fire transition, so during one ongoing fire that next call
-    comes only after a re-detection (extinguish, then fire) or a stream
-    reconnect, not on every frame.
+    container stays armed and, when `retry_seconds` is set, retries by itself
+    every `retry_seconds` (with the same frame and flag) until an action
+    succeeds, the fire is extinguished (`rearm`) or the application stops
+    (`stop`). The detector only signals on a no-fire -> fire transition, so
+    without this retry a short outage of every channel at ignition would lose
+    the alert for the whole fire.
 
     Attributes:
         was_performed (bool): True once the alert for the current fire event has
@@ -49,11 +51,14 @@ class OnceAction:
         actions (list[Callable[[], Awaitable[Any]]]): A list of the awaitable
             actions to be executed.
         cooldown_seconds (float): The minimum number of seconds between alerts.
+        retry_seconds (float): Delay before retrying an alert whose actions all failed; ``0`` disables the retry.
     """
 
     was_performed: bool
     actions: list[Callable[[], Awaitable[Any]]]
     cooldown_seconds: float
+    retry_seconds: float
+    _stopped: bool
     _clock: Callable[[], float]
     _last_alert_time: float | None
     _deferred_task: asyncio.Task[None] | None
@@ -69,6 +74,7 @@ class OnceAction:
         cooldown_seconds: float = 0.0,
         clock: Callable[[], float] = time.monotonic,
         stop_timeout_seconds: float = 5.0,
+        retry_seconds: float = 0.0,
     ) -> None:
         """Initializes the OnceAction container.
 
@@ -81,10 +87,14 @@ class OnceAction:
             clock: A monotonic clock returning seconds (injectable for tests).
             stop_timeout_seconds: How long `stop` waits for a deferred alert that
                 is already being sent before cancelling it.
+            retry_seconds: Delay before retrying an alert whose actions all failed, repeated while the container
+                is armed; ``0`` disables the retry.
         """
         self.actions = []
         self.was_performed = False
         self.cooldown_seconds = cooldown_seconds
+        self.retry_seconds = retry_seconds
+        self._stopped = False
         self._clock = clock
         self._last_alert_time = None
         self._deferred_task = None
@@ -121,18 +131,32 @@ class OnceAction:
             **kwargs: Ignored.
         """
         async with self._lock:
-            if self.was_performed:
+            if self.was_performed or self._stopped:
                 return
             self._unverified = unverified
             if frame is not None:
                 self._frame = frame
             remaining = self._cooldown_remaining()
             if remaining > 0:
-                if self._deferred_task is None or self._deferred_task.done():
+                if self._schedule(remaining):
                     logger.info(f"Fire alert deferred: {remaining:.0f}s of the alert cooldown remain.")
-                    self._deferred_task = asyncio.create_task(self._send_after(remaining))
                 return
             await self._perform()
+
+    def _schedule(self, delay: float) -> bool:
+        """Schedules a deferred send unless one is already pending (the running deferred task may replace itself).
+
+        Args:
+            delay: Seconds to wait before sending.
+
+        Returns:
+            True if a new deferred send was scheduled.
+        """
+        task = self._deferred_task
+        if task is not None and not task.done() and task is not asyncio.current_task():
+            return False
+        self._deferred_task = asyncio.create_task(self._send_after(delay))
+        return True
 
     async def _send_after(self, delay: float) -> None:
         """Sends the deferred alert once the cooldown has elapsed.
@@ -145,7 +169,7 @@ class OnceAction:
             # From here on `rearm` must not cancel the send: it waits on the lock instead.
             self._deferred_sending = True
             try:
-                if not self.was_performed:
+                if not self.was_performed and not self._stopped:
                     await self._perform()
             finally:
                 self._deferred_sending = False
@@ -166,10 +190,14 @@ class OnceAction:
                 failures += 1
                 logger.error(f"Alert action {_action_name(action)} reported failure.")
         if self.actions and failures == len(self.actions):
-            logger.error(
-                "No alert action succeeded; the alert stays armed and is retried only after the fire is "
-                "re-detected (extinguish, then fire) or the stream reconnects."
-            )
+            if self.retry_seconds > 0 and not self._stopped:
+                self._schedule(self.retry_seconds)
+                logger.error(f"No alert action succeeded; the alert stays armed and is retried in {self.retry_seconds:.0f}s.")
+            else:
+                logger.error(
+                    "No alert action succeeded; the alert stays armed and is retried only after the fire is "
+                    "re-detected (extinguish, then fire) or the stream reconnects."
+                )
             return
         self.was_performed = True
         self._frame = None
@@ -178,13 +206,18 @@ class OnceAction:
     async def rearm(self) -> None:
         """Arms the container for the next fire event.
 
-        Cancels a pending deferred alert (the fire it was for is gone). An alert
-        that is already being sent is allowed to finish first.
+        Cancels a pending deferred alert or retry (the fire it was for is gone).
+        An alert that is already being sent is allowed to finish first; a retry
+        it schedules on failure is cancelled as well.
         """
         if self._deferred_task is not None and not self._deferred_sending:
             self._deferred_task.cancel()
             self._deferred_task = None
         async with self._lock:
+            # Holding the lock, any pending deferred task is still waiting (a send holds the lock): safe to cancel.
+            if self._deferred_task is not None and not self._deferred_task.done():
+                self._deferred_task.cancel()
+            self._deferred_task = None
             if self.was_performed:
                 logger.info("Fire alert re-armed for the next fire event.")
             self.was_performed = False
@@ -196,8 +229,10 @@ class OnceAction:
         A deferred alert that is still waiting for the cooldown is cancelled.
         One that is already being sent gets up to `stop_timeout_seconds` to
         finish; only if it is still running after that is it cancelled, so
-        shutdown is never blocked indefinitely by a hanging send.
+        shutdown is never blocked indefinitely by a hanging send. No alert or
+        retry is started after `stop`.
         """
+        self._stopped = True
         task = self._deferred_task
         self._deferred_task = None
         if task is not None and not task.done():

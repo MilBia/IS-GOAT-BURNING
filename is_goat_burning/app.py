@@ -148,7 +148,9 @@ class Application:
                     },
                 )
             )
-        self.on_fire_action_handler = OnceAction(actions, cooldown_seconds=settings.alert_cooldown_seconds)
+        self.on_fire_action_handler = OnceAction(
+            actions, cooldown_seconds=settings.alert_cooldown_seconds, retry_seconds=settings.alert_retry_seconds
+        )
 
         if settings.discord.use_discord and settings.discord.send_video_chunks:
             self.video_event_action = FireEventAction(

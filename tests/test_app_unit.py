@@ -46,6 +46,7 @@ def create_mock_settings(use_emails: bool = False, use_discord: bool = False, se
     mock_settings.source = "mock://source"
     mock_settings.detection_strategy = "classic"
     mock_settings.alert_cooldown_seconds = 600.0
+    mock_settings.alert_retry_seconds = 60.0
     return mock_settings
 
 
@@ -101,7 +102,7 @@ def test_setup_actions_instantiates_no_actions_when_disabled(mock_once_action: M
     with patch("is_goat_burning.app.settings", mock_settings):
         Application()
 
-    mock_once_action.assert_called_once_with([], cooldown_seconds=600.0)
+    mock_once_action.assert_called_once_with([], cooldown_seconds=600.0, retry_seconds=60.0)
 
 
 @patch("is_goat_burning.app.OnceAction")
