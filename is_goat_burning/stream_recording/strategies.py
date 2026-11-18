@@ -340,6 +340,10 @@ class SegmentsBufferStrategy(BufferStrategy):
     MIN_FREE_BYTES: ClassVar[int] = 128 * 1024 * 1024
     SEGMENT_NAME: ClassVar[re.Pattern[str]] = re.compile(r"seg(\d{3,})\.ts")
     PROBE_TIMEOUT_SECONDS: ClassVar[float] = 10.0
+    STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
+    STDERR_LINE_MAX_CHARS: ClassVar[int] = 300
+    STDERR_DRAIN_TIMEOUT_SECONDS: ClassVar[float] = 2.0
+    URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"https?://\S+")
 
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the segment ring parameters.
@@ -354,6 +358,8 @@ class SegmentsBufferStrategy(BufferStrategy):
         self.ring_size = math.ceil(self.buffer_seconds / self.segment_seconds) + self.RING_EXTRA_SEGMENTS
         self._ffmpeg: asyncio.subprocess.Process | None = None
         self._supervisor: asyncio.Task[None] | None = None
+        self._stderr_reader: asyncio.Task[None] | None = None
+        self._stderr_tail: deque[str] = deque(maxlen=self.STDERR_LAST_LINES_TO_KEEP)
         #: Wall-clock start of the current ffmpeg run; older segments come from an earlier run (or connection).
         self._run_started: float | None = None
         logger.info(f"Segments ring: {self.ring_size} slots of >= {self.segment_seconds}s in {self.ring_dir}.")
@@ -436,6 +442,40 @@ class SegmentsBufferStrategy(BufferStrategy):
                 "The ring may fill up and archiving fail; in Docker raise --shm-size."
             )
 
+    def _sanitize_stderr_line(self, raw: bytes) -> str:
+        """Masks URLs (they may carry tokens) and truncates a stderr line for logging."""
+        line = self.URL_PATTERN.sub("<url>", raw.decode(errors="replace").strip())
+        return line[: self.STDERR_LINE_MAX_CHARS]
+
+    async def _drain_stderr(self, stream: asyncio.StreamReader) -> None:
+        """Continuously reads ffmpeg's stderr so the pipe never fills, keeping the last sanitized lines."""
+        while True:
+            try:
+                raw = await stream.readline()
+            except ValueError:  # line longer than the stream limit: it was discarded, keep draining
+                self._stderr_tail.append("<overlong line dropped>")
+                continue
+            if not raw:
+                return
+            line = self._sanitize_stderr_line(raw)
+            if line:
+                self._stderr_tail.append(line)
+
+    async def _finish_stderr_reader(self) -> None:
+        """Waits briefly for the stderr reader to hit EOF, then cancels it."""
+        reader = self._stderr_reader
+        if reader is None:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(reader), timeout=self.STDERR_DRAIN_TIMEOUT_SECONDS)
+        except TimeoutError:
+            pass
+        finally:
+            if not reader.done():
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader
+
     async def _supervise_ffmpeg(self) -> None:
         """Keeps the ffmpeg archiver running, restarting it with a back-off when it exits."""
         delay = self.RESTART_DELAY_MIN
@@ -449,11 +489,16 @@ class SegmentsBufferStrategy(BufferStrategy):
                     *self.ffmpeg_command(start_number),
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+                self._stderr_tail.clear()
+                if self._ffmpeg.stderr is not None:
+                    self._stderr_reader = asyncio.create_task(self._drain_stderr(self._ffmpeg.stderr))
                 logger.info("Segment archiver (ffmpeg -c copy) started.")
                 code = await self._ffmpeg.wait()
-                logger.warning(f"Segment archiver exited with code {code}.")
+                await self._finish_stderr_reader()
+                tail = "\n".join(self._stderr_tail)
+                logger.warning(f"Segment archiver exited with code {code}." + (f" Last stderr lines:\n{tail}" if tail else ""))
                 self._drop_truncated_segment()
             except OSError:
                 logger.exception("Could not start the segment archiver (is ffmpeg installed?).")
@@ -500,6 +545,11 @@ class SegmentsBufferStrategy(BufferStrategy):
             self._supervisor.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._supervisor
+        reader = self._stderr_reader
+        if reader is not None and not reader.done():
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
         proc = self._ffmpeg
         if proc is not None and proc.returncode is None:
             proc.terminate()
@@ -551,6 +601,7 @@ class SegmentsBufferStrategy(BufferStrategy):
         finally:
             listing.unlink(missing_ok=True)
         if result.returncode != 0:
+            Path(out_path).unlink(missing_ok=True)  # do not leave a corrupt mp4 in the event directory
             logger.error(f"Segment concat failed: {result.stderr.decode(errors='ignore')[-300:]}")
             return False
         return True
@@ -696,6 +747,11 @@ class SegmentsBufferStrategy(BufferStrategy):
         elif shutil.which("ffmpeg") is None:
             logger.error("ffmpeg not found; segments archiving is inactive.")
         else:
+            if shutil.which("ffprobe") is None:
+                logger.warning(
+                    "ffprobe not found; joining pre-fire segments across a reconnect is disabled "
+                    "(the pre-fire clip will start at the reconnect)."
+                )
             await asyncio.get_running_loop().run_in_executor(None, self._prepare_ring)
             self._supervisor = asyncio.create_task(self._supervise_ffmpeg())
         try:
