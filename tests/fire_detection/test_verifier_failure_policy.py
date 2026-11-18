@@ -323,3 +323,63 @@ async def test_inconclusive_frame_does_not_reset_a_pending_fire_debounce(mocker:
     _, on_fire, _ = await _stream_run(mocker, [True, VerifierError("x"), True], [0.0, 6.0], detected=5, extinguished=10)
 
     on_fire.assert_awaited_once_with()
+
+
+# --- While the verifier is unavailable it is probed at most once per cooldown (#188) ---
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+@pytest.mark.asyncio
+async def test_unavailable_verifier_is_probed_once_per_cooldown(mocker: MockerFixture) -> None:
+    """During an outage the policy result is returned between probes; the verifier is called once per cooldown."""
+    clock = _Clock()
+    mocker.patch.object(detectors, "time", clock)
+    local = MagicMock()
+    local.detect = AsyncMock(return_value=(True, FRAME))
+    verifier = MagicMock()
+    verifier.verify = AsyncMock(side_effect=VerifierError("down"))
+    detector = HybridFireDetector(
+        local, verifier, cooldown_seconds=30, max_calls_per_hour=0, failure_policy="alert_unverified", errors_before_policy=1
+    )
+
+    results = []
+    for second in range(61):
+        clock.now = float(second)
+        results.append((await detector.detect(FRAME))[0])
+        assert detector.last_result_unverified is True
+
+    assert all(results)
+    assert verifier.verify.await_count == 3  # t=0, 30, 60
+
+    verifier.verify = AsyncMock(return_value=False)  # the verifier is back
+    clock.now = 89.0
+    assert (await detector.detect(FRAME))[0] is True  # still inside the probe interval: policy result
+    clock.now = 90.0
+    assert (await detector.detect(FRAME))[0] is False  # probed, real verdict
+    assert verifier.verify.await_count == 1
+    assert detector.last_result_unverified is False
+
+
+@pytest.mark.asyncio
+async def test_errors_below_the_policy_threshold_are_still_reasked_on_the_next_check(mocker: MockerFixture) -> None:
+    """The probe interval applies only once the verifier is unavailable, not to inconclusive errors."""
+    clock = _Clock()
+    mocker.patch.object(detectors, "time", clock)
+    local = MagicMock()
+    local.detect = AsyncMock(return_value=(True, FRAME))
+    verifier = MagicMock()
+    verifier.verify = AsyncMock(side_effect=[VerifierError("a"), VerifierError("b"), True])
+    detector = HybridFireDetector(local, verifier, cooldown_seconds=30, max_calls_per_hour=0, errors_before_policy=3)
+
+    for second in range(3):
+        clock.now = float(second)
+        await detector.detect(FRAME)
+
+    assert verifier.verify.await_count == 3

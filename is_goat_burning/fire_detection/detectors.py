@@ -485,7 +485,8 @@ class HybridFireDetector:
     errors are reported as inconclusive (``last_result_inconclusive``; ``StreamFireDetector`` keeps its state), and
     once ``errors_before_policy`` errors occurred in a row (or the hourly call cap is reached)
     the ``failure_policy`` decides: ``alert_unverified`` reports the gate's fire as an unverified detection
-    (``last_result_unverified`` is True), ``suppress`` reports no fire. Entering and leaving that degraded state
+    (``last_result_unverified`` is True), ``suppress`` reports no fire. While unavailable, the verifier is probed at
+    most once per ``cooldown_seconds`` and the policy result is reported in between. Entering and leaving that degraded state
     is logged (CRITICAL / INFO) and published through ``verifier_health.publish_verifier_status``.
     """
 
@@ -543,6 +544,7 @@ class HybridFireDetector:
         self._last_call_time: float | None = None
         self._last_verdict = False
         self._last_positive_time: float | None = None
+        self._last_attempt_time: float | None = None
         self._call_times: deque[float] = deque()
         self._limit_warned = False
         self._consecutive_errors = 0
@@ -648,6 +650,19 @@ class HybridFireDetector:
             return False
         return self._last_verdict or not self._fire_recently_verified(now)
 
+    def _probe_throttled(self, now: float) -> bool:
+        """Whether an unavailable verifier was already probed within the cooldown (the policy result is reported).
+
+        Without this every CV-positive check would call a failing verifier (up to one call per check, each possibly
+        blocking the detect loop for the verifier timeout). Errors below ``errors_before_policy`` are not throttled.
+        """
+        return (
+            self._unavailable
+            and bool(self.cooldown_seconds)
+            and self._last_attempt_time is not None
+            and now - self._last_attempt_time < self.cooldown_seconds
+        )
+
     def _fire_recently_verified(self, now: float) -> bool:
         """Whether a positive verdict is recent enough that a negative one must not be reused (#188).
 
@@ -701,12 +716,15 @@ class HybridFireDetector:
         now = time.monotonic()
         if self._can_reuse_verdict(now):
             return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
+        if self._probe_throttled(now):
+            return self._policy_result(), annotated_frame  # unavailable: probe at most once per cooldown
         if self._cap_reached(now):
             if self.escalation_log is not None:
                 self.escalation_log.record_capped(type(self.verifier).__name__, self.failure_policy)
             return self._policy_result(), annotated_frame
         previous_call_time = self._last_call_time
         self._last_call_time = now
+        self._last_attempt_time = now
 
         started = perf_counter()
         try:
