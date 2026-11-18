@@ -425,6 +425,8 @@ alerted (marked `[UNVERIFIED]`) instead of being silenced. After start, `docker 
 `Successfully resolved stream URL`, `Segments ring: N slots`, `Initialized hybrid detector with verifier ...`,
 `Segment archiver (ffmpeg -c copy) started`.
 
+Day-to-day operation, day-zero checklist and a failure table are in the [operations runbook](docs/runbook.md).
+
 ## Testing
 
 This project uses `pytest` for unit and integration testing. A comprehensive test suite is located in the `tests/` directory.
