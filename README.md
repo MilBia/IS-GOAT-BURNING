@@ -87,7 +87,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
 | `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
 | `CHECKS_PER_SECOND` | How many times per second to analyze the video. | `1.0` |
-| `VERIFIER_COOLDOWN_SECONDS` | `hybrid_*` only: minimum seconds between verifier (API) calls; the last verdict is reused meanwhile. `0` disables. | `60` |
+| `VERIFIER_COOLDOWN_SECONDS` | `hybrid_*` only: minimum seconds between verifier (API) calls; the last verdict is reused meanwhile. A "no fire" verdict is not reused while a fire was verified within the last cooldown + `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS` (the verifier is asked again on the next check), so a single false negative cannot end an ongoing fire. `0` disables. | `60` |
 | `VERIFIER_MAX_CALLS_PER_HOUR` | `hybrid_*` only: hard cap of verifier calls per rolling hour; at the cap the verifier counts as unavailable and `VERIFIER_FAILURE_POLICY` applies. `0` = unlimited. | `0` |
 | `VERIFIER_FAILURE_POLICY` | `hybrid_*` only: what a CV detection yields while the verifier is unavailable (errors, timeouts, call cap). `alert_unverified` sends the alert marked as unverified; `suppress` sends nothing (CRITICAL log only) and, during an ongoing fire, ends it after the extinguish debounce (recording stops, alert re-arms). | `alert_unverified` |
 | `VERIFIER_ERRORS_BEFORE_POLICY` | `hybrid_*` only: consecutive verifier errors before the policy applies (an error is never cached; the verifier is asked again on the next check; until then a check is inconclusive and the detection state is kept). | `3` |

@@ -80,3 +80,90 @@ async def test_failed_verifier_call_does_not_start_the_cooldown(mocker: MockerFi
 
     assert (await detector.detect(FRAME))[0] is True  # asked again immediately, not blocked for 60 s
     assert call.await_count == 2
+
+
+# --- A negative verdict must not end an ongoing fire through the cooldown (#188, I5) ---
+
+
+class _Clock:
+    """A manually advanced clock shared by ``detectors`` and ``detector_core``."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _verdicts(first: list[bool], then: bool) -> AsyncMock:
+    """A verifier answering ``first`` in order, then ``then`` forever."""
+    queue = list(first)
+
+    async def verify(_frame: np.ndarray) -> bool:
+        return queue.pop(0) if queue else then
+
+    return AsyncMock(side_effect=verify)
+
+
+async def _run_fire(
+    mocker: MockerFixture, verify: AsyncMock, seconds: int, cooldown: float = 30.0, debounce: float = 10.0
+) -> tuple[MagicMock, AsyncMock]:
+    """Feeds one CV-positive frame per second through HybridFireDetector into StreamFireDetector's debounce."""
+    from is_goat_burning.fire_detection import detector_core
+    from is_goat_burning.fire_detection.detector_core import StreamFireDetector
+
+    clock = _Clock()
+    mocker.patch.object(detectors, "time", clock)
+    mocker.patch.object(detector_core, "time", clock)
+    core_settings = MagicMock(fire_detected_debounce_seconds=0.0, fire_extinguished_debounce_seconds=debounce)
+    mocker.patch.object(detector_core, "settings", core_settings)
+
+    local = MagicMock()
+    local.detect = AsyncMock(return_value=(True, FRAME))
+    verifier = MagicMock()
+    verifier.verify = verify
+    hybrid = HybridFireDetector(
+        local, verifier, cooldown_seconds=cooldown, max_calls_per_hour=0, extinguish_debounce_seconds=debounce
+    )
+    on_extinguished = AsyncMock()
+    stream = StreamFireDetector(
+        on_fire_action=AsyncMock(), video_output=False, checks_per_second=1.0, on_extinguished_action=on_extinguished
+    )
+    stream.signal_handler = MagicMock()
+    stream.fire_detector = hybrid
+    for second in range(seconds):
+        clock.now = float(second)
+        fire, _ = await hybrid.detect(FRAME)
+        await stream._handle_fire_detection(fire, FRAME)
+    return on_extinguished, verify
+
+
+@pytest.mark.asyncio
+async def test_single_false_negative_after_the_cooldown_does_not_end_the_fire(mocker: MockerFixture) -> None:
+    """Verified fire, then one false negative right after the cooldown: the fire state survives (re-asked at once)."""
+    verify = _verdicts([True, False], then=True)  # t=0 fire, t=30 false negative, t=31 fire again
+
+    on_extinguished, verify = await _run_fire(mocker, verify, seconds=70)
+
+    on_extinguished.assert_not_awaited()
+    assert verify.await_count == 4  # t=0, t=30 (no), t=31 (re-asked), t=61
+
+
+@pytest.mark.asyncio
+async def test_persistent_cv_false_positive_is_still_rate_limited_by_the_cooldown(mocker: MockerFixture) -> None:
+    """No positive verdict at all: a negative is reused for the whole cooldown (API cost unchanged)."""
+    on_extinguished, verify = await _run_fire(mocker, _verdicts([], then=False), seconds=121)
+
+    assert verify.await_count == 5  # t=0, 30, 60, 90, 120
+    on_extinguished.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_extinguish_still_ends_the_fire_with_bounded_calls(mocker: MockerFixture) -> None:
+    """Verified fire, then the verifier keeps saying no: the fire ends after the debounce; extra calls are bounded."""
+    on_extinguished, verify = await _run_fire(mocker, _verdicts([True], then=False), seconds=121)
+
+    on_extinguished.assert_awaited_once()
+    # t=0 (fire), every check from t=30 to t=39 (inside cooldown + debounce of the last positive), then once per
+    # cooldown again: t=69, 99.
+    assert verify.await_count == 1 + 10 + 2

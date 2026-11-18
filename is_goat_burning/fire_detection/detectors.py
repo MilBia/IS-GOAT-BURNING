@@ -462,6 +462,15 @@ class OpenCLFireDetector(CPUFireDetector):
         return await asyncio.to_thread(_run)
 
 
+def _to_numpy(frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> np.ndarray:
+    """Returns the frame as a host numpy array (downloads GPU/UMat frames)."""
+    if isinstance(frame, cv2.cuda.GpuMat):
+        return frame.download()
+    if isinstance(frame, cv2.UMat):
+        return frame.get()
+    return frame
+
+
 class HybridFireDetector:
     """Two-stage fire detector: CV gatekeeper + pluggable verifier.
 
@@ -489,6 +498,7 @@ class HybridFireDetector:
         failure_policy: str | None = None,
         errors_before_policy: int | None = None,
         escalation_log: EscalationLog | None = None,
+        extinguish_debounce_seconds: float | None = None,
     ) -> None:
         """Initializes the HybridFireDetector.
 
@@ -497,7 +507,8 @@ class HybridFireDetector:
             verifier: The second-stage verifier (any `FireVerifier`) used to confirm detections.
             cooldown_seconds: Minimum time between verifier calls. While it runs, the last verdict is reused (so the
                 debounce is not reset by a gap). Defaults to ``settings.verifier_cooldown_seconds``; 0 disables it.
-                Only real verdicts are reused; an error is never cached.
+                Only real verdicts are reused; an error is never cached, and a negative verdict shortly after a
+                positive one is not reused either (one false negative must not end an ongoing fire).
             max_calls_per_hour: Hard cap of verifier calls in a rolling hour; once reached the verifier is not called
                 and the verifier counts as unavailable (``failure_policy`` applies). Defaults to
                 ``settings.verifier_max_calls_per_hour``; 0 means unlimited.
@@ -508,8 +519,14 @@ class HybridFireDetector:
                 ``settings.verifier_errors_before_policy``.
             escalation_log: Recorder of every frame sent to the verifier with its verdict. Defaults to the shared log
                 from ``settings.escalation_log`` (None while it is disabled).
+            extinguish_debounce_seconds: The fire-extinguished debounce of ``StreamFireDetector``. A negative verdict
+                is not reused while a positive verdict is at most ``cooldown_seconds + extinguish_debounce_seconds``
+                old (see ``detect``). Defaults to ``settings.fire_extinguished_debounce_seconds``.
         """
         self.escalation_log = escalation_log if escalation_log is not None else get_escalation_log()
+        self.extinguish_debounce_seconds = (
+            settings.fire_extinguished_debounce_seconds if extinguish_debounce_seconds is None else extinguish_debounce_seconds
+        )
         self.local_detector = local_detector
         self.verifier = verifier
         self.cooldown_seconds = settings.verifier_cooldown_seconds if cooldown_seconds is None else cooldown_seconds
@@ -525,6 +542,7 @@ class HybridFireDetector:
         self.last_result_inconclusive = False
         self._last_call_time: float | None = None
         self._last_verdict = False
+        self._last_positive_time: float | None = None
         self._call_times: deque[float] = deque()
         self._limit_warned = False
         self._consecutive_errors = 0
@@ -624,6 +642,25 @@ class HybridFireDetector:
         self._mark_unavailable(f"{self._consecutive_errors} consecutive errors, last: {exc}")
         return self._policy_result()
 
+    def _can_reuse_verdict(self, now: float) -> bool:
+        """Whether the last verdict is reused instead of calling the verifier (inside the cooldown)."""
+        if not self.cooldown_seconds or self._last_call_time is None or now - self._last_call_time >= self.cooldown_seconds:
+            return False
+        return self._last_verdict or not self._fire_recently_verified(now)
+
+    def _fire_recently_verified(self, now: float) -> bool:
+        """Whether a positive verdict is recent enough that a negative one must not be reused (#188).
+
+        A positive verdict is reused for the whole cooldown, so the next real call, which may be a false negative,
+        comes at least ``cooldown_seconds`` after it. Reusing that negative for another cooldown would end the fire
+        after the (shorter) extinguish debounce. Until ``cooldown_seconds + extinguish_debounce_seconds`` after the
+        last positive verdict the verifier is therefore asked again on every CV-positive check instead; a persistent
+        CV false positive without any positive verdict keeps the full cooldown.
+        """
+        if self._last_positive_time is None:
+            return False
+        return now < self._last_positive_time + self.cooldown_seconds + self.extinguish_debounce_seconds
+
     def _policy_result(self) -> bool:
         """Returns the result reported while the verifier is unavailable, per ``failure_policy``."""
         unverified = self.failure_policy == "alert_unverified"
@@ -659,17 +696,10 @@ class HybridFireDetector:
             return False, annotated_frame
 
         # Stage 2: verifier confirmation
-        # Convert frame to numpy array (verifiers require np.ndarray)
-        numpy_frame: np.ndarray
-        if isinstance(frame, cv2.cuda.GpuMat):
-            numpy_frame = frame.download()
-        elif isinstance(frame, cv2.UMat):
-            numpy_frame = frame.get()
-        else:
-            numpy_frame = frame
+        numpy_frame = _to_numpy(frame)  # verifiers require np.ndarray
 
         now = time.monotonic()
-        if self.cooldown_seconds and self._last_call_time is not None and now - self._last_call_time < self.cooldown_seconds:
+        if self._can_reuse_verdict(now):
             return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
         if self._cap_reached(now):
             if self.escalation_log is not None:
@@ -690,6 +720,8 @@ class HybridFireDetector:
             raise
         self._record_escalation(numpy_frame, "fire" if verified else "no_fire", (perf_counter() - started) * 1000.0)
         self._last_verdict = verified
+        if verified:
+            self._last_positive_time = now
         self._mark_available()
 
         if not verified:
