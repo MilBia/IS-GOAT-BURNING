@@ -525,3 +525,78 @@ def test_drop_truncated_segment_spares_segments_of_earlier_runs(ring: Path, cont
     strategy._drop_truncated_segment()
 
     assert sorted(p.name for p in ring.glob("seg*.ts")) == ["seg000.ts", "seg001.ts"]
+
+
+def _running_ffmpeg(strategy: SegmentsBufferStrategy) -> None:
+    import time
+
+    strategy._run_started = time.time() - 30
+    strategy._ffmpeg = MagicMock(returncode=None)
+
+
+@pytest.mark.asyncio
+async def test_final_post_fire_clip_includes_the_segment_open_at_the_deadline(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    _segment(ring, "seg000.ts", 6)
+    _segment(ring, "seg001.ts", 3)
+    _segment(ring, "seg002.ts", 0.1)  # open when the recording ends
+    strategy = SegmentsBufferStrategy(context)
+    _running_ffmpeg(strategy)
+    clips = _capture_clips(mocker, results=[True, True])
+
+    sleeps = 0
+
+    async def next_segment_starts_after_the_deadline(*_: object) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 2:  # the first sleep is the collect interval; the second is the wait for the open segment
+            _segment(ring, "seg003.ts", 0.0)
+
+    mocker.patch(
+        "is_goat_burning.stream_recording.strategies.asyncio.sleep",
+        AsyncMock(side_effect=next_segment_starts_after_the_deadline),
+    )
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips[0] == ["seg000.ts", "seg001.ts"]
+    assert clips[-1] == ["seg002.ts"]
+
+
+@pytest.mark.asyncio
+async def test_final_wait_is_bounded_when_the_open_segment_never_closes(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    _segment(ring, "seg000.ts", 3)
+    _segment(ring, "seg001.ts", 0.1)
+    strategy = SegmentsBufferStrategy(context)
+    _running_ffmpeg(strategy)
+    mocker.patch.object(SegmentsBufferStrategy, "LAST_SEGMENT_MARGIN_SECONDS", 0.05)
+    mocker.patch.object(SegmentsBufferStrategy, "LAST_SEGMENT_POLL_SECONDS", 0.01)
+    mocker.patch.object(strategy, "segment_seconds", 0)
+    clips = _capture_clips(mocker, results=[True])
+    import asyncio
+
+    real_sleep = asyncio.sleep
+    mocker.patch("is_goat_burning.stream_recording.strategies.asyncio.sleep", lambda _s: real_sleep(0.01))
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    assert clips == [["seg000.ts"]]  # only the pre-fire clip; nothing new to write after the deadline
+
+
+@pytest.mark.asyncio
+async def test_no_final_segment_when_ffmpeg_is_not_running(
+    ring: Path, context: MagicMock, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    _segment(ring, "seg000.ts", 3)
+    _segment(ring, "seg001.ts", 0.1)
+    strategy = SegmentsBufferStrategy(context)
+    clips = _capture_clips(mocker, results=[True])
+    wait = mocker.patch.object(strategy, "_await_open_segment_closed", wraps=strategy._await_open_segment_closed)
+
+    await strategy.handle_fire_event(str(_event_dir(tmp_path, context)))
+
+    wait.assert_awaited()
+    assert clips == [["seg000.ts"]]

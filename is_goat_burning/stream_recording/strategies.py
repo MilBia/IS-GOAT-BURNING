@@ -340,6 +340,8 @@ class SegmentsBufferStrategy(BufferStrategy):
     MIN_FREE_BYTES: ClassVar[int] = 128 * 1024 * 1024
     SEGMENT_NAME: ClassVar[re.Pattern[str]] = re.compile(r"seg(\d{3,})\.ts")
     PROBE_TIMEOUT_SECONDS: ClassVar[float] = 10.0
+    LAST_SEGMENT_POLL_SECONDS: ClassVar[float] = 1.0
+    LAST_SEGMENT_MARGIN_SECONDS: ClassVar[float] = 5.0
     STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
     STDERR_LINE_MAX_CHARS: ClassVar[int] = 300
     STDERR_DRAIN_TIMEOUT_SECONDS: ClassVar[float] = 2.0
@@ -581,6 +583,44 @@ class SegmentsBufferStrategy(BufferStrategy):
             return found[:-1]
         return found
 
+    def _open_segment_exists(self, after_mtime: float) -> bool:
+        """Returns True while ffmpeg runs and its newest segment is still being written (and not yet collected)."""
+        proc = self._ffmpeg
+        if proc is None or proc.returncode is not None or self._run_started is None:
+            return False
+        newest = 0.0
+        for path in self.ring_dir.glob(self.SEGMENT_GLOB):
+            try:
+                newest = max(newest, path.stat().st_mtime)
+            except OSError:
+                continue
+        return newest >= self._run_started and newest > after_mtime
+
+    async def _await_open_segment_closed(self, after_mtime: float) -> list[tuple[float, Path]]:
+        """Waits (bounded) until the segment open at the end of recording closes, then returns the new segments.
+
+        ffmpeg keeps running for the ring; the open segment is complete once the next one has started.
+        """
+        loop = asyncio.get_running_loop()
+        if not await loop.run_in_executor(None, self._open_segment_exists, after_mtime):
+            return []
+        deadline = time.monotonic() + self.segment_seconds + self.LAST_SEGMENT_MARGIN_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(self.LAST_SEGMENT_POLL_SECONDS)
+            fresh = await loop.run_in_executor(None, self._select_since, after_mtime)
+            if fresh:
+                return fresh
+        logger.debug("The last segment did not close in time; the final post-fire clip ends without it.")
+        return []
+
+    async def _collect_last_segments(self, last_mtime: float, staging: Path) -> tuple[float, list[Path]]:
+        """Copies the segment that was open at the end of recording once it closes; returns (last_mtime, copies)."""
+        segments = await self._await_open_segment_closed(last_mtime)
+        if not segments:
+            return last_mtime, []
+        parts = await asyncio.get_running_loop().run_in_executor(None, self._copy_blocking, [p for _, p in segments], staging)
+        return segments[-1][0], parts
+
     def _select_since(self, after_mtime: float | None) -> list[tuple[float, Path]]:
         """Selects complete segments newer than `after_mtime` (or, without it, within the pre-fire window)."""
         segments = self._complete_segments()
@@ -727,6 +767,9 @@ class SegmentsBufferStrategy(BufferStrategy):
                     logger.info("Fire extinguished signal received.")
                     tail_deadline = time.monotonic() + tail
                 done = tail_deadline is not None and time.monotonic() >= tail_deadline
+                if done:
+                    last_mtime, last_parts = await self._collect_last_segments(last_mtime, staging)
+                    pending += last_parts
                 if pending and (done or time.monotonic() - pending_since >= chunk_seconds):
                     if await self._write_clip(pending, event_dir, "post-fire"):
                         for part in pending:
