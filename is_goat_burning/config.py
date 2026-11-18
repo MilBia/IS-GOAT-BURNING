@@ -393,6 +393,7 @@ class Settings(BaseSettings):
     fire_detected_debounce_seconds: float = Field(default=0.0, validation_alias="FIRE_DETECTED_DEBOUNCE_SECONDS")
     fire_extinguished_debounce_seconds: float = Field(default=5.0, validation_alias="FIRE_EXTINGUISHED_DEBOUNCE_SECONDS")
     alert_cooldown_seconds: float = Field(default=600.0, ge=0.0, validation_alias="ALERT_COOLDOWN_SECONDS")
+    alert_retry_seconds: float = Field(default=60.0, ge=0.0, validation_alias="ALERT_RETRY_SECONDS")
     motion_detection_threshold: int = Field(default=25, validation_alias="MOTION_DETECTION_THRESHOLD")
 
     # Nested settings

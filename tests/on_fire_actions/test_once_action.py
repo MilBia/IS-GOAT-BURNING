@@ -388,3 +388,113 @@ async def test_frame_and_unverified_are_forwarded_together() -> None:
     once_action = OnceAction(actions=[(action, {})])
     await once_action(unverified=True, frame="F")
     action.assert_awaited_once_with(unverified=True, frame="F")
+
+
+# --- Retry after every action failed (#188, I2) ---
+
+RETRY = 0.02
+
+
+class FlakyAction:
+    """An action failing ``failures`` times (returns False), then succeeding; records every call's kwargs."""
+
+    def __init__(self, failures: int) -> None:
+        self.failures = failures
+        self.calls: list[dict[str, object]] = []
+
+    async def __call__(self, **kwargs: object) -> bool:
+        self.calls.append(kwargs)
+        return len(self.calls) > self.failures
+
+
+@pytest.mark.asyncio
+async def test_failed_alert_is_retried_until_it_succeeds() -> None:
+    """All actions fail -> retried after ``retry_seconds`` (repeatedly) -> one successful alert, with its frame."""
+    action = FlakyAction(failures=2)
+    once_action = OnceAction(actions=[(action, {})], retry_seconds=RETRY)
+
+    await once_action(unverified=True, frame="F")
+    assert len(action.calls) == 1
+    await asyncio.sleep(RETRY * 6)
+
+    assert len(action.calls) == 3  # first attempt + two retries; the third call succeeded
+    assert all(call == {"unverified": True, "frame": "F"} for call in action.calls)
+    assert once_action.was_performed is True
+    await asyncio.sleep(RETRY * 3)
+    assert len(action.calls) == 3  # no further retries after the success
+    await once_action.stop()
+
+
+@pytest.mark.asyncio
+async def test_retry_disabled_by_zero_keeps_old_behaviour() -> None:
+    """``retry_seconds=0`` schedules no retry."""
+    action = FlakyAction(failures=5)
+    once_action = OnceAction(actions=[(action, {})], retry_seconds=0.0)
+    await once_action()
+    await asyncio.sleep(RETRY * 3)
+    assert len(action.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_extinguish_cancels_pending_retry() -> None:
+    """``rearm`` (the fire went out) cancels a scheduled retry."""
+    action = FlakyAction(failures=5)
+    once_action = OnceAction(actions=[(action, {})], retry_seconds=RETRY)
+    await once_action()
+    await once_action.rearm()
+    await asyncio.sleep(RETRY * 3)
+    assert len(action.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_rearm_during_a_failing_retry_send_leaves_no_retry() -> None:
+    """A retry that is being sent when ``rearm`` arrives must not schedule another retry after it fails."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_failing(**_kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # the first retry: hold it mid-send
+            started.set()
+            await release.wait()
+        return False
+
+    once_action = OnceAction(actions=[(slow_failing, {})], retry_seconds=RETRY)
+    await once_action()
+    await asyncio.wait_for(started.wait(), 1)
+    rearm = asyncio.create_task(once_action.rearm())
+    await asyncio.sleep(0)
+    release.set()
+    await rearm
+    await asyncio.sleep(RETRY * 3)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_during_a_failing_retry_send_leaves_no_retry() -> None:
+    """A retry that is being sent when ``stop`` arrives must not schedule another retry after shutdown."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def slow_failing(**_kwargs: object) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            started.set()
+            await release.wait()
+        return False
+
+    once_action = OnceAction(actions=[(slow_failing, {})], retry_seconds=RETRY, stop_timeout_seconds=1.0)
+    await once_action()
+    await asyncio.wait_for(started.wait(), 1)
+    stop = asyncio.create_task(once_action.stop())
+    await asyncio.sleep(0)
+    release.set()
+    await stop
+    await asyncio.sleep(RETRY * 3)
+    assert calls == 2
+    await once_action()  # calls after shutdown do nothing
+    assert calls == 2

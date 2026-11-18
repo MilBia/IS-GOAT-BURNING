@@ -224,3 +224,50 @@ async def test_in_flight_is_released_after_writes(tmp_path: Path) -> None:
         await log.aclose()
     assert log._in_flight == 0
     assert len(_lines(tmp_path)) == el.MAX_IN_FLIGHT * 3
+
+
+# --- Startup directory check (#188, I3) ---
+
+
+@pytest.mark.asyncio
+async def test_unwritable_directory_logs_one_clear_error_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A directory that cannot be created is reported once, at ERROR, with the path and the fix."""
+    blocker = tmp_path / "file"
+    blocker.write_text("x")  # a regular file as the parent: mkdir fails even when the tests run as root
+    target = blocker / "escalations"
+    cfg = Settings(_env_file=None, source="mock://source", escalation_log={"enabled": True, "directory": str(target)})
+    monkeypatch.setattr(el, "settings", cfg)
+
+    el.logger.addHandler(caplog.handler)  # project loggers do not propagate to the root logger
+    old_level = el.logger.level
+    el.logger.setLevel("DEBUG")
+    try:
+        assert await el.check_escalation_log_directory() is False
+    finally:
+        el.logger.removeHandler(caplog.handler)
+        el.logger.setLevel(old_level)
+
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert str(target) in errors[0].getMessage()
+    assert "ESCALATION_LOG__DIRECTORY" in errors[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_writable_directory_is_created_at_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "recordings" / "escalations"
+    cfg = Settings(_env_file=None, source="mock://source", escalation_log={"enabled": True, "directory": str(target)})
+    monkeypatch.setattr(el, "settings", cfg)
+    assert await el.check_escalation_log_directory() is True
+    assert target.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_directory_check_is_a_noop_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "never"
+    cfg = Settings(_env_file=None, source="mock://source", escalation_log={"enabled": False, "directory": str(target)})
+    monkeypatch.setattr(el, "settings", cfg)
+    assert await el.check_escalation_log_directory() is True
+    assert not target.exists()

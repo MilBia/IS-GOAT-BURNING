@@ -87,13 +87,13 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `LOGGING` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `"INFO"` |
 | `VIDEO_OUTPUT` | Display the video feed window (for local debugging only). | `false` |
 | `CHECKS_PER_SECOND` | How many times per second to analyze the video. | `1.0` |
-| `VERIFIER_COOLDOWN_SECONDS` | `hybrid_*` only: minimum seconds between verifier (API) calls; the last verdict is reused meanwhile. `0` disables. | `60` |
+| `VERIFIER_COOLDOWN_SECONDS` | `hybrid_*` only: minimum seconds between verifier (API) calls; the last verdict is reused meanwhile. A "no fire" verdict is not reused while a fire was verified within the last cooldown + `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS` (the verifier is asked again on the next check), so a single false negative cannot end an ongoing fire. `0` disables. | `60` |
 | `VERIFIER_MAX_CALLS_PER_HOUR` | `hybrid_*` only: hard cap of verifier calls per rolling hour; at the cap the verifier counts as unavailable and `VERIFIER_FAILURE_POLICY` applies. `0` = unlimited. | `0` |
-| `VERIFIER_FAILURE_POLICY` | `hybrid_*` only: what a CV detection yields while the verifier is unavailable (errors, timeouts, call cap). `alert_unverified` sends the alert marked as unverified; `suppress` sends nothing (CRITICAL log only) and, during an ongoing fire, ends it after the extinguish debounce (recording stops, alert re-arms). | `alert_unverified` |
+| `VERIFIER_FAILURE_POLICY` | `hybrid_*` only: what a CV detection yields while the verifier is unavailable (errors, timeouts, call cap). `alert_unverified` sends the alert marked as unverified; `suppress` sends nothing (CRITICAL log only) and, during an ongoing fire, ends it after the extinguish debounce (recording stops, alert re-arms). While unavailable, the verifier is probed at most once per `VERIFIER_COOLDOWN_SECONDS` and the policy result is reported in between. | `alert_unverified` |
 | `VERIFIER_ERRORS_BEFORE_POLICY` | `hybrid_*` only: consecutive verifier errors before the policy applies (an error is never cached; the verifier is asked again on the next check; until then a check is inconclusive and the detection state is kept). | `3` |
 | `OPEN_CL` | Enable OpenCL for acceleration (experimental). | `false` |
 | `CUDA` | Enable CUDA for NVIDIA GPU acceleration. | `false` |
-| `RECONNECT_DELAY_SECONDS` | Seconds to wait before the first reconnect to a failed stream; the wait doubles after every consecutive failure (exponential backoff) and resets after a session that received a frame. | `5` |
+| `RECONNECT_DELAY_SECONDS` | Seconds to wait before the first reconnect to a failed stream; the wait doubles after every consecutive failure (exponential backoff) and resets after a session that ran for at least 60 s after its first frame (a stream that yields a frame and dies at once keeps backing off). | `5` |
 | `RECONNECT_MAX_DELAY_SECONDS` | Upper limit of the reconnect wait (must be at least `RECONNECT_DELAY_SECONDS`). | `300` |
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
@@ -107,7 +107,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `DECISION__INSTRUCTIONS` | Yes/no question asked about each frame. | `"Is there a visible fire..."` |
 | `DECISION__TIMEOUT_SECONDS` | Per-request timeout in seconds. | `10` |
 | `ESCALATION_LOG__ENABLED` | `hybrid_*` only: record every frame sent to the verifier as a JPEG plus a line in `escalations.jsonl` (time, file, verifier, verdict `fire`/`no_fire`/`error`/`capped`, probability, latency, error type, policy). Non-blocking; for threshold tuning. | `false` |
-| `ESCALATION_LOG__DIRECTORY` | Directory of the escalation log. | `./escalation_log` |
+| `ESCALATION_LOG__DIRECTORY` | Directory of the escalation log. In Docker set it to `/app/recordings/escalations`: the default resolves to `/app/escalation_log`, which is owned by root while the app runs as `nobody` (every record would be dropped) and is not on the recordings volume. An unusable directory is reported once at startup as an ERROR. | `./escalation_log` |
 | `ESCALATION_LOG__MAX_MB` | Size limit; the oldest JPEGs are deleted beyond it (index lines are kept, the index itself rotates). | `2000` |
 | `ESCALATION_LOG__JPEG_QUALITY` | JPEG quality (1-100) of stored frames. | `85` |
 | | | |
@@ -115,6 +115,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `FIRE_DETECTED_DEBOUNCE_SECONDS` | Seconds a fire must be continuously detected before an alert is triggered. `0.0` for immediate. | `0.0` |
 | `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`| Seconds a fire must be continuously absent before the 'extinguished' state is registered. | `5.0` |
 | `ALERT_COOLDOWN_SECONDS` | One alert is sent per fire event; the alert re-arms once the fire is extinguished (or the stream drops mid-fire). This is the minimum spacing between two alerts: a fire re-detected inside the window is alerted when the window ends if it is still burning, otherwise not at all. `0` disables the spacing. | `600` |
+| `ALERT_RETRY_SECONDS` | If every alert action failed (e.g. a short Discord outage at ignition), the alert is retried every this many seconds, with the same frame, until it is sent or the fire is extinguished. The detector signals only when a fire starts, so without the retry such an outage would lose the alert for the whole fire. `0` disables the retry. | `60` |
 | | | |
 | **Email Settings** | | |
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |
@@ -347,6 +348,7 @@ docker build --target cpu -t burning_goat_detection .
 
 docker run -d --name burning_goat_detection_container \
   --restart unless-stopped \
+  --stop-timeout 30 \
   --shm-size 1g \
   --env-file /path/outside/repo/goat.env \
   -v /path/to/recordings:/app/recordings \
@@ -354,6 +356,7 @@ docker run -d --name burning_goat_detection_container \
 ```
 
 -   `--restart unless-stopped` brings the container back after a crash or host reboot.
+-   `--stop-timeout 30` gives the graceful shutdown (final clip, pending alert, service message) time to finish; it can take ~15 s, more than Docker's default 10 s grace period.
 -   `--shm-size 1g` is **required** in `segments` mode: the default 64 MB `/dev/shm` overflows at 60 fps after ~80 s and `ffmpeg` falls into a restart loop (#156). A 1080p60 ring of 120 s takes ~250 MB.
 -   Keep the env file **outside the repository** with mode `600` (`chmod 600 goat.env`); it holds the Gemini key and webhooks.
 -   Recordings: 20 s of 1080p60 is 10-18 MB, so budget ~2.5 GB of disk per hour of fire.
@@ -385,12 +388,23 @@ VERIFIER_MAX_CALLS_PER_HOUR=0
 VERIFIER_FAILURE_POLICY=alert_unverified
 VERIFIER_ERRORS_BEFORE_POLICY=3
 ALERT_COOLDOWN_SECONDS=600
+ALERT_RETRY_SECONDS=60
+
+# Escalation log: every frame sent to the verifier, with its verdict (for threshold tuning).
+# Must be on the recordings volume: the default ./escalation_log is not writable by the container user.
+ESCALATION_LOG__ENABLED=true
+ESCALATION_LOG__DIRECTORY=/app/recordings/escalations
+ESCALATION_LOG__MAX_MB=2000
 
 # Discord
 DISCORD__USE_DISCORD=true
 DISCORD__HOOKS=["<webhook URL>"]
 # Keep false unless clips fit DISCORD__FILE_LIMIT_MB (larger ones become a text message)
 DISCORD__SEND_VIDEO_CHUNKS=false
+# Service channel (startup, heartbeat, stream outage, verifier health, shutdown); must differ from DISCORD__HOOKS
+DISCORD__SERVICE_HOOKS=["<service webhook URL>"]
+DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS=86400
+DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS=600
 
 # Recording
 VIDEO__SAVE_VIDEO_CHUNKS=true

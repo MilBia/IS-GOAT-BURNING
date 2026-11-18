@@ -296,3 +296,31 @@ async def test_run_loop_reports_stream_state_to_service_notifier(
         call.stream_connected(),
     ]
     notifier.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+@patch("is_goat_burning.app.check_escalation_log_directory", new_callable=AsyncMock)
+@patch("is_goat_burning.app.StreamFireDetector.create")
+async def test_run_checks_the_escalation_log_directory_at_startup(
+    mock_detector_factory: AsyncMock,
+    mock_check: AsyncMock,
+    test_settings: Settings,  # noqa: ARG001
+) -> None:
+    """The escalation log directory is checked once when the application starts (#188)."""
+    app = Application()
+    app.signal_handler = MagicMock()
+    app.signal_handler.is_running.return_value = True
+    detector = AsyncMock()
+    detector.fire_is_currently_detected = False
+
+    async def stop_loop() -> None:
+        app.signal_handler.is_running.return_value = False
+
+    detector.side_effect = stop_loop
+    mock_detector_factory.return_value = detector
+
+    await app.run()
+    await app.shutdown()
+
+    mock_check.assert_awaited_once()

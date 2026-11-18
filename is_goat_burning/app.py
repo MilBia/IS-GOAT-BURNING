@@ -4,12 +4,14 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 import re
+import time
 from typing import Any
 
 from yt_dlp.utils import DownloadError
 
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
+from is_goat_burning.fire_detection.escalation_log import check_escalation_log_directory
 from is_goat_burning.fire_detection.escalation_log import close_escalation_log
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
@@ -24,6 +26,9 @@ from is_goat_burning.service_notifier import failure_reason
 logger = get_logger("Application")
 
 _SLEEP_SLICE_SECONDS = 1.0
+#: Minimum time between the first frame and the end of a session for the reconnect backoff to start over: a stream
+#: that yields one frame and dies at once must keep backing off.
+MIN_STABLE_SESSION_SECONDS = 60.0
 _MAX_MESSAGE_LENGTH = 200
 _URL_PATTERN = re.compile(r"https?://\S+")
 _EXPECTED_MESSAGE_PREFIXES = ("Failed to resolve stream URL", "Could not extract stream URL", "Could not open video stream")
@@ -148,7 +153,9 @@ class Application:
                     },
                 )
             )
-        self.on_fire_action_handler = OnceAction(actions, cooldown_seconds=settings.alert_cooldown_seconds)
+        self.on_fire_action_handler = OnceAction(
+            actions, cooldown_seconds=settings.alert_cooldown_seconds, retry_seconds=settings.alert_retry_seconds
+        )
 
         if settings.discord.use_discord and settings.discord.send_video_chunks:
             self.video_event_action = FireEventAction(
@@ -242,17 +249,18 @@ class Application:
         if self.video_event_action:
             self.video_event_action.start()
         self.service_notifier.start()
+        await check_escalation_log_directory()
 
         delay = settings.reconnect_delay_seconds
         while self.signal_handler.is_running():
             detector = None
             failure = failure_reason(None)
             failure_log: Callable[[float], None] | None = None
-            session_ok = False
+            first_frame_at: float | None = None
 
             def on_first_frame() -> None:
-                nonlocal session_ok
-                session_ok = True
+                nonlocal first_frame_at
+                first_frame_at = time.monotonic()
                 self.service_notifier.stream_connected()
 
             try:
@@ -289,7 +297,7 @@ class Application:
                     await self._queue_extinguished_event()
 
                 if self.signal_handler.is_running():
-                    if session_ok:
+                    if first_frame_at is not None and time.monotonic() - first_frame_at >= MIN_STABLE_SESSION_SECONDS:
                         delay = settings.reconnect_delay_seconds  # The stream worked: start the backoff over.
                     await self._wait_before_reconnect(delay, failure, failure_log)
                     delay = min(delay * 2, settings.reconnect_max_delay_seconds)

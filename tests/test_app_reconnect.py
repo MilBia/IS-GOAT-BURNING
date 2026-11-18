@@ -125,10 +125,31 @@ async def test_unknown_failure_keeps_the_traceback_but_still_backs_off(
     assert delays == [5, 10]
 
 
+class _Clock:
+    """A manually advanced monotonic clock for the session-duration check."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(5)
-async def test_delay_resets_after_a_session_that_received_a_frame(test_settings: Settings) -> None:  # noqa: ARG001
-    """Failures double the delay; a session with a first frame resets it to the base delay."""
+@pytest.mark.parametrize(("session_seconds", "expected"), [(60.0, [5, 10, 5, 10]), (59.0, [5, 10, 20, 40])])
+async def test_delay_resets_only_after_a_long_enough_session(
+    test_settings: Settings,  # noqa: ARG001
+    monkeypatch: MonkeyPatch,
+    session_seconds: float,
+    expected: list[float],
+) -> None:
+    """Failures double the delay; a session with a first frame resets it only if it lasted at least 60 s (#188).
+
+    A stream that yields one frame and dies at once must keep backing off.
+    """
+    clock = _Clock()
+    monkeypatch.setattr("is_goat_burning.app.time", clock)
     app, delays = _app(4)
     app.service_notifier = MagicMock(stop=AsyncMock())
     calls = {"n": 0}
@@ -142,6 +163,7 @@ async def test_delay_resets_after_a_session_that_received_a_frame(test_settings:
 
         async def run() -> None:
             kwargs["on_first_frame"]()  # type: ignore[operator]
+            clock.now += session_seconds
             raise ConnectionError("died later")
 
         detector.side_effect = run
@@ -150,9 +172,8 @@ async def test_delay_resets_after_a_session_that_received_a_frame(test_settings:
     with patch("is_goat_burning.app.StreamFireDetector.create", new=create):
         await app.run()
     await app.shutdown()
-    # fail, fail, (ok session) -> reset, fail again after the reset session.
-    assert delays[:3] == [5, 10, 5]
-    assert delays[3] == 10
+    # fail, fail, (session with a frame) -> reset if long enough, fail again.
+    assert delays == expected
 
 
 @pytest.mark.asyncio
