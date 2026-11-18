@@ -10,6 +10,7 @@ from yt_dlp.utils import DownloadError
 
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection import StreamFireDetector
+from is_goat_burning.fire_detection.escalation_log import check_escalation_log_directory
 from is_goat_burning.fire_detection.escalation_log import close_escalation_log
 from is_goat_burning.fire_detection.signal_handler import SignalHandler
 from is_goat_burning.logger import get_logger
@@ -244,6 +245,7 @@ class Application:
         if self.video_event_action:
             self.video_event_action.start()
         self.service_notifier.start()
+        await check_escalation_log_directory()
 
         delay = settings.reconnect_delay_seconds
         while self.signal_handler.is_running():

@@ -12,6 +12,7 @@ import contextlib
 from datetime import UTC
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import threading
 import time
@@ -259,6 +260,43 @@ def get_escalation_log() -> EscalationLog | None:
             settings.escalation_log.max_mb,
         )
     return _instance
+
+
+def _prepare_directory(directory: Path) -> None:
+    """Creates the directory and checks it is writable (blocking; run in a thread).
+
+    Raises:
+        OSError: If the directory cannot be created or is not writable.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    if not os.access(directory, os.W_OK | os.X_OK):
+        raise PermissionError(13, "Permission denied", str(directory))
+
+
+async def check_escalation_log_directory() -> bool:
+    """Creates the escalation log directory at startup and reports a failure once, at ERROR.
+
+    Without this the log only drops records with a rate-limited WARNING, which is easy to miss (e.g. the default
+    relative directory resolves to a root-owned path inside the Docker image while the app runs as ``nobody``).
+
+    Returns:
+        True if the log is disabled or its directory is usable, False otherwise.
+    """
+    if not settings.escalation_log.enabled:
+        return True
+    directory = Path(settings.escalation_log.directory)
+    try:
+        await asyncio.to_thread(_prepare_directory, directory)
+    except OSError as exc:
+        logger.error(
+            "Escalation log directory %s is not usable (%s: %s); escalation records will be dropped. "
+            "Set ESCALATION_LOG__DIRECTORY to a writable path (in Docker: /app/recordings/escalations).",
+            directory,
+            type(exc).__name__,
+            exc.strerror or exc,
+        )
+        return False
+    return True
 
 
 async def close_escalation_log() -> None:
