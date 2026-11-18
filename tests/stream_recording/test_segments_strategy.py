@@ -135,16 +135,31 @@ async def test_handle_fire_event_writes_pre_and_post_fire_clips(
     assert not (event_dir / ".parts").exists()
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def _encode(path: Path, size: str, seconds: float, age_s: float) -> None:
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size={size}:rate=10", "-t", str(seconds)]
+        + ["-c:v", "mpeg4", "-g", "5", "-f", "mpegts", str(path)],
+        check=True,
+    )
+    import time
+
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+
+
+def _has_mpeg4_encoder() -> bool:
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        return False
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=False).stdout
+    return " mpeg4 " in encoders
+
+
+@pytest.mark.skipif(not _has_mpeg4_encoder(), reason="ffmpeg/ffprobe with the mpeg4 encoder not installed")
 def test_concat_blocking_joins_real_segments(tmp_path: Path) -> None:
     parts = []
     for i in range(2):
         seg = tmp_path / f"s{i}.ts"
-        subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=10", "-t", "1"]
-            + ["-c:v", "libx264", "-g", "5", "-f", "mpegts", str(seg)],
-            check=True,
-        )
+        _encode(seg, "64x48", 1, 0)
         parts.append(seg)
     out = tmp_path / "out.mp4"
 
@@ -452,25 +467,6 @@ def _event_dir(tmp_path: Path, context: MagicMock) -> Path:
     event_dir = tmp_path / "event"
     event_dir.mkdir()
     return event_dir
-
-
-def _encode(path: Path, size: str, seconds: float, age_s: float) -> None:
-    subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size={size}:rate=10", "-t", str(seconds)]
-        + ["-c:v", "mpeg4", "-g", "5", "-f", "mpegts", str(path)],
-        check=True,
-    )
-    import time
-
-    stamp = time.time() - age_s
-    os.utime(path, (stamp, stamp))
-
-
-def _has_mpeg4_encoder() -> bool:
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        return False
-    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=False).stdout
-    return " mpeg4 " in encoders
 
 
 @pytest.mark.skipif(not _has_mpeg4_encoder(), reason="ffmpeg/ffprobe with the mpeg4 encoder not installed")
