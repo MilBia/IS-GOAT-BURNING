@@ -2,7 +2,7 @@
 
 How to run, check and recover the production deployment (Docker, `hybrid_decision`, segments recording, Discord alerts plus service channel). Settings and the full preset are in the README section [Production run](../README.md#production-run); setting names are in `.env.example`.
 
-Examples use the container name `burning_goat_detection_container` and the env file `/path/outside/repo/goat.env`. Docker env files do **not** strip quotes: write values unquoted.
+Examples use the container name `burning_goat_detection_container` and the env file `/path/outside/repo/goat.env`. Docker env files do **not** strip quotes: write values unquoted. Quoted values in `.env.example` are fine for the app's own `.env` loader, but must be unquoted in a Docker `--env-file`.
 
 ## 1. How to check it is running
 
@@ -76,7 +76,7 @@ Recordings are in the recordings volume, in a directory `event_<YYYY-MM-DD_HH-MM
 
 Do **not** restart the container during a real fire: recording is in progress and the final clips are written at the end of the event.
 
-**False alarm:** no restart is needed. Alerts are re-armed automatically (see `ALERT_COOLDOWN_SECONDS`); a later fire still produces a new alert. Keep the frame from the alert, the matching JPEG and line from the escalation log, and the log excerpt (`docker logs --since <time> ...`); they are the material for tuning thresholds. Delete the `event_` directory only after saving what you need.
+**False alarm:** no restart is needed. Alerts are re-armed automatically. `ALERT_COOLDOWN_SECONDS` defaults to 600 s: a new fire within 10 minutes of the last alert is not dropped but deferred to the end of the cooldown (log: `Fire alert deferred: <N>s of the alert cooldown remain.`), and cancelled if the fire goes out first. Keep the frame from the alert, the matching JPEG and line from the escalation log, and the log excerpt (`docker logs --since <time> ...`); they are the material for tuning thresholds. Delete the `event_` directory only after saving what you need.
 
 ## 4. Changing the stream URL or other configuration
 
@@ -108,6 +108,8 @@ yt-dlp --print title "<stream URL>"      # confirm the new version resolves
 pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
 pip-compile --output-file=requirements.txt pyproject.toml
 pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+# optional (bare-metal hybrid_edge on CUDA only):
+pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml
 ```
 
 On the host: pull the change, rebuild and recreate the container (section 4):
@@ -123,9 +125,9 @@ docker build --no-cache --target cpu -t burning_goat_detection .
 | Symptom (log or service message) | Cause | Action |
 |---|---|---|
 | `Stream unavailable (<error>). Reconnecting in <N>s...` repeating, N growing from `RECONNECT_DELAY_SECONDS` up to `RECONNECT_MAX_DELAY_SECONDS` (default 300) | Stream offline, network down, or YouTube changed format | Open the stream in a browser. If it is up, see section 5. After the network returns, recovery can lag up to `RECONNECT_MAX_DELAY_SECONDS` (rehearsal: 4 min 13 s); consider `RECONNECT_MAX_DELAY_SECONDS=120`. Service message `WARNING: the stream has been unavailable for ...` after `DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS`; `Stream recovered` when it is back. No container restart needed. |
-| `Verifier DecisionFireDetector unavailable (<reason>); policy alert_unverified: fires seen by the local detector are reported as UNVERIFIED until it recovers.` (CRITICAL; also `Decisions API failed 5 times in a row; ...`) and service message `WARNING: verifier ... unavailable` | Bad or expired Gemini key, quota, API outage | Alerts keep coming, marked `[UNVERIFIED]`. Fix the key or quota in the env file and recreate the container (section 4); the verifier retries by itself about every `VERIFIER_COOLDOWN_SECONDS` and the service channel reports `recovered; fires are verified again`. With `VERIFIER_FAILURE_POLICY=suppress` alerts are silenced instead: watch the CRITICAL line. |
+| `Verifier DecisionFireDetector unavailable (<reason>); policy alert_unverified: fires seen by the local detector are reported as UNVERIFIED until it recovers.` (CRITICAL; also `Decisions API failed 5 times in a row; ...`) and service message `WARNING: verifier ... unavailable` | Bad or expired Gemini key, quota, API outage | Alerts keep coming, marked `[UNVERIFIED]`. Fix the key or quota in the env file and recreate the container (section 4) if the cause is configuration. While the cause persists, the verifier is re-probed only when the CV gate fires, at most once per `VERIFIER_COOLDOWN_SECONDS`; once it answers again the service channel reports `recovered; fires are verified again`, which can lag until the next CV positive. With `VERIFIER_FAILURE_POLICY=suppress` alerts are silenced instead: watch the CRITICAL line. |
 | `Segment archiver exited with code <N>.` followed by `Restarting segment archiver in <S>s.` | `ffmpeg` died or was killed (rehearsal: `kill -9` restarted after 1 s) | Normal if rare; the supervisor backs off 1 to 30 s. If it repeats, read the masked `Last stderr lines` in the log. |
-| Archiver exits with code 228 repeatedly; `Only <N> MB free in the segment ring directory ... in Docker raise --shm-size.` | `/dev/shm` full (default 64 MB) | Recreate with a larger `--shm-size` (1g is the documented minimum for 1080p60) or shorten `VIDEO__MEMORY_BUFFER_SECONDS`. |
+| Archiver exits with code 228 repeatedly (#156); `Only <N> MB free in the segment ring directory ... in Docker raise --shm-size.` | `/dev/shm` full (default 64 MB) | Recreate with a larger `--shm-size` (1g is the documented minimum for 1080p60) or shorten `VIDEO__MEMORY_BUFFER_SECONDS`. |
 | `Video chunk <file> (<N> MiB) exceeds the <L> MiB limit; not uploading, sending a substitute message.` or HTTP 413 from Discord | Clip over the Discord file limit | Not a failure: the clip is on disk in `event_<timestamp>`. Shorten `VIDEO__VIDEO_CHUNK_LENGTH_SECONDS` or lower `DISCORD__FILE_LIMIT_MB` below the real limit if clips should be uploaded. |
 | `Escalation log directory <dir> is not usable (<error>); escalation records will be dropped. Set ESCALATION_LOG__DIRECTORY to a writable path (in Docker: /app/recordings/escalations).` (ERROR) | Directory not writable by the container user | Set `ESCALATION_LOG__DIRECTORY=/app/recordings/escalations` (on the volume) and recreate. Detection and alerts are unaffected; only the tuning data is lost. |
 | `No alert action succeeded; the alert stays armed and is retried in <S>s.` | Discord (or email) unreachable when the fire started | The alert is retried every `ALERT_RETRY_SECONDS`. Check the webhook and the host's network. |
@@ -141,6 +143,6 @@ docker start burning_goat_detection_container    # sends "Monitoring started ...
 docker restart burning_goat_detection_container  # same values as before (env is not re-read)
 ```
 
-`--stop-timeout 30` at `docker run` gives the graceful shutdown time (final clip, pending alert, service message); a measured stop took about 10 s, so a slow shutdown can exceed Docker's default 10 s grace period and be killed before the shutdown message is sent.
+`--stop-timeout 30` at `docker run` gives the graceful shutdown time (final clip, pending alert, service message); the worst case is about 15 s (measured stop in rehearsal: about 10 s), which can exceed Docker's default 10 s grace period and be killed before the shutdown message is sent.
 
 Upgrade: `git pull`, `docker build --target cpu -t burning_goat_detection .`, then stop, remove and run as in section 4. Do it outside a fire and check the startup lines afterwards.
