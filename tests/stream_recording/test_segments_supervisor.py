@@ -281,15 +281,31 @@ async def test_exit_logs_last_stderr_lines_with_urls_masked(
 
 
 @pytest.mark.asyncio
-async def test_stderr_is_piped_and_drained_while_running(strategy: SegmentsBufferStrategy, mocker: MockerFixture) -> None:
-    spawn = AsyncMock(side_effect=lambda *_a, **_k: FakeProcess(codes=[0]))
+async def test_stderr_is_piped_and_a_large_flood_keeps_only_the_last_lines(
+    strategy: SegmentsBufferStrategy, mocker: MockerFixture
+) -> None:
+    flood = "".join(f"line {i:06d}\n" for i in range(20000)).encode()  # ~260 KB, far beyond a pipe buffer
+    assert len(flood) > 64 * 1024
+    spawn = AsyncMock(side_effect=lambda *_a, **_k: FakeProcess(codes=[0], stderr=flood))
     mocker.patch(f"{MODULE}.asyncio.create_subprocess_exec", spawn)
     _fake_sleep(mocker, limit=1)
 
     with pytest.raises(asyncio.CancelledError):
-        await strategy._supervise_ffmpeg()
+        await asyncio.wait_for(strategy._supervise_ffmpeg(), timeout=10)
 
     assert spawn.await_args.kwargs["stderr"] == asyncio.subprocess.PIPE
+    assert list(strategy._stderr_tail) == [f"line {i:06d}" for i in range(20000 - 10, 20000)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["open HTTPS://h.invalid/p?token=SECRETTOKEN123 failed", "connect tcp://host.invalid:443?x=SECRETTOKEN123 refused"],
+)
+def test_url_masking_is_case_insensitive_and_scheme_agnostic(strategy: SegmentsBufferStrategy, line: str) -> None:
+    masked = strategy._sanitize_stderr_line(line.encode())
+
+    assert "SECRETTOKEN123" not in masked
+    assert "<url>" in masked
 
 
 @pytest.mark.asyncio

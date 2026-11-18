@@ -343,7 +343,7 @@ class SegmentsBufferStrategy(BufferStrategy):
     STDERR_LAST_LINES_TO_KEEP: ClassVar[int] = 10
     STDERR_LINE_MAX_CHARS: ClassVar[int] = 300
     STDERR_DRAIN_TIMEOUT_SECONDS: ClassVar[float] = 2.0
-    URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"https?://\S+")
+    URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 
     def __init__(self, context: AsyncVideoChunkSaver) -> None:
         """Initializes the segment ring parameters.
@@ -545,21 +545,24 @@ class SegmentsBufferStrategy(BufferStrategy):
             self._supervisor.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._supervisor
-        reader = self._stderr_reader
-        if reader is not None and not reader.done():
-            reader.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reader
         proc = self._ffmpeg
-        if proc is not None and proc.returncode is None:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-                # Killed mid-write: its last segment may be cut off, and it now outlives the run (the ring is kept).
-                await asyncio.get_running_loop().run_in_executor(None, self._drop_truncated_segment)
+        try:
+            if proc is not None and proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    # Killed mid-write: its last segment may be cut off, and it now outlives the run (the ring is kept).
+                    await asyncio.get_running_loop().run_in_executor(None, self._drop_truncated_segment)
+        finally:
+            # Cancelled last, so the pipe keeps draining while ffmpeg shuts down.
+            reader = self._stderr_reader
+            if reader is not None and not reader.done():
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader
 
     def _complete_segments(self) -> list[tuple[float, Path]]:
         """Returns (mtime, path) of finished segments, oldest first.
