@@ -120,6 +120,7 @@ def test_setup_actions_wires_video_event_action_when_enabled(mock_once_action: M
     action_class, action_kwargs = kwargs["action"]
     assert action_class is SendVideoToDiscord
     assert action_kwargs["webhooks"] == ["hook1"]
+    assert action_kwargs["file_limit_mb"] == mock_settings.discord.file_limit_mb
     assert app._video_chunks_enabled is True
 
 

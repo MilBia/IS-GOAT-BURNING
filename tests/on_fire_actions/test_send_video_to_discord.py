@@ -1,12 +1,13 @@
 """Unit tests for the SendVideoToDiscord action class."""
 
+import logging
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aiohttp import FormData
 import pytest
 
-from is_goat_burning.on_fire_actions.send_video_to_discord import DISCORD_FILE_LIMIT
+from is_goat_burning.logger import get_logger
 from is_goat_burning.on_fire_actions.send_video_to_discord import SendVideoToDiscord
 
 WEBHOOK = "https://discord.com/api/webhooks/123/abc"
@@ -20,7 +21,7 @@ async def test_uploads_small_file_as_multipart() -> None:
         patch.object(SendVideoToDiscord, "_read_file", return_value=b"video-bytes"),
         patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
     ):
-        mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
+        mock_post.return_value = _ok_response()
         sender = SendVideoToDiscord(webhooks=[WEBHOOK])
 
         await sender("/videos/event/goat-cam_chunk.mp4")
@@ -41,7 +42,7 @@ async def test_uploads_to_all_webhooks() -> None:
         patch.object(SendVideoToDiscord, "_read_file", return_value=b"video-bytes"),
         patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
     ):
-        mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
+        mock_post.return_value = _ok_response()
         sender = SendVideoToDiscord(webhooks=[WEBHOOK, second])
 
         await sender("/videos/event/goat-cam_chunk.mp4")
@@ -49,17 +50,28 @@ async def test_uploads_to_all_webhooks() -> None:
     assert mock_post.call_count == 2
 
 
+MIB = 1024 * 1024
+
+
+def _ok_response(status: int = 200) -> MagicMock:
+    """Builds a mocked `session.post` context manager returning the given status."""
+    ctx = MagicMock()
+    ctx.__aenter__.return_value.status = status
+    ctx.__aenter__.return_value.raise_for_status = MagicMock()
+    return ctx
+
+
 @pytest.mark.asyncio
-async def test_oversized_file_sends_fallback_message() -> None:
-    """Verifies an oversized file triggers the JSON fallback message."""
+async def test_oversized_file_sends_substitute_without_upload() -> None:
+    """Verifies a file above the configured limit is not read/uploaded; a text substitute with the file name is sent."""
     file_path = "/videos/event/goat-cam_big.mp4"
     with (
-        patch("os.path.getsize", return_value=DISCORD_FILE_LIMIT + 1),
+        patch("os.path.getsize", return_value=19 * MIB),
         patch.object(SendVideoToDiscord, "_read_file") as mock_read,
         patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
     ):
-        mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
-        sender = SendVideoToDiscord(webhooks=[WEBHOOK])
+        mock_post.return_value = _ok_response()
+        sender = SendVideoToDiscord(webhooks=[WEBHOOK], file_limit_mb=18)
 
         await sender(file_path)
 
@@ -68,9 +80,82 @@ async def test_oversized_file_sends_fallback_message() -> None:
     kwargs = mock_post.call_args.kwargs
     assert "data" not in kwargs
     content = kwargs["json"]["content"]
-    assert content == (
-        f"Goat on fire! A video chunk was saved but is too large to upload to Discord. You can find it at: {file_path}"
-    )
+    assert "goat-cam_big.mp4" in content
+    assert "19.0 MiB" in content
+    assert "saved on disk" in content
+    assert "/videos" not in content
+
+
+@pytest.mark.asyncio
+async def test_file_at_limit_is_uploaded() -> None:
+    """Verifies a file exactly at the limit is still uploaded."""
+    with (
+        patch("os.path.getsize", return_value=18 * MIB),
+        patch.object(SendVideoToDiscord, "_read_file", return_value=b"v"),
+        patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+    ):
+        mock_post.return_value = _ok_response()
+        await SendVideoToDiscord(webhooks=[WEBHOOK], file_limit_mb=18)("/videos/e/a.mp4")
+
+    assert isinstance(mock_post.call_args.kwargs["data"], FormData)
+
+
+@pytest.mark.asyncio
+async def test_http_413_sends_substitute_message(caplog: pytest.LogCaptureFixture) -> None:
+    """Verifies a 413 from Discord triggers the substitute message and one WARNING without the URL."""
+    logger = get_logger("DiscordVideoSender")
+    logger.addHandler(caplog.handler)
+    caplog.set_level(logging.DEBUG, logger=logger.name)
+    try:
+        with (
+            patch("os.path.getsize", return_value=10 * MIB),
+            patch.object(SendVideoToDiscord, "_read_file", return_value=b"v"),
+            patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+        ):
+            mock_post.side_effect = [_ok_response(413), _ok_response(200)]
+            await SendVideoToDiscord(webhooks=[WEBHOOK], file_limit_mb=18)("/videos/e/a.mp4")
+    finally:
+        logger.removeHandler(caplog.handler)
+
+    assert mock_post.call_count == 2
+    assert isinstance(mock_post.call_args_list[0].kwargs["data"], FormData)
+    content = mock_post.call_args_list[1].kwargs["json"]["content"]
+    assert "a.mp4" in content
+    assert "10.0 MiB" in content
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "413" in warnings[0].getMessage()
+    assert "abc" not in caplog.text
+    assert "/webhooks/" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failure_logs_do_not_contain_webhook_url(caplog: pytest.LogCaptureFixture) -> None:
+    """Verifies logged upload errors never include the webhook URL (aiohttp errors embed it)."""
+    from aiohttp import ClientResponseError  # noqa: PLC0415
+    from aiohttp.client_reqrep import RequestInfo  # noqa: PLC0415
+    from multidict import CIMultiDict  # noqa: PLC0415
+    from yarl import URL  # noqa: PLC0415
+
+    info = RequestInfo(URL(WEBHOOK), "POST", CIMultiDict(), URL(WEBHOOK))
+    ctx = _ok_response()
+    ctx.__aenter__.return_value.raise_for_status.side_effect = ClientResponseError(info, (), status=500, message="boom")
+    logger = get_logger("DiscordVideoSender")
+    logger.addHandler(caplog.handler)
+    caplog.set_level(logging.DEBUG, logger=logger.name)
+    try:
+        with (
+            patch("os.path.getsize", return_value=MIB),
+            patch.object(SendVideoToDiscord, "_read_file", return_value=b"v"),
+            patch("aiohttp.ClientSession.post", new_callable=MagicMock, return_value=ctx),
+        ):
+            await SendVideoToDiscord(webhooks=[WEBHOOK])("/videos/e/a.mp4")
+    finally:
+        logger.removeHandler(caplog.handler)
+
+    assert "Failed to upload" in caplog.text
+    assert "abc" not in caplog.text
+    assert "/webhooks/" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -106,8 +191,7 @@ async def test_read_failure_after_stat_sends_nothing() -> None:
 async def test_upload_continues_when_one_webhook_fails() -> None:
     """Verifies one failing webhook does not prevent uploads to the others."""
     second = "https://discord.com/api/webhooks/456/def"
-    successful_post = MagicMock()
-    successful_post.__aenter__.return_value.raise_for_status = MagicMock()
+    successful_post = _ok_response()
 
     with (
         patch("os.path.getsize", return_value=1024),

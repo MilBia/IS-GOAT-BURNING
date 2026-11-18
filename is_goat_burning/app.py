@@ -141,6 +141,7 @@ class Application:
                     SendVideoToDiscord,
                     {
                         "webhooks": settings.discord.hooks,
+                        "file_limit_mb": settings.discord.file_limit_mb,
                     },
                 ),
             )

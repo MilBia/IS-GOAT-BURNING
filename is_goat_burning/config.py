@@ -97,6 +97,8 @@ class DiscordSettings(BaseModel):
         message: The message content to send to the webhooks.
         send_video_chunks: If True, saved video chunks are uploaded to the
             configured Discord webhooks as they are archived after a fire event.
+        file_limit_mb: Largest video chunk uploaded to Discord, in MiB (1024 * 1024 bytes). Larger files, and files Discord
+            rejects with HTTP 413, are replaced by a short text message with the file name and size.
         attach_frame: If True, the first alert carries a JPEG of the frame that triggered it.
         timeout_seconds: Per-request timeout for text alerts.
         max_attempts: Maximum attempts per webhook for text alerts.
@@ -118,6 +120,7 @@ class DiscordSettings(BaseModel):
     hooks: list[str] = Field(default_factory=list)
     message: CleanedMessage = Field(default="Dear friend... Its time... Its time to Fight Fire With Fire!")
     send_video_chunks: bool = Field(default=False)
+    file_limit_mb: float = Field(default=18.0, gt=0)
     attach_frame: bool = Field(default=True)
     timeout_seconds: float = Field(default=10.0, gt=0)
     max_attempts: int = Field(default=5, ge=1)

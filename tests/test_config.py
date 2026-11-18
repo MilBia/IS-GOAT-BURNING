@@ -355,3 +355,16 @@ def test_reconnect_max_delay_below_base_delay_is_rejected() -> None:
     """The cap must not be lower than the base delay."""
     with pytest.raises(ValidationError, match="RECONNECT_MAX_DELAY_SECONDS"):
         Settings(_env_file=None, source="mock://source", reconnect_delay_seconds=10, reconnect_max_delay_seconds=5)
+
+
+def test_discord_file_limit_defaults_and_validation(monkeypatch: MonkeyPatch) -> None:
+    """Verifies ``DISCORD__FILE_LIMIT_MB`` defaults to 18 MiB, can be overridden and must be positive."""
+    for key in list(os.environ):
+        if key.startswith("DISCORD__"):
+            monkeypatch.delenv(key)
+    assert DiscordSettings().file_limit_mb == 18.0
+    monkeypatch.setenv("SOURCE", "x")
+    monkeypatch.setenv("DISCORD__FILE_LIMIT_MB", "9.5")
+    assert Settings().discord.file_limit_mb == 9.5
+    with pytest.raises(ValidationError):
+        DiscordSettings(file_limit_mb=0)
