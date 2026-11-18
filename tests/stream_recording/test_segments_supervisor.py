@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+import logging
 import os
 from pathlib import Path
 import time
@@ -12,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest_mock import MockerFixture
 
+from is_goat_burning.stream_recording import strategies
 from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 from is_goat_burning.stream_recording.strategies import SegmentsBufferStrategy
 
@@ -22,8 +25,11 @@ MODULE = "is_goat_burning.stream_recording.strategies"
 class FakeProcess:
     """Stands in for `asyncio.subprocess.Process`; `wait()` returns the next exit code (or blocks forever)."""
 
-    def __init__(self, codes: list[int] | None = None, on_wait: object = None) -> None:
+    def __init__(self, codes: list[int] | None = None, on_wait: object = None, stderr: bytes = b"") -> None:
         self.returncode: int | None = None
+        self.stderr = asyncio.StreamReader()
+        self.stderr.feed_data(stderr)
+        self.stderr.feed_eof()
         self._codes = codes
         self._on_wait = on_wait
         self.exited = asyncio.Event()
@@ -55,6 +61,16 @@ def ring(tmp_path: Path, mocker: MockerFixture) -> Path:
         },
     )
     return ring_dir
+
+
+@pytest.fixture
+def logs(caplog: pytest.LogCaptureFixture) -> Iterator[pytest.LogCaptureFixture]:
+    """Captures the strategy's logger (it does not propagate, so the handler is attached directly)."""
+    strategies_logger = logging.getLogger(strategies.logger.name)
+    strategies_logger.addHandler(caplog.handler)
+    caplog.set_level(logging.DEBUG, logger=strategies_logger.name)
+    yield caplog
+    strategies_logger.removeHandler(caplog.handler)
 
 
 @pytest.fixture
@@ -237,6 +253,107 @@ async def test_cancelled_supervisor_leaves_no_orphaned_child(strategy: SegmentsB
 
     assert strategy._supervisor.done()
     proc.terminate.assert_called_once()
+
+
+SECRET = "SECRETTOKEN123"
+
+
+@pytest.mark.asyncio
+async def test_exit_logs_last_stderr_lines_with_urls_masked(
+    strategy: SegmentsBufferStrategy, mocker: MockerFixture, logs: pytest.LogCaptureFixture
+) -> None:
+    lines = [f"noise {i}" for i in range(30)]
+    lines.append(f"Error opening input: Server returned 403 Forbidden for https://rr1.example.invalid/v?sig={SECRET}&x=1")
+    lines.append("x" * 5000)
+    proc = FakeProcess(codes=[1], stderr=("\n".join(lines) + "\n").encode())
+    mocker.patch(f"{MODULE}.asyncio.create_subprocess_exec", AsyncMock(return_value=proc))
+    _fake_sleep(mocker, limit=1)
+
+    with pytest.raises(asyncio.CancelledError):
+        await strategy._supervise_ffmpeg()
+
+    text = logs.text
+    assert "403 Forbidden" in text
+    assert "<url>" in text
+    assert SECRET not in text
+    assert "noise 0" not in text  # only the last lines are kept
+    assert "x" * 1000 not in text  # long lines are truncated
+
+
+@pytest.mark.asyncio
+async def test_stderr_is_piped_and_a_large_flood_keeps_only_the_last_lines(
+    strategy: SegmentsBufferStrategy, mocker: MockerFixture
+) -> None:
+    flood = "".join(f"line {i:06d}\n" for i in range(20000)).encode()  # ~260 KB, far beyond a pipe buffer
+    assert len(flood) > 64 * 1024
+    spawn = AsyncMock(side_effect=lambda *_a, **_k: FakeProcess(codes=[0], stderr=flood))
+    mocker.patch(f"{MODULE}.asyncio.create_subprocess_exec", spawn)
+    _fake_sleep(mocker, limit=1)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(strategy._supervise_ffmpeg(), timeout=10)
+
+    assert spawn.await_args.kwargs["stderr"] == asyncio.subprocess.PIPE
+    assert list(strategy._stderr_tail) == [f"line {i:06d}" for i in range(20000 - 10, 20000)]
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["open HTTPS://h.invalid/p?token=SECRETTOKEN123 failed", "connect tcp://host.invalid:443?x=SECRETTOKEN123 refused"],
+)
+def test_url_masking_is_case_insensitive_and_scheme_agnostic(strategy: SegmentsBufferStrategy, line: str) -> None:
+    masked = strategy._sanitize_stderr_line(line.encode())
+
+    assert "SECRETTOKEN123" not in masked
+    assert "<url>" in masked
+
+
+@pytest.mark.asyncio
+async def test_stderr_reader_is_cancelled_on_stop(strategy: SegmentsBufferStrategy, mocker: MockerFixture) -> None:
+    proc = FakeProcess()
+    proc.stderr = asyncio.StreamReader()  # never reaches EOF
+    proc.terminate.side_effect = lambda: (setattr(proc, "returncode", -15), proc.exited.set())
+    mocker.patch(f"{MODULE}.asyncio.create_subprocess_exec", AsyncMock(return_value=proc))
+    strategy._supervisor = asyncio.create_task(strategy._supervise_ffmpeg())
+    async with asyncio.timeout(5):
+        while strategy._stderr_reader is None:
+            await asyncio.sleep(0.01)
+    reader = strategy._stderr_reader
+
+    await strategy._stop_ffmpeg()
+
+    assert reader.done()
+
+
+@pytest.mark.asyncio
+async def test_missing_ffprobe_warns_once_at_startup(
+    strategy: SegmentsBufferStrategy, context: MagicMock, mocker: MockerFixture, logs: pytest.LogCaptureFixture
+) -> None:
+    mocker.patch(f"{MODULE}.shutil.which", lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None)
+    mocker.patch.object(SegmentsBufferStrategy, "_supervise_ffmpeg", AsyncMock())
+    context.signal_handler.fire_detected_event.wait = AsyncMock(side_effect=asyncio.CancelledError)
+
+    with pytest.raises(asyncio.CancelledError):
+        await strategy._run_main_loop()
+
+    warnings = [r for r in logs.records if "ffprobe" in r.getMessage()]
+    assert len(warnings) == 1
+    assert warnings[0].levelname == "WARNING"
+
+
+def test_failed_concat_removes_the_partial_output(tmp_path: Path, mocker: MockerFixture) -> None:
+    out = tmp_path / "clip.mp4"
+
+    def fake_run(*_a: object, **_k: object) -> MagicMock:
+        out.write_bytes(b"partial")
+        return MagicMock(returncode=1, stderr=b"boom")
+
+    mocker.patch(f"{MODULE}.subprocess.run", fake_run)
+    part = tmp_path / "a.ts"
+    part.write_bytes(b"x")
+
+    assert SegmentsBufferStrategy._concat_blocking([part], str(out)) is False
+    assert not out.exists()
 
 
 def _capture_concat(mocker: MockerFixture) -> None:
