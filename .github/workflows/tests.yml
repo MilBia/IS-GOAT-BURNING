@@ -16,6 +16,12 @@ jobs:
       uses: actions/setup-python@v7
       with:
         python-version: "3.14"
+    - name: Install ffmpeg (segments-mode tests run the real binary)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ffmpeg
+        ffmpeg -version | head -n 1
+        ffmpeg -hide_banner -encoders | grep -w mpeg4
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -23,7 +29,7 @@ jobs:
         pip install -r requirements-dev.txt
     - name: Test with pytest
       run: |
-        PYTHONPATH=. pytest --cov=is_goat_burning --cov-report=term-missing
+        PYTHONPATH=. pytest -rs --cov=is_goat_burning --cov-report=term-missing
     - name: Generate coverage badge
       run: |
         rm -f coverage.svg
