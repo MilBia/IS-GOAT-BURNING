@@ -2,13 +2,34 @@
 set -e
 
 # Ensure the recordings directory exists and has the correct permissions.
-VIDEO_DIR="${VIDEO_OUTPUT_DIRECTORY:-/app/recordings}"
+# The app reads VIDEO__VIDEO_OUTPUT_DIRECTORY; the legacy VIDEO_OUTPUT_DIRECTORY is honoured here only for
+# backward compatibility (it does NOT change where the app writes).
+if [ -n "${VIDEO__VIDEO_OUTPUT_DIRECTORY:-}" ]; then
+    VIDEO_DIR="$VIDEO__VIDEO_OUTPUT_DIRECTORY"
+elif [ -n "${VIDEO_OUTPUT_DIRECTORY:-}" ]; then
+    VIDEO_DIR="$VIDEO_OUTPUT_DIRECTORY"
+    echo "Warning: VIDEO_OUTPUT_DIRECTORY is deprecated; the app reads VIDEO__VIDEO_OUTPUT_DIRECTORY, set that instead." >&2
+else
+    VIDEO_DIR="/app/recordings"
+fi
+
+# Normalize: strip ONE pair of matching surrounding quotes (docker --env-file passes them literally),
+# then resolve a relative path against /app (the app's WORKDIR).
+case "$VIDEO_DIR" in
+  \"*\") VIDEO_DIR="${VIDEO_DIR#?}"; VIDEO_DIR="${VIDEO_DIR%?}" ;;
+  \'*\') VIDEO_DIR="${VIDEO_DIR#?}"; VIDEO_DIR="${VIDEO_DIR%?}" ;;
+esac
+case "$VIDEO_DIR" in
+  /*) ;;
+  ./*) VIDEO_DIR="/app/${VIDEO_DIR#./}" ;;
+  *) VIDEO_DIR="/app/$VIDEO_DIR" ;;
+esac
 
 case "$VIDEO_DIR" in
   # 1. Check for the path traversal.
   *..*)
     # If this matches, give a very specific error and exit.
-    echo "Error: VIDEO_OUTPUT_DIRECTORY cannot contain '..'." >&2
+    echo "Error: the recordings directory cannot contain '..'." >&2
     exit 1
     ;;
 
@@ -24,7 +45,7 @@ case "$VIDEO_DIR" in
   # 3. If neither of the above patterns matched, it's an invalid format.
   *)
     # Give a clear error explaining the required format and exit.
-    echo "Error: VIDEO_OUTPUT_DIRECTORY must be a subdirectory of /app (e.g., /app/recordings)." >&2
+    echo "Error: the recordings directory must be a subdirectory of /app (e.g., /app/recordings)." >&2
     exit 1
     ;;
 esac
