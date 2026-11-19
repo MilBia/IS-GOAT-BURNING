@@ -8,6 +8,7 @@ frame grabbing and processing.
 import asyncio
 from collections.abc import AsyncGenerator
 from functools import partial
+import re
 from typing import Literal
 
 import cv2
@@ -20,6 +21,23 @@ from is_goat_burning.logger import get_logger
 from is_goat_burning.stream_recording.save_stream_to_file import AsyncVideoChunkSaver
 
 logger = get_logger("Stream")
+
+_URL_PATTERN = re.compile(r"[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+
+
+class _YtDlpLogger:
+    """Adapter handing yt-dlp's own messages to the app logger.
+
+    yt-dlp calls ``debug/info/warning/error`` on the ``logger`` option instead of writing to stderr. Everything is
+    forwarded at DEBUG (a failed resolve is reported once by the caller) with URLs masked, since messages may carry
+    googlevideo URLs with tokens.
+    """
+
+    def _forward(self, msg: object) -> None:
+        logger.debug("yt-dlp: %s", _URL_PATTERN.sub("<url>", str(msg)))
+
+    debug = info = warning = error = _forward
+
 
 # --- Constants ---
 Backend = Literal["cpu", "cuda", "opencl"]
@@ -38,6 +56,7 @@ class YouTubeStream:
         self.ytdlp_options = {
             "format": settings.ytdlp_format,
             "quiet": True,
+            "logger": _YtDlpLogger(),
         }
 
     async def resolve_url(self) -> str:
