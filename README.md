@@ -317,15 +317,17 @@ Docker allows you to run the application in a consistent and isolated environmen
           ```
 
     -  **Using a Custom Recordings Directory:**
-        If you wish to change the directory where videos are saved inside the container, you must update both the volume mount (`-v`) and provide the `VIDEO_OUTPUT_DIRECTORY` environment variable (`-e`). **The path for the environment variable must match the container-side path of the volume mount.**
+        If you wish to change the directory where videos are saved inside the container, you must update both the volume mount (`-v`) and provide the `VIDEO__VIDEO_OUTPUT_DIRECTORY` environment variable (`-e`). **The path for the environment variable must match the container-side path of the volume mount.**
 
         -   **Example with a custom directory:**
             ```bash
             docker run --name burning_goat_detection_container \
               -v /path/to/your/local/custom_vids:/app/custom_vids \
-              -e VIDEO_OUTPUT_DIRECTORY=/app/custom_vids \
+              -e VIDEO__VIDEO_OUTPUT_DIRECTORY=/app/custom_vids \
               -d burning_goat_detection
             ```
+
+        If the escalation log is enabled, point `ESCALATION_LOG__DIRECTORY` at a location under that same directory (e.g. `/app/custom_vids/escalations`) so it is writable and covered by the volume mount.
 
 6.  **Accessing Container Logs:** To view the application's output and check for errors, you can view the container's logs:
     ```bash
