@@ -25,7 +25,7 @@ With `ESCALATION_LOG__ENABLED=true` there is also `Escalation log enabled: direc
 Service channel (`DISCORD__SERVICE_HOOKS`):
 
 -   At every start: `[Goat monitor] Monitoring started. Strategy: ... Source: ... Heartbeat every ...; stream-down warning after ...`.
--   Heartbeat every `DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS` (default 24 h): `[Goat monitor] Heartbeat: running for ... Stream: up for .... Fire events since last heartbeat: N (unverified: M). Verifier: available.`
+-   Heartbeat every `DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS` (default 24 h; the production preset uses 6 h): `[Goat monitor] Heartbeat: running for ... Stream: up for .... Fire events since last heartbeat: N (unverified: M). Verifier: available.`
 -   **No heartbeat for more than a day means the process or the host's network is down**, even if `docker ps` looks fine. Check `docker logs` first.
 
 Escalation log (every frame sent to the verifier): on the recordings volume, `<recordings dir>/escalations/` with one JPEG per verifier call and an `escalations.jsonl` index (`verdict`, probability, policy). The directory is capped by `ESCALATION_LOG__MAX_MB`; the oldest JPEGs are pruned.
@@ -59,7 +59,7 @@ tail -n 20 /path/to/recordings/escalations/escalations.jsonl
 5.  **Review the escalation log after the first dusk and the first night.** Count escalations per hour and look at the verdicts in `escalations.jsonl`. If the verifier confirmed anything that was not fire, do not switch to the alert channel yet; tune `DECISION__THRESHOLD` or the gatekeeper threshold first.
 6.  **Switch to the alert webhook before the inauguration** (see section 4): put the real webhook in `DISCORD__HOOKS`, recreate the container, confirm the `Monitoring started` message on the service channel.
 
-Consider `RECONNECT_MAX_DELAY_SECONDS=120` in production (see section 6).
+The README production preset sets `RECONNECT_MAX_DELAY_SECONDS=120` (see section 6).
 
 ## 3. After an alert
 
@@ -124,7 +124,7 @@ docker build --no-cache --target cpu -t burning_goat_detection .
 
 | Symptom (log or service message) | Cause | Action |
 |---|---|---|
-| `Stream unavailable (<error>). Reconnecting in <N>s...` repeating, N growing from `RECONNECT_DELAY_SECONDS` up to `RECONNECT_MAX_DELAY_SECONDS` (default 300) | Stream offline, network down, or YouTube changed format | Open the stream in a browser. If it is up, see section 5. After the network returns, recovery can lag up to `RECONNECT_MAX_DELAY_SECONDS` (rehearsal: 4 min 13 s); consider `RECONNECT_MAX_DELAY_SECONDS=120`. Service message `WARNING: the stream has been unavailable for ...` after `DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS`; `Stream recovered` when it is back. No container restart needed. |
+| `Stream unavailable (<error>). Reconnecting in <N>s...` repeating, N growing from `RECONNECT_DELAY_SECONDS` up to `RECONNECT_MAX_DELAY_SECONDS` (default 300) | Stream offline, network down, or YouTube changed format | Open the stream in a browser. If it is up, see section 5. After the network returns, recovery can lag up to `RECONNECT_MAX_DELAY_SECONDS` (rehearsal: 4 min 13 s); the production preset uses `RECONNECT_MAX_DELAY_SECONDS=120`. Service message `WARNING: the stream has been unavailable for ...` after `DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS`; `Stream recovered` when it is back. No container restart needed. |
 | `Verifier DecisionFireDetector unavailable (<reason>); policy alert_unverified: fires seen by the local detector are reported as UNVERIFIED until it recovers.` (CRITICAL; also `Decisions API failed 5 times in a row; ...`) and service message `WARNING: verifier ... unavailable` | Bad or expired Gemini key, quota, API outage | Alerts keep coming, marked `[UNVERIFIED]`. Fix the key or quota in the env file and recreate the container (section 4) if the cause is configuration. While the cause persists, the verifier is re-probed only when the CV gate fires, at most once per `VERIFIER_COOLDOWN_SECONDS`; once it answers again the service channel reports `recovered; fires are verified again`, which can lag until the next CV positive. With `VERIFIER_FAILURE_POLICY=suppress` alerts are silenced instead: watch the CRITICAL line. |
 | `Segment archiver exited with code <N>.` followed by `Restarting segment archiver in <S>s.` | `ffmpeg` died or was killed (rehearsal: `kill -9` restarted after 1 s) | Normal if rare; the supervisor backs off 1 to 30 s. If it repeats, read the masked `Last stderr lines` in the log. |
 | Archiver exits with code 228 repeatedly (#156); `Only <N> MB free in the segment ring directory ... in Docker raise --shm-size.` | `/dev/shm` full (default 64 MB) | Recreate with a larger `--shm-size` (1g is the documented minimum for 1080p60) or shorten `VIDEO__MEMORY_BUFFER_SECONDS`. |

@@ -396,6 +396,10 @@ ESCALATION_LOG__ENABLED=true
 ESCALATION_LOG__DIRECTORY=/app/recordings/escalations
 ESCALATION_LOG__MAX_MB=2000
 
+# Stream reconnect
+# Measured: with the 300 s default, recovery after a 12-min network outage took 4 min 13 s
+RECONNECT_MAX_DELAY_SECONDS=120
+
 # Discord
 DISCORD__USE_DISCORD=true
 DISCORD__HOOKS=["<webhook URL>"]
@@ -403,7 +407,8 @@ DISCORD__HOOKS=["<webhook URL>"]
 DISCORD__SEND_VIDEO_CHUNKS=false
 # Service channel (startup, heartbeat, stream outage, verifier health, shutdown); must differ from DISCORD__HOOKS
 DISCORD__SERVICE_HOOKS=["<service webhook URL>"]
-DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS=86400
+# 6 h instead of the 24 h default: a silent monitor is noticed within hours
+DISCORD__SERVICE_HEARTBEAT_INTERVAL_SECONDS=21600
 DISCORD__SERVICE_STREAM_DOWN_WARNING_SECONDS=600
 
 # Recording
