@@ -204,9 +204,13 @@ async def _run_schedule(
     times: list[int],
     cooldown: float = 30.0,
     debounce: float = 10.0,
+    cv_negative: frozenset[int] = frozenset(),
     **kwargs: object,
 ) -> tuple[MagicMock, list[tuple[int, bool]]]:
-    """Feeds a CV-positive frame at each of ``times`` (seconds) through the hybrid detector and the stream debounce."""
+    """Feeds a frame at each of ``times`` (seconds) through the hybrid detector and the stream debounce.
+
+    The CV gate fires on every frame except at the seconds in ``cv_negative``.
+    """
     from is_goat_burning.fire_detection import detector_core
     from is_goat_burning.fire_detection.detector_core import StreamFireDetector
 
@@ -217,7 +221,7 @@ async def _run_schedule(
     mocker.patch.object(detector_core, "settings", core_settings)
 
     local = MagicMock()
-    local.detect = AsyncMock(return_value=(True, FRAME))
+    local.detect = AsyncMock(side_effect=lambda _frame: (clock.now not in cv_negative, FRAME))
     verifier = MagicMock()
     verifier.verify = verify
     hybrid = HybridFireDetector(
@@ -267,6 +271,33 @@ async def test_false_negative_at_the_end_of_the_188_window_is_held_after_the_win
 
     on_extinguished.assert_not_awaited()
     # t=39 false negative (hold until 49), t=40 re-asked although the #188 window (until t=40) ended, t=41 fire.
+    assert calls == [(0, True), (39, False), (40, False), (41, True), (71, True)]
+
+
+@pytest.mark.asyncio
+async def test_false_negative_after_a_cv_gate_gap_does_not_end_the_fire(mocker: MockerFixture) -> None:
+    """Scenario 2 with CV-negative frames: a 9 s gate gap, then a false negative at the end of the #188 window."""
+    gap = frozenset(range(30, 39))  # the gate sees nothing from t=30 to t=38; the extinguish debounce starts at t=30
+
+    on_extinguished, calls = await _run_schedule(mocker, _sequence([True, False], then=True), list(range(80)), cv_negative=gap)
+
+    on_extinguished.assert_not_awaited()
+    # t=39 false negative (9 s of no-fire so far), t=40 re-asked (hold) -> fire resets the extinguish debounce.
+    assert calls == [(0, True), (39, False), (40, True), (70, True)]
+
+
+@pytest.mark.asyncio
+async def test_inconclusive_error_before_the_false_negative_does_not_skip_the_hold(mocker: MockerFixture) -> None:
+    """An inconclusive error is neither fire nor no-fire: the negative that follows it still starts the hold."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    verify = _sequence([True, VerifierError("blip"), False], then=True)
+    times = list(range(30)) + list(range(39, 80))  # no CV-positive check between t=30 and t=38
+
+    on_extinguished, calls = await _run_schedule(mocker, verify, times, errors_before_policy=2)
+
+    on_extinguished.assert_not_awaited()
+    # t=39 inconclusive error, t=40 false negative (hold until 50, the #188 window has ended), t=41 re-asked -> fire.
     assert calls == [(0, True), (39, False), (40, False), (41, True), (71, True)]
 
 
