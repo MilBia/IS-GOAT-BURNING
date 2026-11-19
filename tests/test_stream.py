@@ -10,8 +10,11 @@ dependencies.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
+import threading
+import time
 from unittest.mock import MagicMock
 from unittest.mock import call
 
@@ -336,3 +339,209 @@ def test_real_ytdlp_writes_nothing_to_stderr(capsys: pytest.CaptureFixture[str])
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == ""
+
+
+# --- Capture release serialized after in-flight reads (#201) ---
+WAIT_SECONDS = 5.0
+
+
+class _BlockingCapture:
+    """Fake capture whose read()/grab() block on an event; records a release() during a read."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.unblock = threading.Event()
+        self.read_started = threading.Event()
+        self.released = threading.Event()
+        self.in_read = False
+        self.overlap = False
+        self.release_calls = 0
+
+    def isOpened(self) -> bool:  # noqa: N802 - mirrors cv2.VideoCapture
+        return True
+
+    def get(self, prop: int) -> float:
+        return TEST_FPS if prop == cv2.CAP_PROP_FPS else float(TINY_FRAME_WIDTH)
+
+    def _block(self) -> None:
+        with self._lock:
+            self.in_read = True
+        self.read_started.set()
+        self.unblock.wait(timeout=WAIT_SECONDS)
+        with self._lock:
+            self.in_read = False
+
+    def read(self) -> tuple[bool, None]:
+        self._block()
+        return False, None
+
+    def grab(self) -> bool:
+        self._block()
+        return False
+
+    def retrieve(self) -> tuple[bool, None]:
+        return False, None
+
+    def release(self) -> None:
+        with self._lock:
+            if self.in_read:
+                self.overlap = True
+            self.release_calls += 1
+        self.released.set()
+
+
+async def _streamer_with_blocked_read(
+    mock_cv2_video_capture: MagicMock, mock_settings: MagicMock, sampled: bool
+) -> tuple[VideoStreamer, _BlockingCapture]:
+    """Creates a streamer, starts consuming frames until a read blocks, then cancels the consumer."""
+    mock_settings.cuda = False
+    mock_settings.open_cl = False
+    cap = _BlockingCapture()
+    mock_cv2_video_capture.return_value = cap
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
+    streamer.skips_decode = sampled
+
+    async def consume() -> None:
+        async for _ in streamer.frames(every=3 if sampled else 1):
+            pass
+
+    task = asyncio.create_task(consume())
+    assert await asyncio.to_thread(cap.read_started.wait, WAIT_SECONDS)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return streamer, cap
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sampled", [False, True], ids=["read", "sampled_grab"])
+async def test_stop_releases_capture_only_after_in_flight_read_returns(
+    sampled: bool,
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,
+    mock_video_saver: MagicMock,
+) -> None:
+    """A cancelled consumer leaves a read in its worker thread; stop() must not release under it."""
+    streamer, cap = await _streamer_with_blocked_read(mock_cv2_video_capture, mock_settings, sampled)
+    try:
+        stop_task = asyncio.create_task(streamer.stop())
+        await asyncio.sleep(0.05)
+        assert cap.release_calls == 0  # waits for the in-flight read
+
+        cap.unblock.set()
+        await asyncio.wait_for(stop_task, WAIT_SECONDS)
+    finally:
+        cap.unblock.set()
+
+    assert cap.release_calls == 1
+    assert not cap.overlap
+    mock_video_saver.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_times_out_on_blocked_read_and_still_stops_saver(
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,
+    mock_video_saver: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A read that never returns: stop() gives up after the timeout, warns, stops the saver, release is deferred."""
+    import is_goat_burning.stream as stream_module
+
+    monkeypatch.setattr(stream_module, "_RELEASE_TIMEOUT_SECONDS", 0.1)
+    # The app logger does not propagate and is CRITICAL in tests: lower it (setLevel clears the level cache) and
+    # attach caplog's handler directly.
+    caplog.set_level(logging.DEBUG, logger=stream_module.logger.name)
+    streamer, cap = await _streamer_with_blocked_read(mock_cv2_video_capture, mock_settings, sampled=False)
+    stream_module.logger.addHandler(caplog.handler)
+    try:
+        started = time.monotonic()
+        await asyncio.wait_for(streamer.stop(), WAIT_SECONDS)
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 1.0
+        assert cap.release_calls == 0
+        mock_video_saver.stop.assert_awaited_once()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "release" in r.getMessage()]
+        assert len(warnings) == 1
+    finally:
+        stream_module.logger.removeHandler(caplog.handler)
+        cap.unblock.set()
+
+    # The deferred release runs on the capture's worker once the read finally returns.
+    assert await asyncio.to_thread(cap.released.wait, WAIT_SECONDS)
+    assert cap.release_calls == 1
+    assert not cap.overlap
+
+
+@pytest.mark.asyncio
+async def test_stop_twice_releases_once(
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,
+    mock_video_saver: MagicMock,  # noqa: ARG001
+) -> None:
+    """stop() is idempotent: the second call neither releases again nor raises."""
+    mock_settings.cuda = False
+    mock_settings.open_cl = False
+    cap = _BlockingCapture()
+    mock_cv2_video_capture.return_value = cap
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
+
+    await asyncio.wait_for(streamer.stop(), WAIT_SECONDS)
+    await asyncio.wait_for(streamer.stop(), WAIT_SECONDS)
+
+    assert cap.release_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_returns", [True, False], ids=["read_returns", "read_stays_blocked"])
+async def test_stop_in_finally_of_cancelled_consumer(
+    read_returns: bool,
+    mock_cv2_video_capture: MagicMock,
+    mock_settings: MagicMock,
+    mock_video_saver: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Production path: stop() runs in the `finally` of the cancelled task that consumed frames (detector_core)."""
+    import is_goat_burning.stream as stream_module
+
+    monkeypatch.setattr(stream_module, "_RELEASE_TIMEOUT_SECONDS", 0.2)
+    caplog.set_level(logging.DEBUG, logger=stream_module.logger.name)
+    mock_settings.cuda = False
+    mock_settings.open_cl = False
+    cap = _BlockingCapture()
+    mock_cv2_video_capture.return_value = cap
+    streamer = await VideoStreamer.create(url=TEST_STREAM_URL)
+
+    async def consume() -> None:
+        try:
+            async for _ in streamer.frames():
+                pass
+        finally:
+            await streamer.stop()
+
+    stream_module.logger.addHandler(caplog.handler)
+    try:
+        task = asyncio.create_task(consume())
+        assert await asyncio.to_thread(cap.read_started.wait, WAIT_SECONDS)
+        task.cancel()
+        await asyncio.sleep(0.05)
+        assert cap.release_calls == 0  # queued behind the in-flight read
+        if read_returns:
+            cap.unblock.set()
+        started = time.monotonic()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, WAIT_SECONDS)
+        assert time.monotonic() - started < 1.0
+        mock_video_saver.stop.assert_awaited_once()
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "release" in r.getMessage()]
+        assert len(warnings) == (0 if read_returns else 1)
+    finally:
+        stream_module.logger.removeHandler(caplog.handler)
+        cap.unblock.set()
+
+    assert await asyncio.to_thread(cap.released.wait, WAIT_SECONDS)
+    assert cap.release_calls == 1
+    assert not cap.overlap

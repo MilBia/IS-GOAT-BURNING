@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import inspect
 import os
 from pathlib import Path
@@ -185,6 +186,7 @@ def test_concat_failure_returns_false(tmp_path: Path) -> None:
 def _streamer(skips: bool) -> VideoStreamer:
     streamer = VideoStreamer.__new__(VideoStreamer)
     streamer.cap = MagicMock()
+    streamer._executor = ThreadPoolExecutor(max_workers=1)  # built by __init__, which this helper bypasses
     streamer.skips_decode = skips
     streamer._running = True
     streamer.backend = "cpu"
