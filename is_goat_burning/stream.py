@@ -7,6 +7,7 @@ frame grabbing and processing.
 
 import asyncio
 from collections.abc import AsyncGenerator
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import re
 from typing import Literal
@@ -41,6 +42,8 @@ class _YtDlpLogger:
 
 # --- Constants ---
 Backend = Literal["cpu", "cuda", "opencl"]
+#: How long `VideoStreamer.stop()` waits for the capture release queued behind an in-flight read (#201).
+_RELEASE_TIMEOUT_SECONDS = 5.0
 
 
 class YouTubeStream:
@@ -139,6 +142,9 @@ class VideoStreamer:
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame_shape = (width, height)
         self._running = False
+        self._stopped = False
+        #: Single worker running every blocking call on `cap`, so `release()` never overlaps a read (#201).
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-capture")
         #: True when frames need not be archived from decoded video, so only analysed frames are decoded (`grab()`).
         self.skips_decode: bool = settings.video.save_video_chunks and settings.video.buffer_mode == "segments"
 
@@ -229,7 +235,7 @@ class VideoStreamer:
             return
         while self._running:
             # Run the blocking cap.read() in an executor
-            grabbed, frame = await loop.run_in_executor(None, self.cap.read)
+            grabbed, frame = await loop.run_in_executor(self._executor, self.cap.read)
 
             if not grabbed:
                 logger.warning("Stream ended or frame could not be grabbed.")
@@ -258,7 +264,7 @@ class VideoStreamer:
         while self._running:
             decode = index % every == 0
             index += 1
-            grabbed, frame = await loop.run_in_executor(None, self._grab_and_maybe_retrieve, decode)
+            grabbed, frame = await loop.run_in_executor(self._executor, self._grab_and_maybe_retrieve, decode)
             if not grabbed:
                 logger.warning("Stream ended or frame could not be grabbed.")
                 break
@@ -266,10 +272,27 @@ class VideoStreamer:
                 yield self._process_frame(frame)
 
     async def stop(self) -> None:
-        """Stops the frame grabbing loop and cleans up resources."""
+        """Stops the frame grabbing loop and cleans up resources. Idempotent.
+
+        The capture is released on its own worker thread, i.e. only after a read still in flight there (its awaiting
+        task may already be cancelled) returns: releasing under a running read crashes OpenCV/FFmpeg (#201). If that
+        read stays blocked past `_RELEASE_TIMEOUT_SECONDS`, the release is left queued on the worker and the
+        shutdown continues.
+        """
         logger.info("Stopping video stream...")
         self._running = False
-        if self.cap.isOpened():
-            self.cap.release()
+        if not self._stopped:
+            self._stopped = True
+            release = asyncio.wrap_future(self._executor.submit(self.cap.release))
+            try:
+                # shield: neither the timeout nor a cancellation may drop the queued release.
+                await asyncio.wait_for(asyncio.shield(release), _RELEASE_TIMEOUT_SECONDS)
+            except TimeoutError:
+                logger.warning(
+                    f"Video capture read still blocked after {_RELEASE_TIMEOUT_SECONDS:g} s; "
+                    "capture release deferred to its worker thread."
+                )
+            finally:
+                self._executor.shutdown(wait=False)
         await self.video_saver.stop()
         logger.info("Video stream stopped.")
