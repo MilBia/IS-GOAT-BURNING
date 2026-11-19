@@ -488,6 +488,12 @@ class HybridFireDetector:
     (``last_result_unverified`` is True), ``suppress`` reports no fire. While unavailable, the verifier is probed at
     most once per ``cooldown_seconds`` and the policy result is reported in between. Entering and leaving that degraded state
     is logged (CRITICAL / INFO) and published through ``verifier_health.publish_verifier_status``.
+
+    A positive verdict is reused for the whole cooldown. A negative verdict is not reused (the verifier is asked again
+    on every CV-positive check) while a positive verdict is at most ``cooldown_seconds + extinguish_debounce_seconds``
+    old (#188), nor for ``extinguish_debounce_seconds`` after the first negative verdict that follows a reported fire
+    (a verified or reused positive, or an ``alert_unverified`` policy result; #191), so a single false negative cannot
+    end an ongoing fire. Otherwise (e.g. a persistent CV false positive) a negative verdict is reused for the cooldown.
     """
 
     def __init__(
@@ -509,7 +515,8 @@ class HybridFireDetector:
             cooldown_seconds: Minimum time between verifier calls. While it runs, the last verdict is reused (so the
                 debounce is not reset by a gap). Defaults to ``settings.verifier_cooldown_seconds``; 0 disables it.
                 Only real verdicts are reused; an error is never cached, and a negative verdict shortly after a
-                positive one is not reused either (one false negative must not end an ongoing fire).
+                positive one, or within ``extinguish_debounce_seconds`` of the first negative after a reported fire,
+                is not reused either (one false negative must not end an ongoing fire; see the class docstring).
             max_calls_per_hour: Hard cap of verifier calls in a rolling hour; once reached the verifier is not called
                 and the verifier counts as unavailable (``failure_policy`` applies). Defaults to
                 ``settings.verifier_max_calls_per_hour``; 0 means unlimited.
@@ -522,7 +529,8 @@ class HybridFireDetector:
                 from ``settings.escalation_log`` (None while it is disabled).
             extinguish_debounce_seconds: The fire-extinguished debounce of ``StreamFireDetector``. A negative verdict
                 is not reused while a positive verdict is at most ``cooldown_seconds + extinguish_debounce_seconds``
-                old (see ``detect``). Defaults to ``settings.fire_extinguished_debounce_seconds``.
+                old, nor for this long after the first negative verdict following a reported fire (see the class
+                docstring). Defaults to ``settings.fire_extinguished_debounce_seconds``.
         """
         self.escalation_log = escalation_log if escalation_log is not None else get_escalation_log()
         self.extinguish_debounce_seconds = (
@@ -544,6 +552,10 @@ class HybridFireDetector:
         self._last_call_time: float | None = None
         self._last_verdict = False
         self._last_positive_time: float | None = None
+        #: The result last reported for a CV-positive check (inconclusive results excluded), see ``_record_verdict``.
+        self._reported_fire = False
+        #: Until when a negative verdict is not reused (#191); None when no hold is active.
+        self._negative_hold_until: float | None = None
         self._last_attempt_time: float | None = None
         self._call_times: deque[float] = deque()
         self._limit_warned = False
@@ -648,7 +660,7 @@ class HybridFireDetector:
         """Whether the last verdict is reused instead of calling the verifier (inside the cooldown)."""
         if not self.cooldown_seconds or self._last_call_time is None or now - self._last_call_time >= self.cooldown_seconds:
             return False
-        return self._last_verdict or not self._fire_recently_verified(now)
+        return self._last_verdict or not (self._fire_recently_verified(now) or self._negative_hold_active(now))
 
     def _probe_throttled(self, now: float) -> bool:
         """Whether an unavailable verifier was already probed within the cooldown (the policy result is reported).
@@ -675,6 +687,32 @@ class HybridFireDetector:
         if self._last_positive_time is None:
             return False
         return now < self._last_positive_time + self.cooldown_seconds + self.extinguish_debounce_seconds
+
+    def _negative_hold_active(self, now: float) -> bool:
+        """Whether a negative verdict must not be reused because it follows a reported fire too closely (#191).
+
+        The #188 window is anchored at the last positive verdict, so a first real call that comes late (after a verifier
+        outage reported as fire under ``alert_unverified``, or after a gap in CV-positive checks) can still return a
+        false negative that would be reused for a whole cooldown and end the fire. The first negative verdict after a
+        reported fire therefore starts a hold of ``extinguish_debounce_seconds`` during which the verifier is asked on
+        every CV-positive check. Later negatives inside the hold do not extend it; a positive verdict clears it.
+        """
+        return self._negative_hold_until is not None and now < self._negative_hold_until
+
+    def _record_verdict(self, verified: bool, now: float) -> None:
+        """Stores a real verdict for reuse and updates the #188 anchor and the #191 negative hold."""
+        self._last_verdict = verified
+        if verified:
+            self._last_positive_time = now
+            self._negative_hold_until = None
+        elif self._reported_fire:
+            self._negative_hold_until = now + self.extinguish_debounce_seconds  # first negative after a reported fire
+
+    def _report(self, result: bool) -> bool:
+        """Remembers the result reported for a CV-positive check (unless inconclusive) and returns it."""
+        if not self.last_result_inconclusive:
+            self._reported_fire = result
+        return result
 
     def _policy_result(self) -> bool:
         """Returns the result reported while the verifier is unavailable, per ``failure_policy``."""
@@ -715,13 +753,14 @@ class HybridFireDetector:
 
         now = time.monotonic()
         if self._can_reuse_verdict(now):
-            return self._last_verdict, annotated_frame  # reuse the last verdict instead of calling the API again
+            # reuse the last verdict instead of calling the API again
+            return self._report(self._last_verdict), annotated_frame
         if self._probe_throttled(now):
-            return self._policy_result(), annotated_frame  # unavailable: probe at most once per cooldown
+            return self._report(self._policy_result()), annotated_frame  # unavailable: probe at most once per cooldown
         if self._cap_reached(now):
             if self.escalation_log is not None:
                 self.escalation_log.record_capped(type(self.verifier).__name__, self.failure_policy)
-            return self._policy_result(), annotated_frame
+            return self._report(self._policy_result()), annotated_frame
         previous_call_time = self._last_call_time
         self._last_call_time = now
         self._last_attempt_time = now
@@ -732,14 +771,12 @@ class HybridFireDetector:
         except VerifierError as exc:
             self._last_call_time = previous_call_time  # an error is not a verdict: no cooldown, ask again next check
             result = self._handle_verifier_error(exc, numpy_frame, (perf_counter() - started) * 1000.0)
-            return result, annotated_frame
+            return self._report(result), annotated_frame
         except BaseException:
             self._last_call_time = previous_call_time  # a failed call must not start the cooldown
             raise
         self._record_escalation(numpy_frame, "fire" if verified else "no_fire", (perf_counter() - started) * 1000.0)
-        self._last_verdict = verified
-        if verified:
-            self._last_positive_time = now
+        self._record_verdict(verified, now)
         self._mark_available()
 
         if not verified:
@@ -747,7 +784,7 @@ class HybridFireDetector:
                 f"CV detector found fire but verifier {type(self.verifier).__name__} rejected it - false positive filtered."
             )
 
-        return verified, annotated_frame
+        return self._report(verified), annotated_frame
 
 
 def _create_local_detector(
