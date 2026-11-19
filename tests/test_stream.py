@@ -10,6 +10,8 @@ dependencies.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from unittest.mock import MagicMock
 from unittest.mock import call
 
@@ -289,3 +291,48 @@ async def test_frames_generator_yields_frames_and_stops(
     assert mock_video_saver.call_count == NUM_TEST_FRAMES
 
     mock_video_saver.stop.assert_awaited_once()
+
+
+# --- yt-dlp log routing (#193) ---
+SECRET_URL = "https://x.googlevideo.com/videoplayback?sig=SECRET"
+
+
+def test_ytdlp_options_route_messages_to_app_logger_at_debug(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every yt-dlp message level lands in the app logger at DEBUG with URLs masked."""
+    import is_goat_burning.stream as stream_module
+
+    # The app logger does not propagate, so attach caplog's handler directly.
+    monkeypatch.setattr(stream_module.logger, "level", logging.DEBUG)
+    stream_module.logger.addHandler(caplog.handler)
+    caplog.set_level("DEBUG")
+    ytdlp_logger = YouTubeStream(TEST_URL).ytdlp_options["logger"]
+
+    try:
+        for method in ("debug", "info", "warning", "error"):
+            getattr(ytdlp_logger, method)(f"msg {method} {SECRET_URL} end")
+    finally:
+        stream_module.logger.removeHandler(caplog.handler)
+
+    records = [r for r in caplog.records if "msg " in r.getMessage()]
+    assert len(records) == 4
+    assert {r.levelname for r in records} == {"DEBUG"}
+    for record in records:
+        assert "<url>" in record.getMessage()
+        assert "SECRET" not in record.getMessage()
+
+
+def test_real_ytdlp_writes_nothing_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    """A real YoutubeDL built with the app's options never prints warnings/errors itself."""
+    import yt_dlp
+
+    ydl = yt_dlp.YoutubeDL(YouTubeStream(TEST_URL).ytdlp_options)
+    ydl.report_warning("x warning")
+    ydl.to_stderr("y stderr")
+    with contextlib.suppress(DownloadError):
+        ydl.report_error("y error")
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == ""
