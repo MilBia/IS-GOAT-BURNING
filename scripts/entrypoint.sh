@@ -13,6 +13,18 @@ else
     VIDEO_DIR="/app/recordings"
 fi
 
+# Normalize: strip ONE pair of matching surrounding quotes (docker --env-file passes them literally),
+# then resolve a relative path against /app (the app's WORKDIR).
+case "$VIDEO_DIR" in
+  \"*\") VIDEO_DIR="${VIDEO_DIR#?}"; VIDEO_DIR="${VIDEO_DIR%?}" ;;
+  \'*\') VIDEO_DIR="${VIDEO_DIR#?}"; VIDEO_DIR="${VIDEO_DIR%?}" ;;
+esac
+case "$VIDEO_DIR" in
+  /*) ;;
+  ./*) VIDEO_DIR="/app/${VIDEO_DIR#./}" ;;
+  *) VIDEO_DIR="/app/$VIDEO_DIR" ;;
+esac
+
 case "$VIDEO_DIR" in
   # 1. Check for the path traversal.
   *..*)

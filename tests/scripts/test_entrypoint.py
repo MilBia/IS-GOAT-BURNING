@@ -91,3 +91,35 @@ def test_path_outside_app_rejected(run_entrypoint):
     result, calls = run_entrypoint(VIDEO__VIDEO_OUTPUT_DIRECTORY="/data/vids")
     assert result.returncode == 1
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("recordings", "/app/recordings"),
+        ("./recordings", "/app/recordings"),
+        ('"./recordings"', "/app/recordings"),
+        ("'sub/dir'", "/app/sub/dir"),
+        ('"/app/quoted"', "/app/quoted"),
+    ],
+)
+def test_relative_and_quoted_paths_resolve_against_app(run_entrypoint, value, expected):
+    """Relative and literally-quoted values are normalized to a path under /app."""
+    result, calls = run_entrypoint(VIDEO__VIDEO_OUTPUT_DIRECTORY=value)
+    assert result.returncode == 0
+    assert f"chown nobody:nogroup {expected}" in calls
+
+
+def test_legacy_relative_path_is_normalized(run_entrypoint):
+    """The legacy variable gets the same normalization."""
+    result, calls = run_entrypoint(VIDEO_OUTPUT_DIRECTORY='"./legacy"')
+    assert result.returncode == 0
+    assert "chown nobody:nogroup /app/legacy" in calls
+
+
+@pytest.mark.parametrize("value", ["../x", "/tmp/x", '"../x"'])
+def test_invalid_paths_still_rejected_after_normalization(run_entrypoint, value):
+    """Traversal and non-/app absolute paths still fail."""
+    result, calls = run_entrypoint(VIDEO__VIDEO_OUTPUT_DIRECTORY=value)
+    assert result.returncode == 1
+    assert calls == []
