@@ -22,6 +22,43 @@ _QUESTION_ID = "fire"
 CONSECUTIVE_ERRORS_BEFORE_CRITICAL = 5
 
 
+def _http_status(error: Exception) -> int | None:
+    """Returns the HTTP status code of a Decisions API HTTP error, or None for other exceptions.
+
+    google-genai raises the Decisions API HTTP errors (403 invalid key, 429 quota, 5xx) from private modules
+    (``_interactions_errors`` in 3.6, ``_gaos.lib.compat_errors`` in 3.3) that do not derive from
+    ``genai.errors.APIError`` and have no public base class, so they are recognised by their integer
+    ``status_code`` attribute instead of importing private classes.
+
+    Args:
+        error: The exception raised by the Decisions API call.
+
+    Returns:
+        The HTTP error status code (4xx/5xx), or None otherwise (e.g. a malformed 200 response stays unexpected).
+    """
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool) and 400 <= status < 600:
+        return status
+    return None
+
+
+def _is_connection_error(error: Exception) -> bool:
+    """Tells whether the exception is a Decisions API network error (connection failure or SDK timeout).
+
+    The SDK's ``APIConnectionError`` (and its ``APITimeoutError`` subclass) lives in a private module, so it is
+    matched by class name anywhere in the MRO.
+
+    Args:
+        error: The exception raised by the Decisions API call.
+
+    Returns:
+        True if a class named ``APIConnectionError`` is in the exception's MRO.
+    """
+    return any(cls.__name__ == "APIConnectionError" for cls in type(error).__mro__)
+
+
 class DecisionFireDetector:
     """Detects fire with a calibrated yes/no ``noul`` question from the Decisions API.
 
@@ -115,10 +152,22 @@ class DecisionFireDetector:
             self._record_error()
             raise VerifierError(f"Decisions API request timed out after {self.timeout_seconds:.1f} s") from e
         except genai.errors.APIError as e:
-            logger.error("Decisions API error: %s", e)
+            # Class and status code only: the message carries the response body.
+            logger.error("Decisions API error: %s (code %s)", type(e).__name__, getattr(e, "code", None))
             self._record_error()
             raise VerifierError(f"Decisions API error: {type(e).__name__}") from e
         except Exception as e:
+            status = _http_status(e)
+            if status is not None:
+                # Class and status only: the message/body may echo request details.
+                logger.error("Decisions API HTTP error: %s (status %d)", type(e).__name__, status)
+                self._record_error()
+                raise VerifierError(f"Decisions API HTTP error: {type(e).__name__} ({status})") from e
+            if _is_connection_error(e):
+                # Class name only: the message is the transport's error text.
+                logger.error("Decisions API connection error: %s", type(e).__name__)
+                self._record_error()
+                raise VerifierError(f"Decisions API connection error: {type(e).__name__}") from e
             logger.exception("Unexpected error during Decisions API fire detection.")
             self._record_error()
             raise VerifierError(f"Unexpected Decisions API error: {type(e).__name__}") from e
