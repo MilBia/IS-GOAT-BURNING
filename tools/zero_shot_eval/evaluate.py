@@ -97,7 +97,12 @@ def report(name: str, rows: list[dict], scores: list[float]) -> None:
         f"best safe point: threshold {safe:.4g} (max negative score {s[neg].max():.4g}, from `{cat[neg][s[neg].argmax()]}`)\n"
     )
     print(f"- recall non-synth fire (headline): {rec(head, safe)}")
-    print(f"- recall non-synth fire without D-Fire: {rec(head & ~dfire, safe)}")
+    safe_nd = float(np.nextafter(s[neg & ~dfire].max(), 1.0))
+    print(f"- recall non-synth fire without D-Fire, same threshold: {rec(head & ~dfire, safe)}")
+    print(
+        f"- leak-free (both D-Fire categories dropped, threshold {safe_nd:.4g} from {int((neg & ~dfire).sum())} negatives): "
+        f"recall {rec(head & ~dfire, safe_nd)}"
+    )
     print(f"- FPR all negatives: {rec(neg, safe)}; goat: {rec(neg & np.char.startswith(cat.astype(str), 'goat'), safe)}")
     order = np.sort(s[neg])[::-1]
     for k in (1, 3):
