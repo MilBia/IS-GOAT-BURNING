@@ -1,7 +1,8 @@
 """Local inference must not phone home (#210, background in #207).
 
 Each test runs ``no_outbound_child.py`` in a fresh Python process with an empty temporary ``HOME``,
-``XDG_CACHE_HOME``, ``TMPDIR`` and working directory and *without* any telemetry opt-out variable, so only the app's
+``XDG_CACHE_HOME``, ``TMPDIR`` and working directory, *without* any telemetry opt-out variable and without CI
+markers (``CI_DETECTION_VARIABLES``: telemetry clients go quiet on CI), so only the app's
 own guards (``_import_onnxruntime``, ``_block_openvino_telemetry``) can keep a library quiet. The child builds
 ``EdgeInferenceDetector`` on a tiny generated ONNX model for every backend installed here and runs a few inferences.
 
@@ -45,6 +46,25 @@ REQUIRE_OV_TELEMETRY = bool(os.environ.get("NO_OUTBOUND_REQUIRE_OV_TELEMETRY"))
 CHILD_TIMEOUT_SECONDS = 120
 DETECTOR_RESULTS = [True, False, True, False]  # red, blue, red, blue frames
 FILES_ALLOWED_IN_WORKDIR = {"model.onnx", ".env.tests"}
+# Telemetry clients stay silent when they detect a CI system, which would make the leak controls (and the guards)
+# untestable in CI: onnxruntime 1.32 checks these names (strings in its native module; CI, GITHUB_ACTIONS, TF_BUILD and
+# SYSTEM_TEAMFOUNDATIONCOLLECTIONURI verified to suppress its device id), openvino-telemetry checks CI, TF_BUILD and
+# JENKINS_URL. They are removed from the child so libraries behave as on a user's machine.
+CI_DETECTION_VARIABLES = {
+    "CI",
+    "TF_BUILD",
+    "SYSTEM_TEAMFOUNDATIONCOLLECTIONURI",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "CIRCLECI",
+    "TRAVIS",
+    "JENKINS_URL",
+    "CODEBUILD_BUILD_ID",
+    "BUILDKITE",
+    "TEAMCITY_VERSION",
+    "APPVEYOR",
+    "BITBUCKET_BUILD_NUMBER",
+}
 
 
 def _installed(module: str) -> bool:
@@ -68,11 +88,12 @@ requires_netns = pytest.mark.skipif(not NETNS, reason="unshare -rn unavailable: 
 
 
 def _child_env(home: Path, cache: Path, tmp: Path) -> dict[str, str]:
-    """Builds the child environment: temporary home/cache/tmp, repo on the path, no telemetry opt-outs."""
+    """Builds the child environment: temporary home/cache/tmp, repo on the path, no telemetry opt-outs, no CI markers."""
+    dropped = {"DO_NOT_TRACK", "PYTHONPATH", *CI_DETECTION_VARIABLES}
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("XDG_") and "TELEMETRY" not in key and key not in ("DO_NOT_TRACK", "PYTHONPATH")
+        if not key.startswith("XDG_") and "TELEMETRY" not in key and key not in dropped
     }
     env.pop("ORT_DISABLE_TELEMETRY", None)  # explicit: tests/conftest.py sets it for the in-process suite
     env.update(HOME=str(home), XDG_CACHE_HOME=str(cache), TMPDIR=str(tmp), PYTHONPATH=str(REPO_ROOT))
