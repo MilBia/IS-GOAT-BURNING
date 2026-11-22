@@ -26,9 +26,14 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import sys
 
 import cv2
 import numpy as np
+
+# OpenVINO and NNCF send usage telemetry (with a persistent client id) on import unless `openvino_telemetry`
+# cannot be imported; both then fall back to a no-op stub. Block it before any openvino/nncf import.
+sys.modules["openvino_telemetry"] = None  # type: ignore[assignment]
 
 _MEAN = np.array((0.485, 0.456, 0.406), dtype=np.float32).reshape(1, 3, 1, 1)
 _STD = np.array((0.229, 0.224, 0.225), dtype=np.float32).reshape(1, 3, 1, 1)
