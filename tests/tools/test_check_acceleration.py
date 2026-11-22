@@ -135,7 +135,7 @@ def test_main_with_model_benchmarks_every_accelerator(monkeypatch: pytest.Monkey
     monkeypatch.setattr(ca, "benchmark_accelerator", lambda _a, _m, _s: {"ok": True, "median_ms": 1.0})
     lines: list[str] = []
     assert ca.main(["--model", "m.onnx", "--size", "224"], out=lines.append) == 0
-    for acc in ("auto", "cpu", "cuda", "opencl"):
+    for acc in ("auto", "cpu", "cuda", "opencl", "openvino", "openvino_gpu"):
         assert f"{acc}: ok" in lines[0]
 
 

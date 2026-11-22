@@ -99,7 +99,9 @@ def probe_onnxruntime() -> dict[str, Any]:
         A dictionary with ``version`` and ``providers`` (``None`` if onnxruntime is not installed).
     """
     try:
-        import onnxruntime as ort
+        from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
+
+        ort = _import_onnxruntime()  # telemetry disabled (#207)
     except ImportError:
         return {"version": None, "providers": None}
     try:
@@ -127,11 +129,14 @@ def probe_auto_selection() -> str:
     return f"engine={plan.engine} accelerator={plan.accelerator}"
 
 
+_BENCH_ACCELERATORS = ("auto", "cpu", "cuda", "opencl", "openvino", "openvino_gpu")
+
+
 def benchmark_accelerator(accelerator: str, model_path: str, size: int, runs: int = RUNS) -> dict[str, Any]:
     """Tries ``EdgeInferenceDetector`` with one accelerator and measures the median latency.
 
     Args:
-        accelerator: One of ``auto``, ``cpu``, ``cuda``, ``opencl``.
+        accelerator: One of ``_BENCH_ACCELERATORS``.
         model_path: Path to the ONNX classifier.
         size: Square model input side.
         runs: Number of timed inferences.
@@ -239,7 +244,7 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], object] = print
     try:
         benchmarks = None
         if args.model:
-            benchmarks = {acc: benchmark_accelerator(acc, args.model, args.size) for acc in ("auto", "cpu", "cuda", "opencl")}
+            benchmarks = {acc: benchmark_accelerator(acc, args.model, args.size) for acc in _BENCH_ACCELERATORS}
         out(format_report(probe_cv2(), probe_onnxruntime(), probe_auto_selection(), benchmarks))
     except Exception as e:  # the tool only reports; it must not fail
         out(f"check_acceleration failed unexpectedly: {type(e).__name__}: {e}")

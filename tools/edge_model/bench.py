@@ -84,7 +84,9 @@ def bench_model(path: Path, args: argparse.Namespace) -> tuple[tuple[int, ...], 
     Returns:
         Tuple of (input shape, list of results).
     """
-    import onnxruntime as ort
+    from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
+
+    ort = _import_onnxruntime()  # telemetry disabled (#207)
 
     probe = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
     inp = probe.get_inputs()[0]
@@ -157,6 +159,9 @@ def _bench_cv2(path: Path, x: np.ndarray, ref: np.ndarray, args: argparse.Namesp
 
 def _bench_openvino(path: Path, x: np.ndarray, ref: np.ndarray, args: argparse.Namespace) -> list[Result]:
     """Benchmark OpenVINO runtime on CPU and GPU when the package is importable."""
+    from is_goat_burning.fire_detection.edge_detector import _block_openvino_telemetry
+
+    _block_openvino_telemetry()  # no usage event / forkserver on import (#207)
     try:
         import openvino as ov
     except ImportError:

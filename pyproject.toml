@@ -26,6 +26,9 @@ cpu = [
 edge-gpu = [
     "onnxruntime-gpu==1.32.0",
 ]
+openvino = [
+    "openvino==2026.4.1",
+]
 dev = [
     "ruff==0.17.5",
     "pre-commit==4.7.0",
