@@ -121,6 +121,26 @@ def test_best_safe_point_prefers_zero_false_alarms() -> None:
     assert evaluate(rule, rule.grid[0], clips).pos_clips == 1
 
 
+def test_report_without_positive_clips() -> None:
+    """A negatives-only manifest (#205) picks the most sensitive zero-alarm point and shows recall as n/a."""
+    static = extract_features(iter(enumerate([_frame(20)] * 6)))
+    moving = extract_features(iter(enumerate([_frame(10 + 30 * i, width=60) for i in range(6)])))
+    clips = [Clip("static", "neg", "g", static), Clip("moving", "neg", "g", moving)]
+    rule = RULES_BY_NAME["skip_first"]
+    points = sweep(rule, clips)
+    best = best_safe_point(points)
+    assert best is not None
+    assert best.neg_alarm_checks == 0
+    assert best.param == min(p.param for p in points if p.neg_alarm_checks == 0)
+    assert best.param > rule.grid[0]  # the moving negative alarms at the sensitive end of the grid
+
+    report = render_markdown(clips)
+    assert "Clips: 0 positive, 2 negative" in report
+    assert f"| skip_first | {best.param:.4g} | n/a | 0/0 |" in report
+    assert "Positive recall n/a (0/0 clips detected)" in report
+    assert "nan" not in report
+
+
 def test_cli_roundtrip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     neg_dir, pos_dir = tmp_path / "neg", tmp_path / "pos"
     neg_dir.mkdir()
