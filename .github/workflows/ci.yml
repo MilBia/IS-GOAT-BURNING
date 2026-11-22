@@ -45,6 +45,57 @@ jobs:
           # PYTHONPATH=. is crucial for pytest to find the 'is_goat_burning' module
           PYTHONPATH=. pytest -rs
 
+  requirements-in-sync:
+    # #216: every requirements*.txt must equal what the pip-compile command in its own header produces from the current
+    # pyproject.toml. pip-compile starts from the committed file (no upgrades), so the only differences are hand edits,
+    # a stale file or an unsatisfiable pin (e.g. a Dependabot bump of a transitive dependency past its dependent's cap).
+    # Needs network access to PyPI for package metadata.
+    runs-on: ubuntu-latest
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install pip and pip-tools (pip-tools version pinned in requirements-dev.txt)
+        # pip is pinned too: pip-tools resolves through pip, so a new pip release must not change the check's result.
+        run: pip install pip==26.3 "$(grep '^pip-tools==' requirements-dev.txt)"
+
+      - name: Re-run pip-compile for every requirements*.txt
+        run: |
+          set -f  # header words are split into arguments below, never globbed or evaluated
+          for f in $(git ls-files 'requirements*.txt'); do
+            cmd=$(sed -n '/^#    pip-compile /{s/^#    //p;q}' "$f")  # first match only
+            # Allow-list: a header must not be able to switch the check off (--dry-run, another --output-file, ...).
+            set -- $cmd
+            [ "${1:-}" = pip-compile ] && ok=1 || ok=0
+            outs=0 srcs=0
+            for a in "${@:2}"; do
+              # Allow-list of pip-compile arguments; add new flags here deliberately (e.g. for pip-tools 8).
+              case "$a" in
+                --extra=* | --unsafe-package=*) [[ "${a#*=}" =~ ^[A-Za-z0-9._-]+$ ]] || ok=0 ;;
+                "--output-file=$f") outs=$((outs + 1)) ;;
+                pyproject.toml) srcs=$((srcs + 1)) ;;
+                *) ok=0 ;;
+              esac
+            done
+            if [ "$ok$outs$srcs" != 111 ]; then echo "::error file=$f::unexpected header command: '$cmd'"; exit 1; fi
+            echo "$f: $cmd"
+            "$@" --quiet
+          done
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            git diff
+            echo "::error::pip-compile changed or created files (status and diff above): requirements*.txt are not in sync with pyproject.toml. Regenerate them as described in CONTRIBUTING.md (Dependency Updates) and commit the result."
+            exit 1
+          fi
+
   no-outbound:
     # #210: local inference must not phone home. Installs the optional edge backends the way the docs say and runs
     # tests/security (every PR, including Dependabot's), so a dependency bump that re-enables telemetry fails here
