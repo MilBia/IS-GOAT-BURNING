@@ -16,20 +16,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
+from is_goat_burning.fire_detection.edge_detector import read_onnx_input_shape
 from tools.edge_model.evaluate import pick_threshold
 from tools.edge_model.evaluate import report
 from tools.edge_model.train import MEAN
 from tools.edge_model.train import STD
 from tools.edge_model.train import load_manifest
 
-ort = _import_onnxruntime()  # telemetry disabled (#207)
 
-
-def score(sess: ort.InferenceSession, rows: list[dict], bs: int = 1) -> np.ndarray:
-    """Return P(fire) for every row."""
-    inp = sess.get_inputs()[0]
-    size = int(inp.shape[2])
+def score(net: cv2.dnn.Net, size: int, rows: list[dict], bs: int = 1) -> np.ndarray:
+    """Return P(fire) for every row (cv2.dnn on the CPU)."""
     mean = np.array(MEAN, np.float32).reshape(1, 3, 1, 1)
     std = np.array(STD, np.float32).reshape(1, 3, 1, 1)
     out = []
@@ -39,7 +35,8 @@ def score(sess: ort.InferenceSession, rows: list[dict], bs: int = 1) -> np.ndarr
             img = cv2.cvtColor(cv2.imread(r["path"]), cv2.COLOR_BGR2RGB)
             batch.append(cv2.resize(img, (size, size), interpolation=cv2.INTER_LINEAR))
         x = (np.stack(batch).astype(np.float32).transpose(0, 3, 1, 2) / 255.0 - mean) / std
-        y = sess.run(None, {inp.name: x})[0]
+        net.setInput(np.ascontiguousarray(x, dtype=np.float32))
+        y = np.asarray(net.forward()).reshape(len(batch), -1)
         if y.shape[-1] == 1:
             out.append(1 / (1 + np.exp(-y[:, 0])))
         else:
@@ -57,9 +54,12 @@ def main() -> None:
     ap.add_argument("--recall-target", type=float, default=0.95)
     args = ap.parse_args()
     rows = load_manifest(args.manifest, args.smoke_policy)
-    sess = ort.InferenceSession(str(args.model))
+    shape = read_onnx_input_shape(args.model)
+    if not shape or len(shape) != 4 or not isinstance(shape[2], int) or shape[2] <= 0:
+        raise SystemExit(f"{args.model}: cannot read a static NCHW input size (got {shape})")
+    net = cv2.dnn.readNetFromONNX(str(args.model))
     by = {s: [r for r in rows if r["split"] == s] for s in ("val", "test")}
-    probs = {s: score(sess, by[s]) for s in by}
+    probs = {s: score(net, int(shape[2]), by[s]) for s in by}
     dfire = np.array([r["source"] == "dfire" for r in by["val"]])
     yv = np.array([r["y"] for r in by["val"]])
     thr = pick_threshold(probs["val"][dfire], yv[dfire], args.recall_target)

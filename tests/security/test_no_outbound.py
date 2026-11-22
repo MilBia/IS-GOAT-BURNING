@@ -3,13 +3,13 @@
 Each test runs ``no_outbound_child.py`` in a fresh Python process with an empty temporary ``HOME``,
 ``XDG_CACHE_HOME``, ``TMPDIR`` and working directory, *without* any telemetry opt-out variable and without CI
 markers (``CI_DETECTION_VARIABLES``: telemetry clients go quiet on CI), so only the app's
-own guards (``_import_onnxruntime``, ``_block_openvino_telemetry``) can keep a library quiet. The child builds
+own guard (``_block_openvino_telemetry``) can keep a library quiet. The child builds
 ``EdgeInferenceDetector`` on a tiny generated ONNX model for every backend installed here and runs a few inferences.
 
 Evidence of a leak, checked by the parent:
   * a non-local DNS lookup / connect / sendto seen by the child's Python-level socket guard;
-  * any file created in the temporary directories (onnxruntime writes ``deviceid`` / ``onnxruntime.db`` under
-    ``XDG_CACHE_HOME``, OpenVINO's telemetry ``~/intel/openvino_ga_cid``) — this is what catches native code;
+  * any file created in the temporary directories (e.g. OpenVINO's telemetry ``~/intel/openvino_ga_cid``) — this is
+    what catches native code;
   * a child process still alive after the wait (OpenVINO's telemetry uploads from a ``multiprocessing`` forkserver,
     which the in-process guard does not see).
 If ``unshare -rn`` works, the child also runs in an empty network namespace, so native code cannot reach the network
@@ -47,9 +47,8 @@ CHILD_TIMEOUT_SECONDS = 120
 DETECTOR_RESULTS = [True, False, True, False]  # red, blue, red, blue frames
 FILES_ALLOWED_IN_WORKDIR = {"model.onnx", ".env.tests"}
 # Telemetry clients stay silent when they detect a CI system, which would make the leak controls (and the guards)
-# untestable in CI: onnxruntime 1.32 checks these names (strings in its native module; CI, GITHUB_ACTIONS, TF_BUILD and
-# SYSTEM_TEAMFOUNDATIONCOLLECTIONURI verified to suppress its device id), openvino-telemetry checks CI, TF_BUILD and
-# JENKINS_URL. They are removed from the child so libraries behave as on a user's machine.
+# untestable in CI: openvino-telemetry checks CI, TF_BUILD and JENKINS_URL, and other clients check similar names. They
+# are removed from the child so libraries behave as on a user's machine.
 CI_DETECTION_VARIABLES = {
     "CI",
     "TF_BUILD",
@@ -81,7 +80,6 @@ def _netns_available() -> bool:
 
 NETNS = _netns_available()
 
-requires_onnxruntime = pytest.mark.skipif(not _installed("onnxruntime"), reason="onnxruntime is not installed")
 requires_openvino = pytest.mark.skipif(not _installed("openvino"), reason="openvino is not installed")
 # The raw_* controls really emit telemetry: run them only where the empty network namespace keeps it from leaving.
 requires_netns = pytest.mark.skipif(not NETNS, reason="unshare -rn unavailable: the leak control would really send telemetry")
@@ -95,7 +93,6 @@ def _child_env(home: Path, cache: Path, tmp: Path) -> dict[str, str]:
         for key, value in os.environ.items()
         if not key.startswith("XDG_") and "TELEMETRY" not in key and key not in dropped
     }
-    env.pop("ORT_DISABLE_TELEMETRY", None)  # explicit: tests/conftest.py sets it for the in-process suite
     env.update(HOME=str(home), XDG_CACHE_HOME=str(cache), TMPDIR=str(tmp), PYTHONPATH=str(REPO_ROOT))
     return env
 
@@ -138,7 +135,6 @@ def _run_child(mode: str, tmp_path: Path) -> tuple[dict, list[str]]:
     [
         "cv2dnn",
         pytest.param("openvino", marks=requires_openvino),
-        pytest.param("onnxruntime", marks=requires_onnxruntime),
     ],
 )
 def test_edge_inference_makes_no_outbound_connections(mode, tmp_path):
@@ -156,16 +152,6 @@ def test_detects_python_connection_attempt(tmp_path):
     report, _ = _run_child("raw_socket", tmp_path)
 
     assert any("telemetry.invalid" in attempt for attempt in report["attempts"]), report
-
-
-@requires_netns
-@requires_onnxruntime
-def test_detects_raw_onnxruntime_telemetry(tmp_path):
-    """Control: importing onnxruntime without ``_import_onnxruntime()`` leaves its telemetry device id behind."""
-    report, files = _run_child("raw_onnxruntime", tmp_path)
-
-    assert report["results"] == [True]
-    assert any("onnxruntime" in f for f in files), f"leak not detected; files: {files}"
 
 
 @pytest.mark.skipif(

@@ -13,12 +13,12 @@ reading the code or documentation only and have not been run on real hardware.
 
 1. The classic local detector (HSV colour mask AND motion mask) runs on every analysed frame as a cheap gatekeeper.
 2. Only when it fires, the frame is passed to the edge verifier: an **image classifier** (fire / no-fire, not an object
-   detector) executed locally with `cv2.dnn`, ONNX Runtime or OpenVINO. No network access is needed.
+   detector) executed locally with `cv2.dnn` or OpenVINO. No network access is needed.
 3. The verifier confirms fire when `P(fire) >= EDGE__CONFIDENCE_THRESHOLD`. The existing debounce logic applies afterwards.
 
 A missing or unset `EDGE__MODEL_PATH` (or a path that is not an existing file) is a hard startup error: the `Settings`
 validator raises at settings load and the application does not start. If the model exists but cannot be loaded (corrupt or
-invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `onnxruntime` / `openvino` missing, unexpected errors),
+invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `openvino` missing, unexpected errors),
 the detector factory logs a **CRITICAL** message and falls back to the classic local detector (honouring the CUDA/OpenCL
 settings) and applies `VERIFIER_FAILURE_POLICY`: fires are reported **unverified** (`alert_unverified`) or not at all
 (`suppress`). At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
@@ -38,10 +38,13 @@ never cached, so the next reconnect retries it (and logs the CRITICAL fallback a
 | `EDGE__CONFIDENCE_THRESHOLD` | `0.5` | Minimum `P(fire)` (0 to 1) that confirms a fire. Valid only for the model variant **and** device it was calibrated on (see OpenVINO below). |
 | `EDGE__INPUT_SIZE` | `224` | Side of the square model input; must match the model. |
 
-With `auto`, ONNX Runtime CUDA is tried when `onnxruntime` offers `CUDAExecutionProvider`; if CUDA is not the active
-provider after all, the detector falls back to the `cv2.dnn` CPU engine with a WARNING. Without ONNX Runtime CUDA, `auto`
-uses `cv2.dnn` on the CPU. OpenCL and OpenVINO are never auto-selected. An explicit `cuda` that cannot be activated raises
-`EdgeModelError` (and therefore the factory fallback described above), not a silent downgrade.
+With `auto`, `cv2.dnn` CUDA is used when OpenCV offers the dnn CUDA target
+(`DNN_TARGET_CUDA in cv2.dnn.getAvailableTargets(DNN_BACKEND_CUDA)`; empty without cuDNN / `OPENCV_DNN_CUDA`, a usable
+device or driver); if the model then cannot be loaded or warmed up on CUDA, the detector falls back to `cv2.dnn` on the
+CPU with a WARNING. Without that target (including the pip `opencv-python` wheel, which has no CUDA), `auto` uses
+`cv2.dnn` on the CPU. OpenCL and OpenVINO are never auto-selected. An explicit `cuda` raises `EdgeModelError` (and
+therefore the factory fallback described above) when OpenCV reports no dnn CUDA target or the model fails to load or
+run; layers without a CUDA kernel still run on the CPU silently (check with `OPENCV_LOG_LEVEL=INFO`, see below).
 
 ### Model contract
 
@@ -72,31 +75,40 @@ scripts/download_model.sh https://example.com/fire_classifier.onnx <sha256> mode
 
 Note: the pip `opencv-python` wheel has **no Inference Engine (OpenVINO) backend and no CUDA support**; `cv2.dnn` there
 runs on the CPU (and, in principle, OpenCL, see below). Intel NCS2/Myriad is **not supported** (dropped from
-`Accelerator`, #102). OpenCV is not built from source for this feature.
+`Accelerator`, #102). Only the Docker `gpu` / `opencl` images build OpenCV from source (CUDA / OpenCL).
 
 ### CPU (`EDGE__ACCELERATOR=cpu`, default via `auto`)
 
 Uses `cv2.dnn`, which is already a project dependency: nothing extra to install. On a Raspberry Pi 4 it was as fast as or
-faster than ONNX Runtime with 4 threads **(measured)**.
+faster than ONNX Runtime (no longer used, #211) with 4 threads **(measured)**.
 
 ### NVIDIA CUDA (`EDGE__ACCELERATOR=cuda`)
 
-Uses ONNX Runtime with the CUDA execution provider (not `cv2.dnn`, whose pip build has no CUDA).
+Uses `cv2.dnn` with `DNN_BACKEND_CUDA` / `DNN_TARGET_CUDA` (FP32). There is no extra Python package: what matters is an
+OpenCV **built with CUDA and cuDNN** (`OPENCV_DNN_CUDA=ON`). The pip `opencv-python` wheels have no CUDA, so on them
+`cuda` is reported unavailable. Before #211 this path used `onnxruntime-gpu`; ONNX Runtime has been removed from the
+project (its Linux wheels ship telemetry, and `onnxruntime-gpu` 1.32 needed CUDA 13, which the `gpu` image does not have).
 
-Bare-metal install:
+> **Test status:** the CUDA path is verified **only by unit tests with mocks** (device detection, backend/target
+> selection, `auto` fallback, explicit `cuda` error); no NVIDIA hardware was available, so it has **never run on a real
+> GPU** and no CUDA latency has been measured **(unverified)**. Reports from users with an NVIDIA GPU are welcome.
 
-1. Install the optional extra: `pip install -e .[edge-gpu]` (pins `onnxruntime-gpu==1.32.0`; lock file
-   `requirements-edge-gpu.txt`). Do not install `onnxruntime` and `onnxruntime-gpu` together.
-2. **Constraint:** `onnxruntime-gpu` 1.32.0 needs the **CUDA 13** userspace libraries (`libcudart.so.13`,
-   `libcublas.so.13`, `libcurand.so.10`, plus cuDNN) and an NVIDIA driver >= 580. They can come from the system or from
-   pip (`onnxruntime-gpu[cuda,cudnn]`). This was taken from the package requirements and not run here **(unverified)**.
-
-**Docker:** this is **not supported yet**. The repository's `gpu` image is based on `nvidia/cuda:12.4.1`, whose CUDA 12
-libraries are not compatible with `onnxruntime-gpu` 1.32.0, so `EDGE__ACCELERATOR=cuda` fails there (CRITICAL log and
-classic-detector fallback). Open question / planned: the `gpu` image already builds OpenCV with CUDA DNN
-(`OPENCV_DNN_CUDA=ON`), so mapping `cuda` to the `cv2.dnn` CUDA backend inside that image is the likely follow-up (the
-OpenCV 5.1 new graph engine accepts `DNN_BACKEND_CUDA` in CUDA builds per the 5.1 source, unlike OpenCL targets). It is
-not implemented and unverified. The NVIDIA Container Toolkit and `--gpus all` are needed for any future GPU container.
+- **Docker `gpu` image** (OpenCV 5.1 built with CUDA 12.4 and cuDNN 9, #214): build with
+  `docker build --target gpu --build-arg CUDA_ARCH=<compute capability, e.g. 8.6> -t goat:gpu .`, install the
+  [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) on the host and run
+  with `docker run --gpus all ...` plus `DETECTION_STRATEGY=hybrid_edge`, `EDGE__ACCELERATOR=cuda` (or `auto`) and the
+  model mounted at `EDGE__MODEL_PATH`. Without `--gpus all` there is no driver in the container,
+  OpenCV reports no dnn CUDA target, and `cuda` fails to load (CRITICAL + classic-detector fallback) while
+  `auto` uses the CPU.
+- **Bare metal:** OpenCV must be compiled with `WITH_CUDA=ON`, `WITH_CUDNN=ON`, `OPENCV_DNN_CUDA=ON` (see
+  `scripts/build_opencv.sh`, used by the Dockerfile) and its Python bindings installed instead of the `opencv-python`
+  wheel; an NVIDIA driver is required.
+- OpenCV 5's new DNN engine runs each layer on CUDA only if it has a CUDA implementation; other layers run on the CPU
+  without an error. Check with `OPENCV_LOG_LEVEL=INFO`: the engine logs `finalize() backend=5 target=6 useCUDA=<0|1>`
+  and one `finalize op ... -> CUDA|CPU` line per layer (`useCUDA=0` and all layers `-> CPU` were seen in the `gpu`
+  image without a GPU). Which operators of the #73 / #151 models run on CUDA is **unverified**.
+- `tools.check_acceleration` (`cuda devices (cv2.cuda)` line, `--model` latency for `cuda`) and
+  `tools/edge_model/bench.py` (`cv2.dnn-cuda` row) show whether CUDA is usable.
 
 ### Intel / AMD integrated GPU (`EDGE__ACCELERATOR=opencl`, experimental)
 
@@ -147,21 +159,13 @@ integrated GPU. Never selected by `auto`.
   `HOME` and no opt-out file: no network attempt, no child process, nothing written to `~/intel`, identical `P(fire)`
   **(measured)**. No opt-out step is needed. The repository's own OpenVINO benchmark (`tools/edge_model/bench.py`) applies the
   same block; only external OpenVINO tools such as `ovc` are not covered.
-- **ONNX Runtime telemetry is disabled by the app too.** Since 1.32 the Linux `onnxruntime` / `onnxruntime-gpu` wheels
-  ship Microsoft 1DS telemetry: on import they write a device id and an event queue to
-  `~/.cache/Microsoft/DeveloperTools/.onnxruntime/` and, after a delay, upload to `mobile.events.data.microsoft.com`.
-  `onnxruntime.disable_telemetry_events()` called after the import did **not** stop the upload; the
-  `ORT_DISABLE_TELEMETRY=1` environment variable set before the import did. The app and the `tools/` scripts therefore
-  import onnxruntime only through `edge_detector._import_onnxruntime()`, which always sets it to `1` first
-  (overriding any value of yours). Verified with a temporary `HOME`/`XDG_CACHE_HOME` and an `LD_PRELOAD` hook logging
-  `getaddrinfo`/`connect` over 150 s: without it 10 lookups of the Microsoft endpoint plus the cache files; with it no
-  lookup and no files **(measured)**. This applies to every accelerator, as `auto` probes onnxruntime when installed.
 - Docker: the images do not ship OpenVINO or the Intel GPU compute runtime yet (out of scope of #207); use a
   bare-metal install.
 
 ## Measured latency (#73, random weights, batch 1, FP32)
 
-Raspberry Pi 4 (4 cores, `opencv-python-headless` 5.0.0, `onnxruntime` 1.32.0), median of 40 runs:
+Raspberry Pi 4 (4 cores, `opencv-python-headless` 5.0.0, `onnxruntime` 1.32.0), median of 40 runs. The ORT columns are
+historical (ONNX Runtime was removed from the project in #211):
 
 | Model | cv2.dnn 4 thr | ORT 4 thr | cv2.dnn 1 thr | ORT 1 thr |
 |---|---:|---:|---:|---:|
@@ -170,7 +174,7 @@ Raspberry Pi 4 (4 cores, `opencv-python-headless` 5.0.0, `onnxruntime` 1.32.0), 
 | MobileNetV2 224 | 45.2 ms | 53.8 ms | 109 ms | 118 ms |
 | EfficientNet-B0 224 | 90.0 ms | 112.7 ms | 274 ms | 250 ms |
 
-Intel Alder Lake-N UHD iGPU host (Docker, 224x224):
+Intel Alder Lake-N UHD iGPU host (Docker, 224x224; the ORT row is historical, #211):
 
 | Backend | MobileNetV3-Small | EfficientNet-B0 |
 |---|---:|---:|
@@ -181,7 +185,7 @@ Intel Alder Lake-N UHD iGPU host (Docker, 224x224):
 | cv2.dnn OpenCL FP16 (classic engine) | 275 ms (broken) | not run |
 
 These are latency-only numbers with random weights. Accuracy on the real stream is unverified (see #73 open items). No
-CUDA latency has been measured.
+CUDA latency has been measured (no NVIDIA hardware).
 
 ## Checking your hardware
 
@@ -194,8 +198,7 @@ Inside a container: `tools/` is copied only into the `*-test` stages, so use a `
 (`-v "$PWD/tools:/app/tools:ro"`) and add `--device /dev/dri:/dev/dri` or `--gpus all` as appropriate, then run
 `python3 -m tools.check_acceleration`.
 
-The tool prints the OpenCV version, the DNN backend/target pairs OpenCV reports, OpenCL and `cv2.cuda` status, ONNX
-Runtime providers, what `EDGE__ACCELERATOR=auto` resolves to and, with `--model`, `ok`/`error` plus the median latency
+The tool prints the OpenCV version, the DNN backend/target pairs OpenCV reports, OpenCL and `cv2.cuda` status, what `EDGE__ACCELERATOR=auto` resolves to and, with `--model`, `ok`/`error` plus the median latency
 of 20 inferences (preprocessing included: 1080p frame resized and normalised to the input size, so not directly comparable to the model-only #73 numbers) for `auto`, `cpu`, `cuda`, `opencl`, `openvino` and `openvino_gpu`. It always exits with 0 (2 for invalid arguments). Treat an
 `opencl: ok` result with a latency equal to `cpu` as "running on the CPU".
 
@@ -204,11 +207,11 @@ of 20 inferences (preprocessing included: 1080p frame resized and normalised to 
 | Symptom | Likely cause / action |
 |---|---|
 | App refuses to start, `EDGE__MODEL_PATH` error | Path unset or not an existing file: hard startup error from the `Settings` validator. |
-| CRITICAL log at startup, classic detector used | Model exists but cannot be loaded (invalid model, wrong `EDGE__INPUT_SIZE`, accelerator or `onnxruntime` unavailable). Read the error line above it; run `tools.check_acceleration --model ...`. |
+| CRITICAL log at startup, classic detector used | Model exists but cannot be loaded (invalid model, wrong `EDGE__INPUT_SIZE`, accelerator or `openvino` unavailable). Read the error line above it; run `tools.check_acceleration --model ...`. |
 | `The 'openvino' package is required ...` | Install it: `pip install --no-deps -r requirements-openvino.txt`. |
 | `openvino_gpu requested but OpenVINO reports no GPU device` | Intel compute runtime missing or no access to `/dev/dri` (add the user to the `render` group); the Docker images do not support it yet. |
-| `EDGE__ACCELERATOR=cuda requires onnxruntime-gpu ...` | Extra not installed (`pip install -e .[edge-gpu]`), or running in the Docker `gpu` image, which is not supported for this (see above). |
-| `CUDA is not the active onnxruntime provider` | CUDA 13 libraries / driver >= 580 missing (`onnxruntime-gpu` 1.32.0 needs them). |
+| `EDGE__ACCELERATOR=cuda requested but OpenCV reports no cv2.dnn CUDA target` | OpenCV without CUDA (pip wheel: use the Docker `gpu` image or a CUDA build), OpenCV built without cuDNN / `OPENCV_DNN_CUDA`, container started without `--gpus all` / NVIDIA Container Toolkit, or no NVIDIA driver. |
+| `EDGE__ACCELERATOR=cuda requested but unusable: ...` / WARNING `cv2.dnn CUDA could not be used` (`auto`) | OpenCV offers CUDA but the model failed to load or run on it (e.g. `CUDA_ARCH` not matching the GPU, out of memory). Read the quoted error. |
 | `Model ... expects a NxN input but EDGE__INPUT_SIZE=...` | Set `EDGE__INPUT_SIZE` to the model's input side. Checked at startup on both backends from the input shape declared in the ONNX file (parsed directly for `cv2.dnn`); models with a dynamic H/W are not checked, so a wrong size there only surfaces as degraded accuracy. |
 | `Test inference ... failed` | Not a 1/2-output classifier, or exported with an opset `cv2.dnn` cannot read (use opset 12). |
 | `opencl requested but OpenCV reports no usable OpenCL runtime` | No ICD/device in the container: pass `--device /dev/dri`, add the `render` group, check `clinfo`. |

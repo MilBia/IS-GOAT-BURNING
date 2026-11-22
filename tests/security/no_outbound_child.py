@@ -1,8 +1,8 @@
 """Child process of ``test_no_outbound.py`` (#210): runs local inference and reports network/process side effects.
 
 Usage: ``python no_outbound_child.py <mode> <model.onnx> <wait_seconds>``. ``mode`` is an ``EdgeInferenceDetector``
-backend (``cv2dnn``, ``openvino``, ``onnxruntime``) or a negative control that imports a library *without* the app's
-telemetry guards (``raw_onnxruntime``, ``raw_openvino``) or opens a plain Python connection (``raw_socket``). A
+backend (``cv2dnn``, ``openvino``) or a negative control that imports a library *without* the app's telemetry guard
+(``raw_openvino``) or opens a plain Python connection (``raw_socket``). A
 Python-level socket guard is installed before anything else is imported: it records and refuses every DNS lookup /
 connect / sendto / sendmsg that is not to an ``AF_UNIX`` socket or loopback. Native code and ``multiprocessing``
 children bypass it, which is why the parent also checks the temporary directories for files and leftover processes
@@ -96,13 +96,10 @@ def _run_detector(mode: str, model_path: str) -> list[bool]:
     from is_goat_burning.config import Accelerator
     from is_goat_burning.config import EdgeSettings
     from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
-    from is_goat_burning.fire_detection.edge_detector import OnnxRuntimeBackend
 
-    accelerator = {"cv2dnn": Accelerator.CPU, "openvino": Accelerator.OPENVINO, "onnxruntime": Accelerator.CPU}[mode]
+    accelerator = {"cv2dnn": Accelerator.CPU, "openvino": Accelerator.OPENVINO}[mode]
     settings = EdgeSettings(model_path=model_path, accelerator=accelerator, input_size=8, confidence_threshold=0.5)
-    # select_backend() never picks onnxruntime for the CPU, so its backend is built explicitly (through the app's guard).
-    backend = OnnxRuntimeBackend(Path(model_path), Accelerator.CPU, input_size=8) if mode == "onnxruntime" else None
-    detector = EdgeInferenceDetector(settings, backend=backend)
+    detector = EdgeInferenceDetector(settings)
     red = np.zeros((20, 30, 3), np.uint8)
     red[..., 2] = 255
     blue = np.zeros((20, 30, 3), np.uint8)
@@ -124,15 +121,9 @@ def _run_raw(mode: str, model_path: str) -> list[bool]:
 
     blob = np.zeros((1, 3, 8, 8), np.float32)
     blob[:, 0] = 1.0
-    if mode == "raw_onnxruntime":
-        import onnxruntime
+    import openvino
 
-        session = onnxruntime.InferenceSession(model_path, providers=["CPUExecutionProvider"])
-        logits = session.run(None, {session.get_inputs()[0].name: blob})[0]
-    else:
-        import openvino
-
-        logits = openvino.Core().compile_model(model_path, "CPU")({0: blob})[0]
+    logits = openvino.Core().compile_model(model_path, "CPU")({0: blob})[0]
     return [bool(logits[0][1] > logits[0][0])]
 
 

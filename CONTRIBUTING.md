@@ -49,7 +49,6 @@ The `requirements-in-sync` CI job re-runs the command from each file's header an
 pip-compile --output-file=requirements.txt pyproject.toml
 pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
 pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
-pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml
 pip-compile --extra=openvino --unsafe-package=openvino-telemetry --output-file=requirements-openvino.txt pyproject.toml
 ```
 
@@ -60,8 +59,7 @@ Keep the `ruff` version in `.pre-commit-config.yaml` in sync with `pyproject.tom
 Local inference must stay offline: some inference libraries ship telemetry that is on by default (#207). Any new or updated dependency must pass `tests/security/test_no_outbound.py` (#210). It runs `EdgeInferenceDetector` for every installed backend in a child process with an empty temporary `HOME` / `XDG_CACHE_HOME` without telemetry opt-out variables or CI markers (`CI`, `GITHUB_ACTIONS`, `TF_BUILD`, ...: telemetry clients go quiet when they see them), and fails on a network attempt, a file written there (device ids, caches) or a leftover child process. If `unshare -rn` works, the child also runs in an empty network namespace. The `no-outbound` CI job installs the optional backends the documented way and runs it on every PR. Locally:
 
 ```bash
-pip install --no-deps -r requirements-openvino.txt                        # optional backends, as in CI
-pip install "onnxruntime==$(sed -n 's/^onnxruntime-gpu==//p' requirements-edge-gpu.txt)"
+pip install --no-deps -r requirements-openvino.txt                        # optional OpenVINO backend, as in CI
 PYTHONPATH=. pytest tests/security -v -rs
 ```
 

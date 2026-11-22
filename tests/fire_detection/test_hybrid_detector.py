@@ -316,7 +316,7 @@ async def test_hybrid_edge_detect_end_to_end(probability: float, expected: bool)
 
 @pytest.mark.parametrize(
     "error",
-    [EdgeModelError("model missing"), RuntimeError("onnxruntime exploded")],
+    [EdgeModelError("model missing"), RuntimeError("backend exploded")],
     ids=["edge_model_error", "unexpected_error"],
 )
 def test_hybrid_edge_falls_back_to_local_detector_on_load_error(error: Exception, caplog: pytest.LogCaptureFixture) -> None:

@@ -92,25 +92,6 @@ def _opencl_device_name(cv2: Any) -> str | None:
         return None
 
 
-def probe_onnxruntime() -> dict[str, Any]:
-    """Collects ONNX Runtime availability and execution providers.
-
-    Returns:
-        A dictionary with ``version`` and ``providers`` (``None`` if onnxruntime is not installed).
-    """
-    try:
-        from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
-
-        ort = _import_onnxruntime()  # telemetry disabled (#207)
-    except ImportError:
-        return {"version": None, "providers": None}
-    try:
-        providers = list(ort.get_available_providers())
-    except Exception:
-        providers = None
-    return {"version": getattr(ort, "__version__", "unknown"), "providers": providers}
-
-
 def probe_auto_selection() -> str:
     """Describes what ``EDGE__ACCELERATOR=auto`` resolves to on this host.
 
@@ -119,11 +100,11 @@ def probe_auto_selection() -> str:
     """
     try:
         from is_goat_burning.config import Accelerator
-        from is_goat_burning.fire_detection.edge_detector import onnxruntime_has_cuda
+        from is_goat_burning.fire_detection.edge_detector import cuda_available
         from is_goat_burning.fire_detection.edge_detector import opencl_available
         from is_goat_burning.fire_detection.edge_detector import select_backend
 
-        plan = select_backend(Accelerator.AUTO, cuda_available=onnxruntime_has_cuda(), opencl_available=opencl_available())
+        plan = select_backend(Accelerator.AUTO, cuda_available=cuda_available(), opencl_available=opencl_available())
     except Exception as e:
         return f"unavailable ({type(e).__name__}: {e})"
     return f"engine={plan.engine} accelerator={plan.accelerator}"
@@ -160,14 +141,11 @@ def benchmark_accelerator(accelerator: str, model_path: str, size: int, runs: in
     return {"ok": True, "median_ms": statistics.median(timings)}
 
 
-def format_report(
-    cv2_info: dict[str, Any], ort_info: dict[str, Any], auto: str, benchmarks: dict[str, dict[str, Any]] | None = None
-) -> str:
+def format_report(cv2_info: dict[str, Any], auto: str, benchmarks: dict[str, dict[str, Any]] | None = None) -> str:
     """Renders the probe results as plain text.
 
     Args:
         cv2_info: Result of ``probe_cv2``.
-        ort_info: Result of ``probe_onnxruntime``.
         auto: Result of ``probe_auto_selection``.
         benchmarks: Optional per-accelerator results of ``benchmark_accelerator``.
 
@@ -191,12 +169,6 @@ def format_report(
             lines.append(f"opencl: haveOpenCL={ocl.get('have')} useOpenCL={ocl.get('use')} device={ocl.get('device')}")
         devices = cv2_info.get("cuda_devices")
         lines.append(f"cuda devices (cv2.cuda): {devices if devices is not None else 'n/a (no cv2.cuda module)'}")
-    lines.append("")
-    lines.append("== ONNX Runtime ==")
-    if ort_info["version"] is None:
-        lines.append("onnxruntime: not installed")
-    else:
-        lines.append(f"onnxruntime {ort_info['version']} providers: {', '.join(ort_info['providers'] or []) or 'unknown'}")
     lines.append("")
     lines.append("== hybrid_edge selection ==")
     lines.append(f"EDGE__ACCELERATOR=auto -> {auto}")
@@ -245,7 +217,7 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], object] = print
         benchmarks = None
         if args.model:
             benchmarks = {acc: benchmark_accelerator(acc, args.model, args.size) for acc in _BENCH_ACCELERATORS}
-        out(format_report(probe_cv2(), probe_onnxruntime(), probe_auto_selection(), benchmarks))
+        out(format_report(probe_cv2(), probe_auto_selection(), benchmarks))
     except Exception as e:  # the tool only reports; it must not fail
         out(f"check_acceleration failed unexpectedly: {type(e).__name__}: {e}")
     return 0

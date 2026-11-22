@@ -108,8 +108,6 @@ yt-dlp --print title "<stream URL>"      # confirm the new version resolves
 pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
 pip-compile --output-file=requirements.txt pyproject.toml
 pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
-# optional (bare-metal hybrid_edge on CUDA only):
-pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml
 ```
 
 On the host: pull the change, rebuild and recreate the container (section 4):

@@ -974,7 +974,7 @@ def create_fire_detector(
         validation (fail fast on misconfiguration). The factory itself covers
         model LOAD failures only: if building the edge verifier raises (corrupt
         or invalid model, input-size mismatch, unavailable accelerator, missing
-        onnxruntime, unexpected errors), it logs CRITICAL and falls back to the
+        openvino, unexpected errors), it logs CRITICAL and falls back to the
         local detector (classic rule; honours CUDA/OpenCL settings) wrapped in
         ``UnverifiedLocalDetector``, which applies ``VERIFIER_FAILURE_POLICY``:
         fires are reported marked unverified (``alert_unverified``) or not at

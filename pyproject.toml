@@ -23,9 +23,6 @@ classifiers = [
 cpu = [
     "opencv-python==5.1.0.95",
 ]
-edge-gpu = [
-    "onnxruntime-gpu==1.32.0",
-]
 openvino = [
     "openvino==2026.4.1",
 ]
