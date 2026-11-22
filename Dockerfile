@@ -70,8 +70,9 @@ COPY --chmod=755 scripts/ /tmp/scripts/
 RUN /tmp/scripts/setup_builder.sh --type gpu --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
-ARG OPENCV_VERSION=5.0.0
-ARG OPENCV_CONTRIB_VERSION=5.0.0
+# Keep in sync with opencv-python in requirements-cpu.txt (major.minor; see CONTRIBUTING.md, Dependabot).
+ARG OPENCV_VERSION=5.1.0
+ARG OPENCV_CONTRIB_VERSION=5.1.0
 ARG CUDA_ARCH=8.6
 
 RUN /tmp/scripts/build_opencv.sh \
@@ -119,7 +120,7 @@ RUN /tmp/scripts/install_python.sh \
 # Copy OpenCV from the builder stage.
 COPY --from=gpu_builder /usr/local/lib/python3.14/dist-packages/cv2 /usr/local/lib/python3.14/dist-packages/cv2
 COPY --from=gpu_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
-COPY --from=gpu_builder /usr/local/include/opencv4 /usr/local/include/opencv4
+COPY --from=gpu_builder /usr/local/include/opencv5 /usr/local/include/opencv5
 RUN ldconfig
 
 # Copy GPU-specific requirements and install them.
@@ -159,8 +160,9 @@ COPY --chmod=755 scripts/ /tmp/scripts/
 RUN /tmp/scripts/setup_builder.sh --type opencl --setuptools-version ${SETUPTOOLS_VERSION} --numpy-version ${NUMPY_VERSION}
 
 # Download and build OpenCV from source.
-ARG OPENCV_VERSION=5.0.0
-ARG OPENCV_CONTRIB_VERSION=5.0.0
+# Keep in sync with opencv-python in requirements-cpu.txt (major.minor; see CONTRIBUTING.md, Dependabot).
+ARG OPENCV_VERSION=5.1.0
+ARG OPENCV_CONTRIB_VERSION=5.1.0
 
 RUN /tmp/scripts/build_opencv.sh \
     --opencv-version ${OPENCV_VERSION} \
@@ -197,7 +199,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy OpenCV from the builder stage.
 COPY --from=opencl_builder /usr/local/lib/python3.14/dist-packages/cv2 /usr/local/lib/python3.14/dist-packages/cv2
 COPY --from=opencl_builder /usr/local/lib/libopencv_*.so* /usr/local/lib/
-COPY --from=opencl_builder /usr/local/include/opencv4 /usr/local/include/opencv4
+COPY --from=opencl_builder /usr/local/include/opencv5 /usr/local/include/opencv5
 RUN ldconfig
 
 # Copy CPU-specific requirements (OpenCL uses standard pip packages usually)
@@ -225,6 +227,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY tools/ ./tools/
+COPY scripts/ ./scripts/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
@@ -246,6 +249,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY tools/ ./tools/
+COPY scripts/ ./scripts/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.
@@ -267,6 +271,7 @@ RUN grep -v "^opencv-python" requirements-dev.txt | python3 -m pip install --no-
 # Copy test suite and configuration AFTER installing dependencies for better caching
 COPY tests/ ./tests/
 COPY tools/ ./tools/
+COPY scripts/ ./scripts/
 COPY .env.tests ./.env.tests
 
 # Set the default command for this stage to run pytest.

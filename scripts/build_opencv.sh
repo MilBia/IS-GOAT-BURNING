@@ -5,8 +5,8 @@ set -e
 # It handles downloading source, configuring with CMake, building, and installing.
 
 # Default values
-OPENCV_VERSION="4.11.0"
-OPENCV_CONTRIB_VERSION="4.11.0"
+OPENCV_VERSION="5.1.0"
+OPENCV_CONTRIB_VERSION="5.1.0"
 BUILD_TYPE="RELEASE"
 WITH_CUDA="OFF"
 WITH_OPENCL="OFF"
@@ -113,6 +113,8 @@ if [[ "${WITH_CUDA}" == "ON" ]]; then
         "-D OPENCV_DNN_CUDA=ON"
         "-D ENABLE_FAST_MATH=1"
         "-D CUDA_FAST_MATH=1"
+        # cudacodec (unused) links the driver library libcuda.so, which the CUDA devel image lacks (#214).
+        "-D BUILD_opencv_cudacodec=OFF"
     )
 else
     CMAKE_ARGS+=("-D WITH_CUDA=OFF")

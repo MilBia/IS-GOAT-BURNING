@@ -4,11 +4,12 @@
 OpenVINO (CPU, GPU), plus the max abs output diff vs ORT CPU. Backends that are not importable are skipped with a note.
 
 ```bash
-python -m tools.edge_model.bench model.onnx [model2.onnx ...] --runs 40 --warmup 5 --threads 1 4 [--cv2-engine classic|new]
+python -m tools.edge_model.bench model.onnx [model2.onnx ...] --runs 40 --warmup 5 --threads 1 4
 ```
 
-`--cv2-engine`: OpenCV 5 has a "new graph engine" that silently ignores `DNN_TARGET_OPENCL*` (warning
-`Targets are not supported by the new graph engine`), so those rows would really be CPU. Default `classic` forces the old engine.
+The cv2.dnn OpenCL rows run on the CPU: OpenCV 5's new graph engine silently ignores `DNN_TARGET_OPENCL*` (warning
+`Targets are not supported by the new graph engine`), and OpenCV 5.1 removed the classic engine, so the former
+`--cv2-engine classic` option (#214) is gone. The classic-engine rows below were measured with OpenCV 5.0.0.
 
 ## Running on an Intel iGPU host in Docker (tested: Alder Lake-N UHD, Ubuntu host)
 
@@ -23,9 +24,7 @@ docker build -f tools/edge_model/Dockerfile.bench -t edge-bench-salon .
 R="docker run --rm --device /dev/dri --group-add 990 -v $PWD:/work edge-bench-salon"
 $R clinfo -l                                   # expect: Intel(R) UHD Graphics
 $R python -c "import openvino; print(openvino.Core().available_devices)"   # ['CPU', 'GPU']
-$R python -m tools.edge_model.bench models/mnv3s_224.onnx models/effb0_224.onnx --cv2-engine new  2>/dev/null
-# classic engine for the OpenCL rows: very slow (minutes) and extremely noisy on stderr, so redirect it
-$R python -m tools.edge_model.bench models/mnv3s_224.onnx --cv2-engine classic --runs 20 2>classic.err
+$R python -m tools.edge_model.bench models/mnv3s_224.onnx models/effb0_224.onnx 2>/dev/null
 ```
 
 ## Results (salon, 4 cores, UHD iGPU, 224x224, ONNX opset 12 from goatpi, ms)

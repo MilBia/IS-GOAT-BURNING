@@ -20,8 +20,8 @@ runtime must also support NCS2/Myriad (#101), use MobileNetV2 (ReLU6) instead.**
 - Every candidate is far below the issue's budget (< 500 ms on RPi4), so the choice is about operators and accuracy,
   not speed. `cv2.dnn` is the default backend on CPU: it is as fast as or faster than ONNX Runtime with 4 threads
   on the RPi4 (ORT is faster on a 1-thread MobileNetV3-Small run and on x86 for some models).
-- Use OpenVINO GPU on Intel iGPUs. Do **not** rely on `cv2.dnn` OpenCL with OpenCV 5.0.0 (kernel build failure, FP16
-  ~70x slower).
+- Use OpenVINO GPU on Intel iGPUs. Do **not** rely on `cv2.dnn` OpenCL with OpenCV 5.x (5.0.0: kernel build failure, FP16
+  ~70x slower; 5.1 removed the classic engine and runs OpenCL targets on the CPU).
 - YOLOX-Nano remains the fallback only if the classifier fails the acceptance metrics on real data.
 - Numbers use random weights (latency only). RPi4 was measured with `bench.py` on 2026-11-15 and was ~10-20% slower than
   the first measurement in the issue (14.8 ms for MobileNetV3-Small), which is run-to-run variance on the same board.

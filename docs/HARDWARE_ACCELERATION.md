@@ -94,7 +94,8 @@ Bare-metal install:
 **Docker:** this is **not supported yet**. The repository's `gpu` image is based on `nvidia/cuda:12.4.1`, whose CUDA 12
 libraries are not compatible with `onnxruntime-gpu` 1.32.0, so `EDGE__ACCELERATOR=cuda` fails there (CRITICAL log and
 classic-detector fallback). Open question / planned: the `gpu` image already builds OpenCV with CUDA DNN
-(`OPENCV_DNN_CUDA=ON`), so mapping `cuda` to the `cv2.dnn` CUDA backend inside that image is the likely follow-up. It is
+(`OPENCV_DNN_CUDA=ON`), so mapping `cuda` to the `cv2.dnn` CUDA backend inside that image is the likely follow-up (the
+OpenCV 5.1 new graph engine accepts `DNN_BACKEND_CUDA` in CUDA builds per the 5.1 source, unlike OpenCL targets). It is
 not implemented and unverified. The NVIDIA Container Toolkit and `--gpus all` are needed for any future GPU container.
 
 ### Intel / AMD integrated GPU (`EDGE__ACCELERATOR=opencl`, experimental)
@@ -106,8 +107,9 @@ not implemented and unverified. The NVIDIA Container Toolkit and `--gpus all` ar
   added to the runtime image.
 - **Honest caveat (measured, #73):** `cv2.dnn` OpenCL is unreliable on OpenCV 5.0.0. The new graph engine silently ignores
   `DNN_TARGET_OPENCL*` and runs on the CPU; the classic engine fails to compile a kernel, falls back to the CPU, can spend
-  minutes auto-tuning, and FP16 was about 70x slower. Expect **no speed-up and possibly silent CPU execution**; the
-  application logs a WARNING when this accelerator is selected. Prefer `cpu` unless `tools.check_acceleration` shows a
+  minutes auto-tuning, and FP16 was about 70x slower. OpenCV 5.1 (all images, #214) removed the classic engine, so
+  `DNN_TARGET_OPENCL*` now always runs on the CPU (from the 5.1 source, not measured). Expect **no speed-up and silent
+  CPU execution**; the application logs a WARNING when this accelerator is selected. Prefer `cpu` unless `tools.check_acceleration` shows a
   real gain.
 - The fastest backend measured on an Intel iGPU was OpenVINO GPU, available as `EDGE__ACCELERATOR=openvino_gpu` (see
   below). The pip OpenCV wheel cannot use OpenVINO.

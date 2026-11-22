@@ -35,7 +35,7 @@ gh run view <run-id> --log  # inspect a failed CI run
 
 Tests auto-load `.env.tests` first (then `.env`) via `SettingsConfigDict(env_file=(".env.tests", ".env"))`, so the suite runs against mock config with all external I/O disabled. Async tests use explicit `@pytest.mark.asyncio` markers (no global asyncio mode configured).
 
-Docker builds are multi-stage — select with `--target`: `cpu`, `gpu` (needs `--build-arg CUDA_ARCH=<compute_capability>`), `opencl`, and matching `*-test` stages. See README for the full matrix.
+Docker builds are multi-stage — select with `--target`: `cpu`, `gpu` (needs `--build-arg CUDA_ARCH=<compute_capability>`), `opencl`, and matching `*-test` stages. See README for the full matrix. `gpu`/`opencl` build OpenCV from source: keep `OPENCV_VERSION`/`OPENCV_CONTRIB_VERSION` (Dockerfile, `scripts/build_opencv.sh`) at the `opencv-python` major.minor — the `docker-cpu` CI job checks this and runs `cpu-test` with `--network none` (#214).
 
 ## Architecture
 

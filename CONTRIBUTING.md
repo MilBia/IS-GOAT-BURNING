@@ -53,7 +53,7 @@ pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.t
 pip-compile --extra=openvino --unsafe-package=openvino-telemetry --output-file=requirements-openvino.txt pyproject.toml
 ```
 
-Keep the `ruff` version in `.pre-commit-config.yaml` in sync with `pyproject.toml`. Docker base images are not managed by Dependabot.
+Keep the `ruff` version in `.pre-commit-config.yaml` in sync with `pyproject.toml`. On an `opencv-python` major/minor bump, set `OPENCV_VERSION` / `OPENCV_CONTRIB_VERSION` in both builder stages of the `Dockerfile` and the default in `scripts/build_opencv.sh` to the same version, so the source-built `gpu` / `opencl` images match the wheel (#214). Docker base images are not managed by Dependabot.
 
 ### No Outbound Connections (`tests/security`)
 
