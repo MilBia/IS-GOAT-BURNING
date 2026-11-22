@@ -32,6 +32,9 @@ import time
 import cv2
 import numpy as np
 
+# onnxruntime uploads usage events to Microsoft unless this is set before it is imported (standalone script).
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 _MEAN = np.array((0.485, 0.456, 0.406), dtype=np.float32).reshape(1, 3, 1, 1)
 _STD = np.array((0.229, 0.224, 0.225), dtype=np.float32).reshape(1, 3, 1, 1)
 
