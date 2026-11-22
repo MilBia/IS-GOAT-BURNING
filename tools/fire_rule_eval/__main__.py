@@ -16,6 +16,7 @@ from tools.fire_rule_eval.features import extract_features
 from tools.fire_rule_eval.features import iter_check_frames
 from tools.fire_rule_eval.flicker import extract_flicker_features
 from tools.fire_rule_eval.flicker import iter_frames_30fps
+from tools.fire_rule_eval.record import add_parser as add_record_parser
 from tools.fire_rule_eval.report import load_clips
 from tools.fire_rule_eval.report import render_markdown
 from tools.fire_rule_eval.rules import FLICKER_RULES
@@ -55,6 +56,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         target = out_dir / f"{entry['name']}.npz"
         if args.skip_existing and target.exists():
             continue
+        if not Path(entry["path"]).exists():  # e.g. `record --delete-video`: keep the stored features
+            print(f"{entry['name']}: video missing, skipped", flush=True)
+            continue
         started = time.time()
         features = extract_features(iter_check_frames(Path(entry["path"]), options))
         np.savez_compressed(target, **features)
@@ -83,12 +87,18 @@ def _cmd_flicker(args: argparse.Namespace) -> int:
     manifest = json.loads(Path(args.manifest).read_text())
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    jobs = [
-        (entry["name"], entry["path"], str(out_dir), not args.no_windowed)
-        for entry in manifest["clips"]
-        if (not args.only or entry["name"] in args.only)
-        and not (args.skip_existing and (out_dir / f"{entry['name']}.npz").exists())
-    ]
+    jobs = []
+    for entry in manifest["clips"]:
+        if (args.only and entry["name"] not in args.only) or (
+            args.skip_existing and (out_dir / f"{entry['name']}.npz").exists()
+        ):
+            continue
+        if not Path(entry["path"]).exists():  # e.g. `record --delete-video`: keep the stored features
+            print(f"{entry['name']}: video missing, skipped", flush=True)
+            continue
+        jobs.append((entry["name"], entry["path"], str(out_dir), not args.no_windowed))
+    if not jobs:
+        return 0  # an empty Pool still forks its workers (DeprecationWarning in a threaded process)
     # `fork`: the default start method on Python 3.14 (forkserver) hangs when run through `python -m`.
     with multiprocessing.get_context("fork").Pool(args.jobs) as pool:
         for line in pool.imap_unordered(_extract_flicker_one, jobs):
@@ -164,6 +174,8 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--features", required=True)
     report.add_argument("--flicker", help="directory from the `flicker` command; adds the flicker rules")
     report.set_defaults(func=_cmd_report)
+
+    add_record_parser(sub)
     return parser
 
 
