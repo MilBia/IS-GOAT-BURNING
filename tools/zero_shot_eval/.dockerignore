@@ -1,0 +1,6 @@
+work/
+*.onnx
+*.jpg
+*.jpeg
+*.jsonl
+__pycache__/

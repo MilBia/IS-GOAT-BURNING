@@ -1,19 +1,22 @@
 """Self-contained latency / memory benchmark of a classifier ONNX on one backend (#151).
 
 Standalone (only numpy, opencv-python-headless and, for ``ort``, onnxruntime): copy this file next to the ONNX and a
-folder of a few JPEGs to the target host. Preprocessing is the project's ``edge_detector.preprocess`` (included), the
-input size is read from the model. One backend per process, so the peak RSS (``ru_maxrss``) belongs to that backend
-only. Measures model load time, then median / p95 latency of preprocess + inference over ``--runs`` calls cycling
-through the images. Prints a JSON summary without paths or host names. Does NOT reproduce concurrent stream decoding.
+folder of a few JPEGs to the target host. Preprocessing is the project's ``edge_detector.preprocess`` (included). The
+input size is read from the model for ``ort``; ``cv2.dnn`` does not expose it, so ``--size`` is required there.
+One backend per process, so the peak RSS (``ru_maxrss``) belongs to that backend only. Measures model load time, then
+median / p95 latency of preprocess + inference over ``--runs`` calls cycling through the images.
+Prints a JSON summary without paths or host names. Does NOT reproduce concurrent stream decoding.
 
-``cores`` is ``os.cpu_count()`` of the host (a container ``--cpus`` quota is not reflected).
+``cores`` is ``os.cpu_count()`` of the host (a container ``--cpus`` quota is not reflected). RSS values are MiB.
+
+Keep the model and images in a work directory OUTSIDE the repository (e.g. ``~/zs-bench-work``), never commit them.
 
 Example (bare metal, or in the container from ``Dockerfile.bench``):
     python bench.py --model model.onnx --images jpgs/ --backend ort --threads 4 --runs 50
-    python bench.py --model model.onnx --images jpgs/ --backend cv2 --threads 4 --runs 50
+    python bench.py --model model.onnx --images jpgs/ --backend cv2 --size 224 --threads 4 --runs 50
 
     docker build -f Dockerfile.bench -t zs-bench .          # in tools/zero_shot_eval
-    docker run --rm --cpus 4 -v "$PWD/work:/work:ro" zs-bench --model /work/model.onnx --images /work/jpgs --backend ort
+    docker run --rm --cpus 4 -v ~/zs-bench-work:/work:ro zs-bench --model /work/model.onnx --images /work/jpgs --backend ort
 """
 
 from __future__ import annotations
@@ -42,10 +45,8 @@ def preprocess(frame: np.ndarray, size: int) -> np.ndarray:
 
 
 def p_fire(out: np.ndarray) -> float:
-    """Softmax index 1 for two logits, sigmoid for one."""
+    """Softmax index 1 of the two logits ``[no_fire, fire]``."""
     v = np.asarray(out, dtype=np.float64).reshape(-1)
-    if v.size == 1:
-        return float(1 / (1 + np.exp(-v[0])))
     e = np.exp(v - v.max())
     return float(e[1] / e.sum())
 
@@ -59,8 +60,11 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--runs", type=int, default=50)
     ap.add_argument("--warmup", type=int, default=5)
-    ap.add_argument("--size", type=int, default=0, help="cv2 only: model input side (default: probe 224/256/384/512)")
+    ap.add_argument("--size", type=int, default=0, help="model input side; required for cv2 (ort reads it from the model)")
     args = ap.parse_args()
+    if args.backend != "ort" and not args.size:
+        ap.error("--size is required for the cv2 backends")
+    cv2.setNumThreads(args.threads)
     frames = [cv2.imread(str(p)) for p in sorted(args.images.glob("*.jp*g"))]
     frames = [f for f in frames if f is not None]
     if not frames:
@@ -76,13 +80,14 @@ def main() -> None:
         sess = ort.InferenceSession(str(args.model), opts, providers=["CPUExecutionProvider"])
         inp = sess.get_inputs()[0]
         size = int(inp.shape[2])
+        if args.size and args.size != size:
+            raise SystemExit(f"--size {args.size} does not match the model input {size}")
 
         def infer(blob: np.ndarray) -> np.ndarray:
             return sess.run(None, {inp.name: blob})[0]
 
         version = f"onnxruntime {ort.__version__}"
     else:
-        cv2.setNumThreads(args.threads)
         if args.backend == "cv2-classic":
             net = cv2.dnn.readNetFromONNX(str(args.model), cv2.dnn.ENGINE_CLASSIC)
         else:
@@ -97,8 +102,6 @@ def main() -> None:
 
         version = f"opencv {cv2.__version__}"
     load_s = time.perf_counter() - t0
-    if not size:
-        size = _probe_size(infer)
     blobs = [preprocess(f, size) for f in frames]
     probs = [p_fire(infer(b)) for b in blobs]
     for i in range(args.warmup):
@@ -122,8 +125,8 @@ def main() -> None:
                 "load_s": round(load_s, 2),
                 "median_ms": round(float(np.median(times)), 1),
                 "p95_ms": round(float(np.percentile(times, 95)), 1),
-                "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
-                "rss_before_load_mb": round(rss_before_kb / 1024, 1),
+                "peak_rss_mib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+                "rss_before_load_mib": round(rss_before_kb / 1024, 1),
                 "p_fire": [round(p, 4) for p in probs],
                 "cpu": platform.processor() or platform.machine(),
                 "cores": os.cpu_count(),
@@ -131,17 +134,6 @@ def main() -> None:
             indent=1,
         )
     )
-
-
-def _probe_size(infer: object) -> int:
-    """Find the square input size cv2.dnn accepts (it does not expose the declared input shape)."""
-    for s in (224, 256, 384, 512):
-        try:
-            infer(np.zeros((1, 3, s, s), np.float32))
-            return s
-        except cv2.error:
-            continue
-    raise SystemExit("could not determine the model input size")
 
 
 if __name__ == "__main__":

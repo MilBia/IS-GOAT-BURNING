@@ -2,8 +2,9 @@
 
 Deployable path only: the copied ``edge_detector.preprocess`` -> ONNX Runtime CPU -> ``classifier_fire_probability``.
 Threshold rule of umbrella #149 ("best safe point"): the lowest threshold with 0 false alarms on all negatives, i.e. just
-above the highest negative score. Categories starting with ``synth`` are excluded from headline recall, ``goat*`` form
-the goat FPR, ``dfire_fire`` / ``hard_warm_dfire`` are reported separately as well.
+above the highest negative score, rounded UP to 4 decimals (safe to copy into ``EDGE__CONFIDENCE_THRESHOLD``).
+Categories starting with ``synth`` are excluded from headline recall, ``goat*`` form the goat FPR,
+``dfire_fire`` / ``hard_warm_dfire`` are reported separately as well.
 
 Per-image scores (with image paths) go to ``--out``; keep it outside the repository.
 
@@ -28,6 +29,11 @@ _MEAN = np.array((0.485, 0.456, 0.406), dtype=np.float32).reshape(1, 3, 1, 1)
 _STD = np.array((0.229, 0.224, 0.225), dtype=np.float32).reshape(1, 3, 1, 1)
 DFIRE_CATS = ("dfire_fire", "hard_warm_dfire")
 SWEEP = (0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9)
+
+
+def ceil4(x: float) -> float:
+    """Round up to 4 decimals, so a printed threshold used with ``>=`` never admits the negative it was derived from."""
+    return math.ceil(x * 1e4) / 1e4
 
 
 def preprocess(frame: np.ndarray, input_size: int) -> np.ndarray:
@@ -87,27 +93,27 @@ def report(name: str, rows: list[dict], scores: list[float]) -> None:
     dfire = np.isin(cat, DFIRE_CATS)
     neg = ~pos
     head = pos & ~synth
-    safe = float(np.nextafter(s[neg].max(), 1.0))
+    safe = ceil4(float(np.nextafter(s[neg].max(), 1.0)))
 
     def rec(mask: np.ndarray, t: float) -> str:
         return fmt(int((s[mask] >= t).sum()), int(mask.sum()))
 
     print(f"\n### {name}\n")
     print(
-        f"best safe point: threshold {safe:.4g} (max negative score {s[neg].max():.4g}, from `{cat[neg][s[neg].argmax()]}`)\n"
+        f"best safe point: threshold {safe:.4f} (max negative score {s[neg].max():.6f}, from `{cat[neg][s[neg].argmax()]}`)\n"
     )
     print(f"- recall non-synth fire (headline): {rec(head, safe)}")
-    safe_nd = float(np.nextafter(s[neg & ~dfire].max(), 1.0))
+    safe_nd = ceil4(float(np.nextafter(s[neg & ~dfire].max(), 1.0)))
     print(f"- recall non-synth fire without D-Fire, same threshold: {rec(head & ~dfire, safe)}")
     print(
-        f"- leak-free (both D-Fire categories dropped, threshold {safe_nd:.4g} from {int((neg & ~dfire).sum())} negatives): "
+        f"- leak-free (both D-Fire categories dropped, threshold {safe_nd:.4f} from {int((neg & ~dfire).sum())} negatives): "
         f"recall {rec(head & ~dfire, safe_nd)}"
     )
     print(f"- FPR all negatives: {rec(neg, safe)}; goat: {rec(neg & np.char.startswith(cat.astype(str), 'goat'), safe)}")
     order = np.sort(s[neg])[::-1]
     for k in (1, 3):
-        t = float(np.nextafter(order[k], 1.0))
-        print(f"- for reference, allowing {k}/{int(neg.sum())} false alarms (thr {t:.4g}): recall {rec(head, t)}")
+        t = ceil4(float(np.nextafter(order[k], 1.0)))
+        print(f"- for reference, allowing {k}/{int(neg.sum())} false alarms (thr {t:.4f}): recall {rec(head, t)}")
     print("\n| category | truth | n | median P(fire) | max P(fire) | alarms at safe point |\n|---|---|---:|---:|---:|---|")
     for c in sorted(set(cat)):
         m = cat == c

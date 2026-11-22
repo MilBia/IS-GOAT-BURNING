@@ -130,7 +130,6 @@ def main() -> None:
     ap.add_argument("--prompt-set", required=True, choices=sorted(PROMPT_SETS))
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--opset", type=int, default=17)
-    ap.add_argument("--dynamo", action="store_true", help="use the dynamo exporter instead of the TorchScript one")
     args = ap.parse_args()
     head, size, meta = build(args.model, args.prompt_set)
     dummy = torch.zeros(1, 3, size, size)
@@ -142,7 +141,7 @@ def main() -> None:
             input_names=["input"],
             output_names=["logits"],
             opset_version=args.opset,
-            dynamo=args.dynamo,
+            dynamo=False,
             external_data=False,
         )
     meta["opset"] = args.opset
