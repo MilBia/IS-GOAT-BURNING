@@ -36,13 +36,13 @@ frozenlist==1.8.0
     #   aiosignal
 google-auth[requests]==2.62.2
     # via google-genai
-google-genai==3.3.0
+google-genai==3.6.1
     # via IS-GOAT-BURNING (pyproject.toml)
 h11==0.16.0
     # via httpcore2
-httpcore2==2.16.0
+httpcore2==2.16.2
     # via httpx2
-httpx2==2.16.0
+httpx2==2.16.2
     # via google-genai
 idna==3.20
     # via
@@ -54,7 +54,7 @@ multidict==7.2.1
     # via
     #   aiohttp
     #   yarl
-numpy==2.5.4
+numpy==2.5.5
     # via
     #   IS-GOAT-BURNING (pyproject.toml)
     #   onnxruntime-gpu
@@ -74,11 +74,11 @@ pyasn1-modules==0.4.2
     # via google-auth
 pycparser==3.12
     # via cffi
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   google-genai
     #   pydantic-settings
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via pydantic
 pydantic-settings==2.16.3
     # via IS-GOAT-BURNING (pyproject.toml)
