@@ -160,3 +160,6 @@ jobs:
 
       - name: Run tests in the image
         run: docker run --rm --network none goat:cpu-test
+
+      - name: Check the CA bundle for the wheel's FFmpeg (#226)
+        run: docker run --rm --network none --entrypoint python3 goat:cpu-test -c "import os, ssl; ssl.create_default_context(cafile=os.environ['SSL_CERT_FILE'])"

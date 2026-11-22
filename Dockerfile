@@ -27,6 +27,11 @@ RUN /tmp/scripts/install_python.sh python3.14 python3.14-venv libgl1-mesa-glx li
     /tmp/scripts/setup_runtime.sh && \
     rm -rf /tmp/scripts
 
+# The FFmpeg bundled in the opencv-python wheel does not find the system CA bundle (installed with ca-certificates
+# above), so HTTPS captures fail with "certificate verify failed" (#226). Side effect: Python libraries that honour
+# SSL_CERT_FILE (e.g. google-genai) use the system bundle instead of certifi.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
 # Set the entrypoint.
 ENTRYPOINT ["entrypoint.sh"]
 
