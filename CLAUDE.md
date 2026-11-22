@@ -72,6 +72,7 @@ All I/O is `asyncio`-based; every new networking/file operation must be non-bloc
   pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml   # optional: onnxruntime-gpu for hybrid_edge on CUDA, bare-metal only (needs CUDA 13 libs; not usable in the Docker `gpu` image)
   pip-compile --extra=openvino --unsafe-package=openvino-telemetry --output-file=requirements-openvino.txt pyproject.toml   # optional: OpenVINO for hybrid_edge (EDGE__ACCELERATOR=openvino/openvino_gpu), bare-metal only; leaves openvino-telemetry out (install with `pip install --no-deps -r requirements-openvino.txt`)
   ```
+  Every new or updated dependency must pass `PYTHONPATH=. pytest tests/security` (#210: local inference is network-blocked with no Python-level connection attempts, no device-id files in a temp `HOME`/`XDG_CACHE_HOME` and no leftover processes; the `no-outbound` CI job installs the optional OpenVINO/onnxruntime backends for it — see CONTRIBUTING).
   Dependabot (`.github/dependabot.yml`: pip, github-actions, pre-commit) bumps `pyproject.toml` only — regenerate `requirements*.txt` on its PRs. The docker ecosystem is deliberately disabled (CUDA/apt-coupled base images).
 - **Style:** ruff (line length 128, double quotes, isort with `force-single-line` + `force-sort-within-sections`), Google-convention docstrings (enforced by pydocstyle in pre-commit).
 - **Commits:** Conventional Commits — `<type>(<scope>): <description> (#<issue>)`, e.g. `feat(notifications): add Slack service (#42)`.
