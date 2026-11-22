@@ -10,11 +10,17 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Only direct dependencies: transitive pins in the generated requirements*.txt
-    # must be re-resolved together by pip-compile, so single-package bumps of them
-    # (done by Dependabot in isolation) leave an inconsistent, uninstallable set.
+    # Ask for direct dependencies only: transitive pins in the generated requirements*.txt
+    # must be re-resolved together by pip-compile. Dependabot still bumps some of them
+    # (see `ignore` below), so regenerate the files on every PR (CONTRIBUTING.md).
     allow:
       - dependency-type: "direct"
+    # Transitive pins capped by the package that needs them: Dependabot still bumps them in the generated files
+    # (#209 set tenacity 9.2.1, leaving every requirements*.txt uninstallable). Ignore only the versions above the
+    # cap (ignore rules also apply to grouped updates). Remove an entry when its dependent lifts the cap.
+    ignore:
+      - dependency-name: "tenacity" # google-genai requires tenacity<9.2.0
+        versions: [">=9.2.0"]
     commit-message:
       prefix: "chore(deps)"
     groups:

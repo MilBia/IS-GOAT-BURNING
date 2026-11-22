@@ -57,6 +57,8 @@ This project uses `pyproject.toml` as the single source of truth for all Python 
 
 **Important: Do not edit the `requirements*.txt` files manually.**
 
+The `requirements-in-sync` CI job re-runs the command from each file's header and fails if a file differs from the `pip-compile` output.
+
 If you need to add or change a dependency, edit `pyproject.toml` and then run the following commands from the root of the project to regenerate the files:
 
 ```bash
