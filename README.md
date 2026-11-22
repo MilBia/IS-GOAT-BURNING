@@ -260,6 +260,8 @@ Docker allows you to run the application in a consistent and isolated environmen
 
 4.  **Build the Docker image:**
 
+    The `cpu` image installs OpenCV from the `opencv-python` wheel; the `gpu` and `opencl` images build the same OpenCV version (currently 5.1.0, with `opencv_contrib`) from source.
+
     -  **Base run (CPU only):** This build will run the application using the CPU. This is suitable if you don't have an NVIDIA GPU or don't want to use CUDA.
         ```bash
         docker build --target cpu -t burning_goat_detection .

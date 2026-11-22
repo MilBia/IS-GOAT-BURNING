@@ -53,7 +53,7 @@ async def test_cpu_fire_detector() -> None:
     assert is_fire is False, "CPU detector incorrectly detected fire"
 
 
-@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found")
+@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() <= 0, reason="No CUDA-enabled GPU found")
 @pytest.mark.asyncio
 async def test_cuda_fire_detector() -> None:
     """Tests the CUDAFireDetector with both fire and non-fire images."""
@@ -110,7 +110,7 @@ def test_create_fire_detector_factory_returns_cpu_by_default(mock_settings_class
     assert isinstance(detector, CPUFireDetector)
 
 
-@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found")
+@pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() <= 0, reason="No CUDA-enabled GPU found")
 def test_create_fire_detector_factory_returns_cuda_when_requested(mock_settings_classic) -> None:  # noqa: ARG001
     """Verifies the factory returns a CUDAFireDetector when requested."""
     detector = create_fire_detector(100, LOWER_HSV, UPPER_HSV, use_open_cl=False, use_cuda=True)
@@ -180,7 +180,7 @@ def to_opencl(img: np.ndarray) -> cv2.UMat:
         pytest.param(
             CUDAFireDetector,
             to_cuda,
-            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found"),
+            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() <= 0, reason="No CUDA-enabled GPU found"),
         ),
         pytest.param(
             OpenCLFireDetector,
@@ -226,7 +226,7 @@ async def test_detector_filters_static_false_positive(detector_class, to_device_
         pytest.param(
             CUDAFireDetector,
             to_cuda,
-            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found"),
+            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() <= 0, reason="No CUDA-enabled GPU found"),
         ),
         pytest.param(
             OpenCLFireDetector,
@@ -268,7 +268,7 @@ async def test_detector_detects_dynamic_fire(detector_class, to_device_func) -> 
         pytest.param(
             CUDAFireDetector,
             to_cuda,
-            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() == 0, reason="No CUDA-enabled GPU found"),
+            marks=pytest.mark.skipif(cv2.cuda.getCudaEnabledDeviceCount() <= 0, reason="No CUDA-enabled GPU found"),
         ),
         pytest.param(
             OpenCLFireDetector,

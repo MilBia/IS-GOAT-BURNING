@@ -136,3 +136,29 @@ jobs:
           pip install --no-deps openvino-telemetry==2025.2.0
           export NO_OUTBOUND_REQUIRE_NETNS=1 NO_OUTBOUND_REQUIRE_OV_TELEMETRY=1
           PYTHONPATH=. unshare -rn pytest tests/security -v -rs -k openvino
+
+  docker-cpu:
+    # #214: build the cpu image, run the test suite inside it (no network) and check that the OpenCV version built from
+    # source in the gpu/opencl stages matches the opencv-python wheel. Plain docker build: no buildx setup/cache actions.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check source-built OpenCV version matches the wheel (major.minor)
+        run: |
+          wheel=$(sed -n 's/^opencv-python==\([0-9]*\.[0-9]*\)\..*/\1/p' requirements-cpu.txt)
+          docker=$(sed -n 's/^ARG OPENCV\(_CONTRIB\)\?_VERSION=//p' Dockerfile | cut -d. -f1,2 | sort -u)
+          script=$(sed -n 's/^OPENCV\(_CONTRIB\)\?_VERSION="\(.*\)"$/\2/p' scripts/build_opencv.sh | cut -d. -f1,2 | sort -u)
+          echo "wheel=$wheel Dockerfile=$docker build_opencv.sh=$script"
+          if [ -z "$wheel" ] || [ "$docker" != "$wheel" ] || [ "$script" != "$wheel" ]; then
+            echo "::error::OpenCV versions differ; see CONTRIBUTING.md (Dependency Updates)."
+            exit 1
+          fi
+
+      - name: Build cpu-test image
+        run: docker build --progress=plain --target cpu-test -t goat:cpu-test .
+
+      - name: Run tests in the image
+        run: docker run --rm --network none goat:cpu-test

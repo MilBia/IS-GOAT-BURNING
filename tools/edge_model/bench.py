@@ -124,11 +124,8 @@ def _bench_cv2(path: Path, x: np.ndarray, ref: np.ndarray, args: argparse.Namesp
     def factory(target: int, threads: int) -> Callable[[], Runner]:
         def make() -> Runner:
             cv2.setNumThreads(threads)
-            # OpenCV 5 defaults to the new graph engine which ignores DNN targets (OpenCL); force the classic one.
-            if args.cv2_engine == "classic" and hasattr(cv2.dnn, "ENGINE_CLASSIC"):
-                net = cv2.dnn.readNetFromONNX(str(path), cv2.dnn.ENGINE_CLASSIC)
-            else:
-                net = cv2.dnn.readNetFromONNX(str(path))
+            # OpenCV 5.1 removed the classic engine; the new graph engine ignores OpenCL targets (runs on the CPU).
+            net = cv2.dnn.readNetFromONNX(str(path))
             net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             net.setPreferableTarget(target)
 
@@ -221,12 +218,6 @@ def main() -> None:
     parser.add_argument("models", nargs="+", type=Path, help="ONNX model files")
     parser.add_argument("--runs", type=int, default=40)
     parser.add_argument("--warmup", type=int, default=5)
-    parser.add_argument(
-        "--cv2-engine",
-        choices=("classic", "new"),
-        default="classic",
-        help="OpenCV 5 DNN engine; the new engine ignores OpenCL targets (default: classic)",
-    )
     parser.add_argument("--threads", type=int, nargs="+", default=[1, 4])
     args = parser.parse_args()
     for path in args.models:
