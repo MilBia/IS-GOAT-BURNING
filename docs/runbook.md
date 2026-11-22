@@ -66,7 +66,7 @@ The README production preset sets `RECONNECT_MAX_DELAY_SECONDS=120` (see section
 Alert on `DISCORD__HOOKS`, with the triggering frame attached (`DISCORD__ATTACH_FRAME`).
 
 -   **Verified alert:** the Gemini verifier confirmed the CV detection. Look at the attached frame, then at the stream.
--   **`[UNVERIFIED]` alert:** the verifier was unavailable and `VERIFIER_FAILURE_POLICY=alert_unverified` let the local detector alert anyway. Message note: `[UNVERIFIED] The fire verifier is unavailable; this alert comes from the local camera detector only.` Treat it as a real possibility, check the stream yourself, and see section 6 for the cause.
+-   **`[UNVERIFIED]` alert:** the verifier was unavailable and `VERIFIER_FAILURE_POLICY=alert_unverified` let the local detector alert anyway. Message note: `[UNVERIFIED] The fire verifier is unavailable; this alert comes from the local camera detector only.` (the text after `[UNVERIFIED]` is configurable via `UNVERIFIED_ALERT_NOTE`). Treat it as a real possibility, check the stream yourself, and see section 6 for the cause.
 
 Recordings are in the recordings volume, in a directory `event_<YYYY-MM-DD_HH-MM-SS>`:
 

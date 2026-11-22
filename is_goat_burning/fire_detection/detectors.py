@@ -787,6 +787,42 @@ class HybridFireDetector:
         return self._report(verified), annotated_frame
 
 
+class UnverifiedLocalDetector:
+    """The local CV detector used when the ``hybrid_edge`` verifier model cannot be loaded (#171).
+
+    Every result is unverified, so ``VERIFIER_FAILURE_POLICY`` applies to each check: ``alert_unverified`` reports
+    the local result (``last_result_unverified`` is True for a fire), ``suppress`` reports no fire (the local detector
+    still runs, so its motion baseline and the annotated frame stay current).
+    """
+
+    def __init__(
+        self, local_detector: CPUFireDetector | CUDAFireDetector | OpenCLFireDetector, failure_policy: str | None = None
+    ) -> None:
+        """Initializes the wrapper.
+
+        Args:
+            local_detector: The local CV detector to delegate to.
+            failure_policy: ``alert_unverified`` or ``suppress``. Defaults to ``settings.verifier_failure_policy``.
+        """
+        self.local_detector = local_detector
+        self.failure_policy = settings.verifier_failure_policy if failure_policy is None else failure_policy
+        self.last_result_unverified = False
+
+    async def detect(self, frame: np.ndarray | cv2.UMat | cv2.cuda.GpuMat) -> tuple[bool, np.ndarray]:
+        """Runs the local detector and applies the failure policy to its result.
+
+        Args:
+            frame: The input video frame.
+
+        Returns:
+            A tuple of the reported fire state and the local detector's annotated frame.
+        """
+        fire, annotated_frame = await self.local_detector.detect(frame)
+        reported = fire and self.failure_policy == "alert_unverified"
+        self.last_result_unverified = reported
+        return reported, annotated_frame
+
+
 def _create_local_detector(
     margin: int,
     lower: np.ndarray,
@@ -931,7 +967,7 @@ def create_fire_detector(
     Returns:
         An instance of a class that conforms to the FireDetector protocol. For
         ``hybrid_edge`` this is a ``HybridFireDetector``, or, if the edge model
-        cannot be loaded at startup, the plain local detector (see Note).
+        cannot be loaded at startup, an ``UnverifiedLocalDetector`` (see Note).
 
     Note:
         A missing or unset ``EDGE__MODEL_PATH`` is rejected earlier, at settings
@@ -939,9 +975,10 @@ def create_fire_detector(
         model LOAD failures only: if building the edge verifier raises (corrupt
         or invalid model, input-size mismatch, unavailable accelerator, missing
         onnxruntime, unexpected errors), it logs CRITICAL and falls back to the
-        local detector (classic rule; honours CUDA/OpenCL settings), so fires
-        are still reported (unverified) instead of every alert being silently
-        suppressed.
+        local detector (classic rule; honours CUDA/OpenCL settings) wrapped in
+        ``UnverifiedLocalDetector``, which applies ``VERIFIER_FAILURE_POLICY``:
+        fires are reported marked unverified (``alert_unverified``) or not at
+        all (``suppress``), instead of startup failing.
 
         The built edge verifier is cached across calls (keyed by resolved model path, file mtime and size,
         accelerator, input size and confidence threshold), so a stream reconnect does not reload the model; only
@@ -961,23 +998,29 @@ def create_fire_detector(
         try:
             edge_detector = HybridFireDetector(edge_local_detector, _get_edge_verifier(settings.edge))
         except Exception as exc:  # noqa: BLE001 - any load failure must degrade to the local detector, never abort startup
+            fallback = UnverifiedLocalDetector(edge_local_detector)
+            outcome = (
+                "fires seen by it will NOT be reported (VERIFIER_FAILURE_POLICY=suppress)"
+                if fallback.failure_policy == "suppress"
+                else "fires will still be reported, but marked UNVERIFIED (no edge-model verification)"
+            )
             _factory_logger.critical(
-                "hybrid_edge verification is unavailable (%s). Falling back to the local detector (classic rule): "
-                "fires will still be reported, but WITHOUT edge-model verification.",
+                "hybrid_edge verification is unavailable (%s). Falling back to the local detector (classic rule): %s.",
                 exc,
+                outcome,
                 exc_info=not isinstance(exc, EdgeModelError),
             )
-            # The fallback reports every fire regardless of VERIFIER_FAILURE_POLICY, hence "alert_unverified".
+            # The fallback applies VERIFIER_FAILURE_POLICY to every check (see UnverifiedLocalDetector).
             _edge_load_failed = True
             publish_verifier_status(
                 VerifierStatus(
                     available=False,
                     verifier=EDGE_VERIFIER_NAME,
                     reason=f"model load failed: {type(exc).__name__}",
-                    policy="alert_unverified",
+                    policy=fallback.failure_policy,
                 )
             )
-            return edge_local_detector
+            return fallback
         if _edge_load_failed:
             # Only a load failure is cleared here; runtime unavailability (errors, call cap) recovers on a real verdict.
             _edge_load_failed = False

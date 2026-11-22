@@ -217,6 +217,25 @@ async def test_verifier_status_changes_are_sent(notifier: ServiceNotifier, clock
 
 
 @pytest.mark.asyncio
+async def test_standalone_verifier_status_message(notifier: ServiceNotifier, send: AsyncMock) -> None:
+    """A standalone verifier outage (#171) does not mention a local detector; the recovery says fires are detected."""
+    from is_goat_burning.fire_detection.verifier_health import STANDALONE_POLICY
+
+    publish_verifier_status(
+        VerifierStatus(available=False, verifier="GeminiFireDetector", reason="5 consecutive errors", policy=STANDALONE_POLICY)
+    )
+    publish_verifier_status(
+        VerifierStatus(available=True, verifier="GeminiFireDetector", reason="recovered", policy=STANDALONE_POLICY)
+    )
+    await notifier.drain()
+
+    down, up = sent(send)
+    assert "local detector" not in down
+    assert "fires cannot be detected" in down
+    assert "fires are detected again" in up
+
+
+@pytest.mark.asyncio
 async def test_listener_is_called_without_blocking(notifier: ServiceNotifier, send: AsyncMock) -> None:
     """The verifier listener only queues work: nothing is sent until the notifier task runs."""
 

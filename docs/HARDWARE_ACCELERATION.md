@@ -20,7 +20,8 @@ A missing or unset `EDGE__MODEL_PATH` (or a path that is not an existing file) i
 validator raises at settings load and the application does not start. If the model exists but cannot be loaded (corrupt or
 invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `onnxruntime` missing, unexpected errors),
 the detector factory logs a **CRITICAL** message and falls back to the classic local detector (honouring the CUDA/OpenCL
-settings): fires are still reported, but **unverified**. At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
+settings) and applies `VERIFIER_FAILURE_POLICY`: fires are reported **unverified** (`alert_unverified`) or not at all
+(`suppress`). At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
 CRITICAL after 5 consecutive failures.
 
 The loaded verifier is reused across stream reconnects: the model is read and warmed up once, not on every reconnect.

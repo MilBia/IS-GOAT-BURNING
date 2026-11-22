@@ -11,7 +11,7 @@ from is_goat_burning.logger import get_logger
 logger = get_logger("EmailSender")
 
 UNVERIFIED_SUBJECT_PREFIX = "[UNVERIFIED] "
-UNVERIFIED_NOTE = "\n\nThe fire verifier is unavailable; this alert comes from the local camera detector only."
+UNVERIFIED_NOTE = "The fire verifier is unavailable; this alert comes from the local camera detector only."
 
 
 @dataclass(init=True, repr=False, eq=False, order=False, kw_only=True, slots=True)
@@ -32,6 +32,8 @@ class SendEmail:
         message_html (str | None): An optional HTML version of the email body.
         host (str): The SMTP server host (e.g., "smtp.gmail.com").
         port (int): The port for the SMTP server (e.g., 587 for TLS).
+        unverified_note (str): Appended to the body (after a blank line) of an alert sent while the fire
+            verifier was unavailable; the subject gets the ``[UNVERIFIED]`` prefix.
     """
 
     sender: str
@@ -42,6 +44,7 @@ class SendEmail:
     message_html: str | None = None
     host: str
     port: int
+    unverified_note: str = UNVERIFIED_NOTE
 
     def _send_email_blocking(self, unverified: bool = False) -> None:
         """Constructs and sends the email using blocking I/O.
@@ -56,7 +59,7 @@ class SendEmail:
         msg["Subject"] = UNVERIFIED_SUBJECT_PREFIX + self.subject if unverified else self.subject
         msg["From"] = self.sender
         msg["To"] = ", ".join(self.recipients)
-        msg.set_content(self.message + UNVERIFIED_NOTE if unverified else self.message)
+        msg.set_content(f"{self.message}\n\n{self.unverified_note}" if unverified else self.message)
         if self.message_html:
             msg.add_alternative(self.message_html, subtype="html")
 

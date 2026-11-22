@@ -211,3 +211,46 @@ async def test_verify_returns_thresholded_verdict(mock_genai_client: MagicMock, 
     """A successful call returns a plain bool verdict."""
     mock_genai_client.return_value.aio.decisions.create.return_value = _response(0.2)
     assert await DecisionFireDetector().verify(frame) is False
+
+
+# --- standalone gemini_decision publishes verifier health (#171) ---
+
+
+@pytest.mark.asyncio
+async def test_standalone_detect_publishes_outage_and_recovery_once(mock_genai_client: MagicMock, frame: np.ndarray) -> None:
+    """``detect()`` publishes the outage at the CRITICAL threshold and the recovery once; ``verify()`` publishes nothing."""
+    from is_goat_burning.fire_detection.verifier_health import STANDALONE_POLICY
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+    from is_goat_burning.fire_detection.verifier_health import add_verifier_status_listener
+    from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+
+    create = mock_genai_client.return_value.aio.decisions.create
+    detector = DecisionFireDetector()
+    statuses: list = []
+    listener = statuses.append
+    add_verifier_status_listener(listener)
+    try:
+        create.side_effect = RuntimeError("down")
+        for _ in range(CONSECUTIVE_ERRORS_BEFORE_CRITICAL + 2):
+            with pytest.raises(VerifierError):
+                await detector.verify(frame)  # the hybrid path: HybridFireDetector publishes, not the verifier
+        assert statuses == []
+
+        detector._consecutive_errors = 0
+        for _ in range(CONSECUTIVE_ERRORS_BEFORE_CRITICAL - 1):
+            await detector.detect(frame)
+        assert statuses == []
+        for _ in range(3):
+            await detector.detect(frame)
+
+        create.side_effect = None
+        create.return_value = _response(0.1)
+        await detector.detect(frame)
+        await detector.detect(frame)
+    finally:
+        remove_verifier_status_listener(listener)
+
+    assert [s.available for s in statuses] == [False, True]
+    assert {s.verifier for s in statuses} == {"DecisionFireDetector"}
+    assert {s.policy for s in statuses} == {STANDALONE_POLICY}
+    assert f"{CONSECUTIVE_ERRORS_BEFORE_CRITICAL} consecutive errors" in statuses[0].reason

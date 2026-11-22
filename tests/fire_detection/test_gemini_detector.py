@@ -148,3 +148,49 @@ async def test_call_times_out_after_configured_seconds(mock_genai_client, monkey
     with pytest.raises(VerifierError, match="timed out"):
         await detector.verify(frame)
     assert await detector.detect(frame) == (False, frame)  # standalone use still never raises
+
+
+# --- standalone gemini publishes verifier health (#171) ---
+
+
+@pytest.mark.asyncio
+async def test_standalone_detect_publishes_outage_and_recovery_once(mock_genai_client, monkeypatch) -> None:
+    """``detect()`` publishes the outage at the CRITICAL threshold and the recovery once; ``verify()`` publishes nothing."""
+    from is_goat_burning.fire_detection.gemini_detector import CONSECUTIVE_ERRORS_BEFORE_CRITICAL
+    from is_goat_burning.fire_detection.verifier_health import STANDALONE_POLICY
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+    from is_goat_burning.fire_detection.verifier_health import add_verifier_status_listener
+    from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+
+    monkeypatch.setattr(settings.gemini, "api_key", SecretStr("fake-key"))
+    generate = mock_genai_client.return_value.aio.models.generate_content
+    detector = GeminiFireDetector()
+    frame = np.zeros((10, 10, 3), dtype=np.uint8)
+    statuses: list = []
+    listener = statuses.append
+    add_verifier_status_listener(listener)
+    try:
+        generate.side_effect = Exception("API Error")
+        for _ in range(CONSECUTIVE_ERRORS_BEFORE_CRITICAL + 2):
+            with pytest.raises(VerifierError):
+                await detector.verify(frame)  # the hybrid path: HybridFireDetector publishes, not the verifier
+        assert statuses == []
+
+        detector._consecutive_errors = 0
+        for _ in range(CONSECUTIVE_ERRORS_BEFORE_CRITICAL - 1):
+            await detector.detect(frame)
+        assert statuses == []
+        for _ in range(3):
+            await detector.detect(frame)
+
+        generate.side_effect = None
+        generate.return_value = MagicMock(parsed=FireDetectionResponse(is_fire=True, confidence=0.9))
+        is_fire, _ = await detector.detect(frame)
+        await detector.detect(frame)
+    finally:
+        remove_verifier_status_listener(listener)
+
+    assert is_fire is True
+    assert [s.available for s in statuses] == [False, True]
+    assert {s.verifier for s in statuses} == {"GeminiFireDetector"}
+    assert {s.policy for s in statuses} == {STANDALONE_POLICY}

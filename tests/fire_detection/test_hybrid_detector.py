@@ -20,6 +20,7 @@ from is_goat_burning.config import EdgeSettings
 from is_goat_burning.config import settings
 from is_goat_burning.fire_detection.detectors import CPUFireDetector
 from is_goat_burning.fire_detection.detectors import HybridFireDetector
+from is_goat_burning.fire_detection.detectors import UnverifiedLocalDetector
 from is_goat_burning.fire_detection.detectors import clear_edge_verifier_cache
 from is_goat_burning.fire_detection.detectors import create_fire_detector
 from is_goat_burning.fire_detection.edge_detector import EdgeModelError
@@ -33,6 +34,11 @@ TEST_FRAME_HEIGHT = 100
 TEST_FRAME_WIDTH = 100
 TEST_FRAME_CHANNELS = 3
 TEST_MARGIN = 100
+
+
+def _is_fallback(detector: object) -> bool:
+    """True for the hybrid_edge model-load fallback (the CPU detector wrapped in UnverifiedLocalDetector)."""
+    return isinstance(detector, UnverifiedLocalDetector) and isinstance(detector.local_detector, CPUFireDetector)
 
 
 # --- Fixtures ---
@@ -313,11 +319,11 @@ async def test_hybrid_edge_detect_end_to_end(probability: float, expected: bool)
     ids=["edge_model_error", "unexpected_error"],
 )
 def test_hybrid_edge_falls_back_to_local_detector_on_load_error(error: Exception, caplog: pytest.LogCaptureFixture) -> None:
-    """Any load failure falls back to the plain local detector and logs CRITICAL."""
+    """Any load failure falls back to the wrapped local detector and logs CRITICAL."""
     with patch("is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector", side_effect=error):
         detector = _create_edge()
 
-    assert isinstance(detector, CPUFireDetector)
+    assert _is_fallback(detector)
     messages = _critical_messages(caplog)
     assert len(messages) == 1
     assert "hybrid_edge verification is unavailable" in messages[0]
@@ -342,7 +348,7 @@ def test_hybrid_edge_fallback_with_corrupt_model(tmp_path: Path, caplog: pytest.
     with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu")):
         detector = _create_edge()
 
-    assert isinstance(detector, CPUFireDetector)
+    assert _is_fallback(detector)
     assert len(_critical_messages(caplog)) == 1
 
 
@@ -446,7 +452,7 @@ async def test_failed_rebuild_of_unhealthy_verifier_falls_back_uncached(caplog: 
         factory.backend.predict.side_effect = None
         again = _create_edge()
 
-    assert isinstance(fallback, CPUFireDetector)
+    assert _is_fallback(fallback)
     assert len(_critical_messages(caplog)) == 1
     assert isinstance(again, HybridFireDetector)
     assert again.verifier is not first.verifier
@@ -476,8 +482,8 @@ def test_failed_edge_build_is_not_cached(caplog: pytest.LogCaptureFixture) -> No
         third = _create_edge()
         fourth = _create_edge()
 
-    assert isinstance(first, CPUFireDetector)
-    assert isinstance(second, CPUFireDetector)
+    assert _is_fallback(first)
+    assert _is_fallback(second)
     assert len(_critical_messages(caplog)) == 2
     assert isinstance(third, HybridFireDetector)
     assert third.verifier is good
@@ -492,8 +498,8 @@ def test_corrupt_model_replaced_by_valid_one_is_picked_up(tmp_path: Path, caplog
     model = tmp_path / "m.onnx"
     model.write_bytes(b"this is not an onnx model")
     with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator="cpu", input_size=8)):
-        assert isinstance(_create_edge(), CPUFireDetector)
-        assert isinstance(_create_edge(), CPUFireDetector)
+        assert _is_fallback(_create_edge())
+        assert _is_fallback(_create_edge())
         assert len(_critical_messages(caplog)) == 2
 
         model.write_bytes(_build_classifier_onnx(8))
@@ -537,7 +543,7 @@ def test_input_size_mismatch_after_model_swap_falls_back_and_drops_cache(
         os.utime(model, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
         detector = _create_edge()
 
-    assert isinstance(detector, CPUFireDetector)
+    assert _is_fallback(detector)
     messages = _critical_messages(caplog)
     assert len(messages) == 1
     assert "expects a 16x16 input" in messages[0]
@@ -569,14 +575,13 @@ def test_edge_fallback_publishes_verifier_unavailable() -> None:
     finally:
         remove_verifier_status_listener(listener)
 
-    assert isinstance(detector, CPUFireDetector)
+    assert _is_fallback(detector)
     assert len(statuses) == 1
     status = statuses[0]
     assert status.available is False
     assert status.verifier == "EdgeInferenceDetector"
     assert "EdgeModelError" in status.reason
-    # The fallback always reports fires (unverified), whatever VERIFIER_FAILURE_POLICY says.
-    assert status.policy == "alert_unverified"
+    assert status.policy == settings.verifier_failure_policy
 
 
 def test_edge_build_after_fallback_publishes_recovery() -> None:
@@ -602,3 +607,61 @@ def test_edge_build_after_fallback_publishes_recovery() -> None:
     assert isinstance(detector, HybridFireDetector)
     assert [s.available for s in statuses] == [False, True]
     assert statuses[1].verifier == "EdgeInferenceDetector"
+
+
+# --- hybrid_edge fallback honours VERIFIER_FAILURE_POLICY (#171) ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("policy", "local_fire", "expected_fire", "expected_unverified"),
+    [
+        ("alert_unverified", True, True, True),
+        ("alert_unverified", False, False, False),
+        ("suppress", True, False, False),
+        ("suppress", False, False, False),
+    ],
+)
+async def test_unverified_local_detector_applies_policy(
+    mock_local_detector: MagicMock,
+    sample_frame: np.ndarray,
+    policy: str,
+    local_fire: bool,
+    expected_fire: bool,
+    expected_unverified: bool,
+) -> None:
+    """The fallback delegates to the local detector and applies the failure policy to its result."""
+    annotated = np.ones_like(sample_frame)
+    mock_local_detector.detect.return_value = (local_fire, annotated)
+    detector = UnverifiedLocalDetector(mock_local_detector, failure_policy=policy)
+
+    is_fire, frame = await detector.detect(sample_frame)
+
+    assert is_fire is expected_fire
+    assert frame is annotated  # the annotated frame is kept even when suppressed
+    assert detector.last_result_unverified is expected_unverified
+    mock_local_detector.detect.assert_awaited_once_with(sample_frame)
+
+
+@pytest.mark.parametrize(("policy", "fragment"), [("alert_unverified", "UNVERIFIED"), ("suppress", "NOT be reported")])
+def test_edge_fallback_uses_configured_policy(policy: str, fragment: str, caplog: pytest.LogCaptureFixture) -> None:
+    """The fallback, its published status and its CRITICAL message follow VERIFIER_FAILURE_POLICY."""
+    from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
+
+    statuses, listener = _recording_listener()
+    try:
+        with (
+            patch.object(settings, "verifier_failure_policy", policy),
+            patch(
+                "is_goat_burning.fire_detection.edge_detector.EdgeInferenceDetector",
+                MagicMock(side_effect=EdgeModelError("corrupt")),
+            ),
+        ):
+            detector = _create_edge()
+    finally:
+        remove_verifier_status_listener(listener)
+
+    assert _is_fallback(detector)
+    assert detector.failure_policy == policy
+    assert [s.policy for s in statuses] == [policy]
+    assert fragment in _critical_messages(caplog)[0]

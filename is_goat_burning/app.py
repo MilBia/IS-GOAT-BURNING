@@ -135,6 +135,7 @@ class Application:
                         "message": settings.email.message,
                         "host": settings.email.email_host,
                         "port": settings.email.email_port,
+                        "unverified_note": settings.unverified_alert_note,
                     },
                 )
             )
@@ -150,6 +151,7 @@ class Application:
                         "max_attempts": settings.discord.max_attempts,
                         "base_delay": settings.discord.retry_base_delay_seconds,
                         "max_delay": settings.discord.retry_max_delay_seconds,
+                        "unverified_note": settings.unverified_alert_note,
                     },
                 )
             )

@@ -98,7 +98,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `STREAM_INACTIVITY_TIMEOUT` | Seconds to wait for a new frame before timing out. | `60` |
 | | | |
 | **Detection Strategy** | | |
-| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `hybrid_edge` (HSV + local offline classifier, needs `EDGE__MODEL_PATH`; falls back to the local detector (classic rule) if the model fails to load), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
+| `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `hybrid_edge` (HSV + local offline classifier, needs `EDGE__MODEL_PATH`; falls back to the local detector (classic rule, subject to `VERIFIER_FAILURE_POLICY`) if the model fails to load), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
 | `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
 | `GEMINI__MODEL` | Gemini model to use. | `"gemini-3.5-flash-lite"` |
 | `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |
@@ -116,6 +116,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | `FIRE_EXTINGUISHED_DEBOUNCE_SECONDS`| Seconds a fire must be continuously absent before the 'extinguished' state is registered. | `5.0` |
 | `ALERT_COOLDOWN_SECONDS` | One alert is sent per fire event; the alert re-arms once the fire is extinguished (or the stream drops mid-fire). This is the minimum spacing between two alerts: a fire re-detected inside the window is alerted when the window ends if it is still burning, otherwise not at all. `0` disables the spacing. | `600` |
 | `ALERT_RETRY_SECONDS` | If every alert action failed (e.g. a short Discord outage at ignition), the alert is retried every this many seconds, with the same frame, until it is sent or the fire is extinguished. The detector signals only when a fire starts, so without the retry such an outage would lose the alert for the whole fire. `0` disables the retry. | `60` |
+| `UNVERIFIED_ALERT_NOTE` | Note added to an alert sent while the verifier is unavailable (`VERIFIER_FAILURE_POLICY=alert_unverified`): appended to the email body (subject prefixed with `[UNVERIFIED] `) and to the Discord message as `[UNVERIFIED] <note>`. Max 500 characters. | `"The fire verifier is unavailable; this alert comes from the local camera detector only."` |
 | | | |
 | **Email Settings** | | |
 | `EMAIL__USE_EMAILS` | Set to `true` to enable email notifications. | `false` |

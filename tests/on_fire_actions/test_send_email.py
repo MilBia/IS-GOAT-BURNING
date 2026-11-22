@@ -78,6 +78,19 @@ async def test_unverified_email_is_marked(email_sender: SendEmail) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unverified_email_uses_the_configured_note(email_sender: SendEmail) -> None:
+    """The unverified note is configurable (UNVERIFIED_ALERT_NOTE, #171); the subject prefix stays."""
+    email_sender.unverified_note = "Weryfikator niedostępny."
+    with patch("smtplib.SMTP") as mock_smtp:
+        instance = MagicMock()
+        mock_smtp.return_value.__enter__.return_value = instance
+        await email_sender(unverified=True)
+        msg = instance.send_message.call_args[0][0]
+        assert msg["Subject"] == "[UNVERIFIED] Test Subject"
+        assert msg.get_content().rstrip("\n") == "Test Message\n\nWeryfikator niedostępny."
+
+
+@pytest.mark.asyncio
 async def test_email_accepts_and_ignores_a_frame(email_sender: SendEmail) -> None:
     """The alert container passes ``frame=`` to every action; email does not attach it (#177)."""
     with patch("smtplib.SMTP") as mock_smtp:

@@ -241,6 +241,19 @@ async def test_unverified_alert_carries_a_note() -> None:
         assert mock_post.call_args.kwargs["json"]["content"] == "x" * 2000
 
 
+@pytest.mark.asyncio
+async def test_unverified_alert_uses_the_configured_note() -> None:
+    """The note is configurable (UNVERIFIED_ALERT_NOTE, #171)."""
+    note = "Weryfikator niedostępny."
+    with patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 204
+        sender = SendToDiscord(webhooks=["https://discord.com/api/webhooks/1/a"], message="Fire!", unverified_note=note)
+        assert await sender(unverified=True) is True
+        content = mock_post.call_args.kwargs["json"]["content"]
+
+    assert content == f"Fire!\n\n[UNVERIFIED] {note}"
+
+
 # --- frame attachment (#177) ---
 
 
