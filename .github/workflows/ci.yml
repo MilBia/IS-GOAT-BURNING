@@ -44,3 +44,44 @@ jobs:
         run: |
           # PYTHONPATH=. is crucial for pytest to find the 'is_goat_burning' module
           PYTHONPATH=. pytest -rs
+
+  no-outbound:
+    # #210: local inference must not phone home. Installs the optional edge backends the way the docs say and runs
+    # tests/security (every PR, including Dependabot's), so a dependency bump that re-enables telemetry fails here
+    # once requirements*.txt are regenerated.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install dependencies and optional edge backends
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install --no-deps -r requirements-openvino.txt
+          # CPU wheel of the pinned onnxruntime-gpu version (CI only, not a project dependency)
+          pip install "onnxruntime==$(sed -n 's/^onnxruntime-gpu==//p' requirements-edge-gpu.txt)"
+
+      - name: Allow unprivileged network namespaces (unshare -rn)
+        run: |
+          # Ubuntu's AppArmor blocks unprivileged user namespaces by default; the test runs inference inside an empty
+          # network namespace so native code cannot reach the network either.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare -rn true && echo "unshare -rn works"
+
+      - name: Run no-outbound security tests
+        run: NO_OUTBOUND_REQUIRE_NETNS=1 PYTHONPATH=. pytest tests/security -v -rs
+
+      - name: Check the in-code OpenVINO telemetry block (openvino-telemetry installed)
+        run: |
+          # requirements-openvino.txt leaves the package out; install it here so the sys.modules block itself is tested.
+          # The whole pytest runs inside the empty network namespace: the leak control really emits telemetry.
+          pip install --no-deps openvino-telemetry==2025.2.0
+          export NO_OUTBOUND_REQUIRE_NETNS=1 NO_OUTBOUND_REQUIRE_OV_TELEMETRY=1
+          PYTHONPATH=. unshare -rn pytest tests/security -v -rs -k openvino
