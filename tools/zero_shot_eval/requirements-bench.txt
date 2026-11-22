@@ -1,0 +1,4 @@
+# Runtime for bench.py only (#151); pins match the project (opencv 5.0.0) and the research run.
+numpy>=2,<3
+opencv-python-headless==5.0.0.93
+onnxruntime==1.32.0

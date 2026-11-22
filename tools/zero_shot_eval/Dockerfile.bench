@@ -1,0 +1,8 @@
+# Minimal container for tools/zero_shot_eval/bench.py (#151). Build context: this directory.
+#   docker build -f Dockerfile.bench -t zs-bench .
+#   docker run --rm --cpus 4 -v "$PWD/work:/work:ro" zs-bench --model /work/m.onnx --images /work/jpgs --backend ort
+FROM python:3.13-slim
+WORKDIR /bench
+COPY requirements-bench.txt bench.py ./
+RUN pip install --no-cache-dir -r requirements-bench.txt
+ENTRYPOINT ["python", "/bench/bench.py"]
