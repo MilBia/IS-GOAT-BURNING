@@ -370,6 +370,7 @@ docker run -d --name burning_goat_detection_container \
 -   `--shm-size 1g` is **required** in `segments` mode: the default 64 MB `/dev/shm` overflows at 60 fps after ~80 s and `ffmpeg` falls into a restart loop (#156). A 1080p60 ring of 120 s takes ~250 MB.
 -   Keep the env file **outside the repository** with mode `600` (`chmod 600 goat.env`); it holds the Gemini key and webhooks.
 -   Recordings: 20 s of 1080p60 is 10-18 MB, so budget ~2.5 GB of disk per hour of fire.
+-   Optional hardening: to limit the container's outbound traffic to the services your configuration needs (YouTube, Discord, Gemini, SMTP), run it behind the allow-list proxy in `deploy/egress/`; see [Egress-restricted deployment](docs/runbook.md#8-egress-restricted-deployment) in the runbook. `tools/egress_allowlist.py` prints the required hosts from your settings.
 
 Recommended production preset (names match `is_goat_burning/config.py`; secrets are placeholders). Docker env files do **not** strip quotes, so write values unquoted and put comments on their own lines (no inline comments):
 

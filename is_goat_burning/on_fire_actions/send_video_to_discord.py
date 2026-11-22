@@ -176,7 +176,7 @@ class SendVideoToDiscord:
             logger.error(f"Could not stat video chunk {os.path.basename(file_path)}: [{e.__class__.__name__}] {e}")
             return
 
-        async with ClientSession() as session:
+        async with ClientSession(trust_env=True) as session:  # honours HTTPS_PROXY (egress proxy, #212)
             if file_size <= self.file_limit_mb * BYTES_PER_MIB:
                 await self._upload_file(session, file_path, file_size)
             else:

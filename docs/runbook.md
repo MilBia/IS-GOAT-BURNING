@@ -104,11 +104,10 @@ Recordings and the escalation log live on the volume and survive. Confirm the `M
 # on a development machine
 pip install -U yt-dlp
 yt-dlp --print title "<stream URL>"      # confirm the new version resolves
-# bump the pin in pyproject.toml (yt-dlp==<version>), then regenerate
-pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
-pip-compile --output-file=requirements.txt pyproject.toml
-pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
+# bump the pin in pyproject.toml (yt-dlp==<version>)
 ```
+
+Then regenerate **all** `requirements*.txt` (each file's header has its `pip-compile` command; the list is in [CONTRIBUTING](../CONTRIBUTING.md#dependency-updates-dependabot)). `requirements-openvino.txt` pins yt-dlp too, and the `requirements-in-sync` CI job fails if any file is left behind.
 
 On the host: pull the change, rebuild and recreate the container (section 4):
 
@@ -144,3 +143,66 @@ docker restart burning_goat_detection_container  # same values as before (env is
 `--stop-timeout 30` at `docker run` gives the graceful shutdown time (final clip, pending alert, service message); the worst case is about 15 s (measured stop in rehearsal: about 10 s), which can exceed Docker's default 10 s grace period and be killed before the shutdown message is sent.
 
 Upgrade: `git pull`, `docker build --target cpu -t burning_goat_detection .`, then stop, remove and run as in section 4. Do it outside a fire and check the startup lines afterwards.
+
+## 8. Egress-restricted deployment
+
+Optional hardening (#212): the app container has no route to the internet; its only way out is an allow-list proxy (squid) that tunnels HTTPS to the configured services by host name and logs every other attempt. Filtering is by the host name in the CONNECT request only: anything served under an allowed name (e.g. other services on the same Google front ends) is reachable too, so this narrows egress, it does not inspect it. Files: `deploy/egress/` (`docker-compose.yml`, `squid.conf`, `allowed-domains.txt`). The proxy logs host and port only, never paths or query strings, so webhook tokens do not reach the log.
+
+What goes through it: yt-dlp, ffmpeg (OpenCV capture and the segments archiver), Discord (alerts, clips, service channel) and the Gemini client honour the lowercase `http_proxy` / `https_proxy` / `no_proxy` variables set by the compose file (ffmpeg reads only `http_proxy`, and uses it for `https://` too). The app has no external DNS; the proxy resolves names. SMTP cannot use an HTTP proxy: see *Email* below.
+
+**1. Generate the allow-list from your configuration** (prints host names and ports only, no secrets):
+
+Every `docker compose` command below needs `GOAT_ENV_FILE` and `GOAT_RECORDINGS_DIR` (and `EGRESS_SMTP_*` with the email profile): put them in a `.env` next to the compose file (`deploy/egress/.env`, ignored by git through the repository's `.env` rule; check with `git status`) rather than exporting them in each shell.
+
+```bash
+cd deploy/egress
+printf 'GOAT_ENV_FILE=/path/outside/repo/goat.env\nGOAT_RECORDINGS_DIR=/path/to/recordings\n' > .env
+docker compose build app
+docker compose run --rm --no-deps -T --entrypoint python3 \
+  -v ../../tools/egress_allowlist.py:/app/egress_allowlist.py:ro \
+  app /app/egress_allowlist.py --squid > allowed-domains.txt
+```
+
+`-T` and `--entrypoint python3` keep a terminal's CR characters and the entrypoint's messages out of the file. Step 1 overwrites the committed `allowed-domains.txt`: before a `git pull`, run `git stash` (or `git checkout allowed-domains.txt`), then regenerate.
+
+Without `--squid` it prints a readable list (`host:port  purpose`). The committed `allowed-domains.txt` fits the README production preset (YouTube, Discord, Gemini). For a YouTube source the list holds `.youtube.com` and `.googlevideo.com` (watch page, player API, HLS manifests and segments; a leading dot covers all subdomains). For another source only its host is listed; if its HLS segments come from a different CDN host, add that host after reading the proxy log (step 3).
+
+The compose file builds the `cpu` image; for `opencl` or `gpu` change `target` and add the device options from the README. Unlike `docker run --env-file`, compose expands `$` in the env file: write a literal `$` (e.g. in a password or key) as `$$`. If `docker compose up` fails with `Pool overlaps`, change the internal subnet `172.31.212.0/24` (once) and the relay address `172.31.212.25` (twice) in `docker-compose.yml`.
+
+**2. Start** (instead of `docker run`; stop and remove the old container first, the compose file reuses the name `burning_goat_detection_container`):
+
+```bash
+docker compose up -d
+```
+
+**3. Verify** (all from `deploy/egress`):
+
+-   Stream, alerts and heartbeat: the startup lines from section 1 (`docker logs burning_goat_detection_container`) and the `Monitoring started` message on the service channel.
+-   Proxy log: `docker compose logs proxy | grep TCP_`. Allowed connections show `TCP_TUNNEL/200 CONNECT <host>:443`; a tunnel is logged when it closes, so long-lived stream connections appear later.
+-   A disallowed host is blocked and logged:
+
+    ```bash
+    docker exec burning_goat_detection_container python3 -c "import urllib.request; urllib.request.urlopen('https://example.com', timeout=10)"
+    # -> urllib.error.URLError: Tunnel connection failed: 403 Forbidden
+    docker compose logs proxy | grep TCP_DENIED
+    # -> ... TCP_DENIED/403 CONNECT example.com:443
+    ```
+
+-   Direct egress is impossible:
+
+    ```bash
+    docker exec burning_goat_detection_container python3 -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"
+    # -> OSError: [Errno 101] Network is unreachable
+    ```
+
+**4. When something stops working** (YouTube or Discord change domains, a new setting needs a new service): `docker compose logs proxy | grep TCP_DENIED` shows the refused `host:port`. Add the host (or its domain with a leading dot) to `allowed-domains.txt`, or regenerate it (step 1), then reload without a restart: `docker compose exec proxy squid -k reconfigure`. If every connection is denied, check that `allowed-domains.txt` is not empty: the redirect in step 1 truncates it even when the tool fails. Only HTTPS on port 443 is tunnelled; plain HTTP and other ports are refused by `squid.conf`. A too-narrow list shows up as the usual stream reconnect loop or failed alerts (section 6) together with `TCP_DENIED` lines.
+
+**Email.** SMTP goes through a separate relay that forwards one host and port only. Set `EGRESS_SMTP_HOST` / `EGRESS_SMTP_PORT` to the same values as `EMAIL__EMAIL_HOST` / `EMAIL__EMAIL_PORT` (STARTTLS port, e.g. 587) and start with the profile:
+
+```bash
+EGRESS_SMTP_HOST=<smtp host> EGRESS_SMTP_PORT=587 docker compose --profile email up -d
+```
+
+Inside the app the SMTP host name resolves to the relay, so the app still connects to the real name and STARTTLS checks the server certificate against it. Keep `EGRESS_SMTP_*` in `deploy/egress/.env` so every later `docker compose` command sees them.
+
+**Without Docker** (host firewall, e.g. `nftables` for the account running the app) is not scripted here. Use the readable output of `PYTHONPATH=. python tools/egress_allowlist.py --env-file <env file>` (from the repository root) as the list of destinations; note that a firewall filters by IP address, and the YouTube and Discord addresses change, which is why the Docker variant filters by name.

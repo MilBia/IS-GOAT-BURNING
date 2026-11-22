@@ -190,7 +190,7 @@ class SendToDiscord:
                 image = await asyncio.to_thread(_encode_frame, frame)
             except Exception as exc:  # noqa: BLE001 - the image is optional; never block the alert
                 logger.warning(f"Could not encode the alert frame ({type(exc).__name__}); sending the text only.")
-        async with ClientSession() as session:
+        async with ClientSession(trust_env=True) as session:  # honours HTTPS_PROXY (egress proxy, #212)
             logger.info(f"Sending message to {len(self.webhooks)} webhook(s)...")
             results = await asyncio.gather(
                 *(self.send_to_webhook(session, url, payload, image) for url in self.webhooks), return_exceptions=True

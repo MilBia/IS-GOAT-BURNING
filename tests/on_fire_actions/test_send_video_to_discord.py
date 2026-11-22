@@ -4,6 +4,7 @@ import logging
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import aiohttp
 from aiohttp import FormData
 import pytest
 
@@ -204,3 +205,18 @@ async def test_upload_continues_when_one_webhook_fails() -> None:
         await sender("/videos/event/goat-cam_chunk.mp4")
 
     assert mock_post.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_session_honours_proxy_environment() -> None:
+    """Verifies the session reads HTTPS_PROXY / NO_PROXY, so uploads work behind the egress proxy (#212)."""
+    with (
+        patch("os.path.getsize", return_value=1024),
+        patch.object(SendVideoToDiscord, "_read_file", return_value=b"video-bytes"),
+        patch(f"{SendVideoToDiscord.__module__}.ClientSession", wraps=aiohttp.ClientSession) as session_cls,
+        patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+    ):
+        mock_post.return_value = _ok_response()
+        await SendVideoToDiscord(webhooks=[WEBHOOK])("/videos/event/goat-cam_chunk.mp4")
+
+    assert session_cls.call_args.kwargs.get("trust_env") is True
