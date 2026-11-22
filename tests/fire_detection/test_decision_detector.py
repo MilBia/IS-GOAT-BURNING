@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
+import httpx2
 import numpy as np
 from pydantic import SecretStr
 import pytest
@@ -23,6 +26,8 @@ LOWER_HSV = np.array([18, 50, 50], dtype="uint8")
 UPPER_HSV = np.array([35, 255, 255], dtype="uint8")
 TEST_MARGIN = 100
 LOGGER_NAME = "DecisionFireDetector"
+# Captured before ``mock_genai_client`` patches ``genai.Client`` (same module object) for the real-SDK tests.
+_REAL_GENAI_CLIENT = genai.Client
 
 
 @pytest.fixture
@@ -203,6 +208,178 @@ async def test_verify_raises_verifier_error(mock_genai_client: MagicMock, frame:
 
     with pytest.raises(VerifierError):
         await detector.verify(frame)
+    assert detector._consecutive_errors == 1
+
+
+class _FakeHTTPStatusError(Exception):
+    """Mimics google-genai's Decisions HTTP errors (private classes, not ``genai.errors.APIError``)."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__("SECRET-BODY with request details")
+        self.status_code = status_code
+        self.response = MagicMock(status_code=status_code)
+
+
+class PermissionDeniedError(_FakeHTTPStatusError):
+    """Fake 403 (e.g. invalid API key)."""
+
+
+class RateLimitError(_FakeHTTPStatusError):
+    """Fake 429 (quota exhausted)."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("error", "status"), [(PermissionDeniedError(403), 403), (RateLimitError(429), 429)])
+async def test_verify_http_error_logs_one_line_without_traceback(
+    mock_genai_client: MagicMock, frame: np.ndarray, error: Exception, status: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Decisions HTTP error is one ERROR line (class + status, no traceback/body) and a counted VerifierError (#215)."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    mock_genai_client.return_value.aio.decisions.create.side_effect = error
+    detector = DecisionFireDetector()
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await detector.verify(frame)
+
+    assert detector._consecutive_errors == 1
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is None
+    assert type(error).__name__ in record.getMessage()
+    assert str(status) in record.getMessage()
+    assert "SECRET-BODY" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_detect_http_error_is_no_fire_without_traceback(
+    mock_genai_client: MagicMock, frame: np.ndarray, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The standalone ``detect`` path reports a Decisions HTTP error as 'no fire' with one ERROR line (#215)."""
+    mock_genai_client.return_value.aio.decisions.create.side_effect = RateLimitError(429)
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME):
+        is_fire, _ = await DecisionFireDetector().detect(frame)
+
+    assert is_fire is False
+    assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.ERROR, None)]
+
+
+@pytest.mark.asyncio
+async def test_verify_unexpected_error_still_logs_traceback(
+    mock_genai_client: MagicMock, frame: np.ndarray, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An exception without an HTTP status keeps the full traceback (``logger.exception``)."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    mock_genai_client.return_value.aio.decisions.create.side_effect = RuntimeError("boom")
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.ERROR, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await DecisionFireDetector().verify(frame)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_non_error_status_still_logs_traceback(
+    mock_genai_client: MagicMock, frame: np.ndarray, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An SDK error carrying a non-error status (e.g. a malformed 200) is unexpected and keeps the traceback."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    mock_genai_client.return_value.aio.decisions.create.side_effect = _FakeHTTPStatusError(200)
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.ERROR, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await DecisionFireDetector().verify(frame)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is not None
+
+
+@pytest.mark.asyncio
+async def test_verify_genai_api_error_does_not_log_message(
+    mock_genai_client: MagicMock, frame: np.ndarray, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ``genai.errors.APIError`` is logged as class + code only, without the response message."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    error = genai_errors.ClientError(403, {"error": {"message": "SECRET-BODY", "status": "PERMISSION_DENIED"}})
+    mock_genai_client.return_value.aio.decisions.create.side_effect = error
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.ERROR, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await DecisionFireDetector().verify(frame)
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is None
+    assert "ClientError" in caplog.text
+    assert "403" in caplog.text
+    assert "SECRET-BODY" not in caplog.text
+
+
+def _real_client(handler: object) -> genai.Client:
+    """Builds a real google-genai client whose HTTP layer is an offline mock transport."""
+    return _REAL_GENAI_CLIENT(
+        api_key="x",
+        http_options=genai_types.HttpOptions(
+            api_version="v1beta", async_client_args={"transport": httpx2.MockTransport(handler)}
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_verify_real_sdk_http_403_logs_one_line(
+    mock_genai_client: MagicMock,  # noqa: ARG001 - sets the API key for the constructor
+    frame: np.ndarray,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real SDK 403 (private error class) gives one ERROR line without traceback or body (#215, offline)."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(403, json={"error": {"code": 403, "message": "SECRET key", "status": "PERMISSION_DENIED"}})
+
+    detector = DecisionFireDetector()
+    detector.client = _real_client(handler)
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await detector.verify(frame)
+
+    assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.ERROR, None)]
+    assert "403" in caplog.text
+    assert "SECRET" not in caplog.text
+    assert detector._consecutive_errors == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_real_sdk_connection_error_logs_one_line(
+    mock_genai_client: MagicMock,  # noqa: ARG001 - sets the API key for the constructor
+    frame: np.ndarray,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real SDK connection failure gives one ERROR line with the class name only (#215, offline)."""
+    from is_goat_burning.fire_detection.verifier_health import VerifierError
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("SECRET transport text", request=request)
+
+    detector = DecisionFireDetector()
+    detector.client = _real_client(handler)
+    logging.getLogger(LOGGER_NAME).propagate = True
+
+    with caplog.at_level(logging.DEBUG, logger=LOGGER_NAME), pytest.raises(VerifierError):
+        await detector.verify(frame)
+
+    assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.ERROR, None)]
+    assert "APIConnectionError" in caplog.text
+    assert "SECRET" not in caplog.text
     assert detector._consecutive_errors == 1
 
 
