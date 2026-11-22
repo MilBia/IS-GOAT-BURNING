@@ -1,0 +1,16 @@
+# Container for tools/openvino_eval/bench.py (#152): OpenVINO CPU + iGPU (Intel compute runtime). Build context: this dir.
+#   docker build -f Dockerfile.bench -t ov-bench-152 .
+# Pass the render node and the host's render group (check `getent group render`), keep models/JPEGs outside the repo:
+#   docker run --rm --cpus 4 --device /dev/dri --group-add <render gid> -v ~/zs-bench/work:/work:ro ov-bench-152 \
+#       --model /work/ov/p16_224_minimal/fp16.xml --images /work/jpgs --device GPU
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv ocl-icd-libopencl1 intel-opencl-icd clinfo \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+WORKDIR /bench
+COPY requirements-bench.txt bench.py ./
+RUN pip install --no-cache-dir -r requirements-bench.txt
+ENTRYPOINT ["python", "/bench/bench.py"]

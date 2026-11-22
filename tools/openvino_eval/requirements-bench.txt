@@ -1,0 +1,4 @@
+# Runtime for bench.py only (#152); openvino matches the version used for conversion/evaluation.
+numpy>=2,<3
+opencv-python-headless==5.0.0.93
+openvino==2026.4.1
