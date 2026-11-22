@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import parse_qs
 from urllib.parse import urlparse
 
+from is_goat_burning.fire_detection.verifier_health import STANDALONE_POLICY
 from is_goat_burning.fire_detection.verifier_health import VerifierStatus
 from is_goat_burning.fire_detection.verifier_health import add_verifier_status_listener
 from is_goat_burning.fire_detection.verifier_health import remove_verifier_status_listener
@@ -280,14 +281,16 @@ class ServiceNotifier:
         """Updates the verifier state and queues the message (runs on the event loop thread)."""
         if status.available:
             self._verifiers_down.pop(status.verifier, None)
-            self._enqueue(f"{PREFIX} Verifier {status.verifier} recovered; fires are verified again.")
+            again = "detected" if status.policy == STANDALONE_POLICY else "verified"
+            self._enqueue(f"{PREFIX} Verifier {status.verifier} recovered; fires are {again} again.")
             return
         self._verifiers_down[status.verifier] = status
-        outcome = (
-            "fires seen by the local detector are SUPPRESSED (no alert)"
-            if status.policy == "suppress"
-            else "fires seen by the local detector are reported as UNVERIFIED"
-        )
+        if status.policy == STANDALONE_POLICY:
+            outcome = "its errors are treated as no fire, so fires cannot be detected"
+        elif status.policy == "suppress":
+            outcome = "fires seen by the local detector are SUPPRESSED (no alert)"
+        else:
+            outcome = "fires seen by the local detector are reported as UNVERIFIED"
         self._enqueue(
             f"{PREFIX} WARNING: verifier {status.verifier} unavailable ({status.reason}); "
             f"policy {status.policy}: {outcome} until it recovers."

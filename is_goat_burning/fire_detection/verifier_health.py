@@ -5,7 +5,8 @@ could not produce a verdict, so ``HybridFireDetector`` can tell "the verifier sa
 answer" and apply ``VERIFIER_FAILURE_POLICY``.
 
 When the verifier becomes unavailable (N consecutive errors or the hourly call cap) and when it recovers,
-``HybridFireDetector`` publishes a :class:`VerifierStatus` to the listeners registered here. This is the hook for a
+``HybridFireDetector`` publishes a :class:`VerifierStatus` to the listeners registered here. The standalone
+``gemini`` / ``gemini_decision`` detectors and the ``hybrid_edge`` model-load fallback publish too. This is the hook for a
 service/maintenance channel: register a listener with :func:`add_verifier_status_listener`. Listeners are called
 synchronously from the detection loop, so they must be quick (e.g. put the status on a queue) and must not block.
 A listener that raises is logged and skipped; it never affects detection.
@@ -25,6 +26,10 @@ from is_goat_burning.logger import get_logger
 logger = get_logger("VerifierHealth")
 
 
+# ``VerifierStatus.policy`` of a standalone verifier: there is no local detector, an error is reported as "no fire".
+STANDALONE_POLICY = "no_fire"
+
+
 class VerifierError(Exception):
     """Raised by a verifier's ``verify()`` when it could not produce a verdict (API error, timeout, bad answer)."""
 
@@ -38,7 +43,9 @@ class VerifierStatus:
         verifier: The verifier class name.
         reason: Why it is unavailable (e.g. ``"3 consecutive errors"``, ``"call limit 60/h reached"``); on recovery
             a short description of the recovery.
-        policy: The active ``VERIFIER_FAILURE_POLICY`` (``alert_unverified`` or ``suppress``).
+        policy: The active ``VERIFIER_FAILURE_POLICY`` (``alert_unverified`` or ``suppress``), or
+            :data:`STANDALONE_POLICY` for a standalone verifier (``gemini`` / ``gemini_decision``), whose errors are
+            reported as "no fire".
     """
 
     available: bool
@@ -61,9 +68,10 @@ def add_verifier_status_listener(listener: VerifierStatusListener) -> None:
         listener: A quick, non-blocking callable taking a :class:`VerifierStatus`.
 
     Raises:
-        TypeError: If ``listener`` is a coroutine function (it would never be awaited).
+        TypeError: If ``listener`` is a coroutine function or an object with an ``async def __call__`` (it would
+            never be awaited).
     """
-    if inspect.iscoroutinefunction(listener):
+    if inspect.iscoroutinefunction(listener) or (callable(listener) and inspect.iscoroutinefunction(type(listener).__call__)):
         raise TypeError("Verifier status listeners must be synchronous; schedule async work yourself (e.g. queue.put_nowait).")
     _listeners.append(listener)
 

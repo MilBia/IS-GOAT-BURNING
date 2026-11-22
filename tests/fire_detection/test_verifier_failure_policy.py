@@ -233,6 +233,29 @@ def test_async_listener_is_rejected() -> None:
         add_verifier_status_listener(_listener)
 
 
+def test_callable_object_with_async_call_is_rejected() -> None:
+    """An object whose ``__call__`` is ``async def`` would never be awaited either (#171)."""
+
+    class _AsyncCallable:
+        async def __call__(self, _status: VerifierStatus) -> None:
+            return None
+
+    with pytest.raises(TypeError, match="synchronous"):
+        add_verifier_status_listener(_AsyncCallable())
+
+
+def test_callable_object_with_sync_call_is_accepted() -> None:
+    """A plain callable object stays a valid listener."""
+
+    class _SyncCallable:
+        def __call__(self, _status: VerifierStatus) -> None:
+            return None
+
+    listener = _SyncCallable()
+    add_verifier_status_listener(listener)
+    remove_verifier_status_listener(listener)
+
+
 # --- acceptance: a series of API errors behind an alarming gate ends in an alert, not silence ---
 
 

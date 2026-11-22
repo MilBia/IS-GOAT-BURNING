@@ -11,7 +11,10 @@ from pydantic import BaseModel
 from pydantic import Field
 
 from is_goat_burning.config import settings
+from is_goat_burning.fire_detection.verifier_health import STANDALONE_POLICY
 from is_goat_burning.fire_detection.verifier_health import VerifierError
+from is_goat_burning.fire_detection.verifier_health import VerifierStatus
+from is_goat_burning.fire_detection.verifier_health import publish_verifier_status
 from is_goat_burning.logger import get_logger
 
 if TYPE_CHECKING:
@@ -136,6 +139,8 @@ class GeminiFireDetector:
         """Analyzes a frame for fire using the Gemini API (standalone ``gemini`` strategy).
 
         Never raises: a failed request is reported as "no fire" (an exception would abort the detection loop).
+        After ``CONSECUTIVE_ERRORS_BEFORE_CRITICAL`` consecutive errors the outage is published to
+        ``verifier_health`` (policy ``STANDALONE_POLICY``), and the next verdict publishes the recovery.
         Under ``hybrid_cloud`` the hybrid detector calls :meth:`verify` instead, so errors reach the
         ``VERIFIER_FAILURE_POLICY``.
 
@@ -148,6 +153,21 @@ class GeminiFireDetector:
             - The original frame (annotation is not yet implemented).
         """
         try:
-            return await self.verify(frame), frame
+            verdict = await self.verify(frame)
         except VerifierError:
+            if self._consecutive_errors >= CONSECUTIVE_ERRORS_BEFORE_CRITICAL:
+                publish_verifier_status(
+                    VerifierStatus(
+                        available=False,
+                        verifier=type(self).__name__,
+                        reason=f"{self._consecutive_errors} consecutive errors",
+                        policy=STANDALONE_POLICY,
+                    )
+                )
             return False, frame
+        publish_verifier_status(
+            VerifierStatus(
+                available=True, verifier=type(self).__name__, reason="Gemini API recovered", policy=STANDALONE_POLICY
+            )
+        )
+        return verdict, frame

@@ -279,3 +279,60 @@ async def test_on_first_frame_is_called_once_after_the_first_analysed_frame(dete
     await detector()
 
     assert order == ["detect", "first_frame", "detect", "detect"]
+
+
+# --- the unverified label covers the whole fire-debounce window (#171) ---
+
+
+async def _debounced_fire(detector: StreamFireDetector, unverified_flags: list[bool]) -> None:
+    """Runs one fire check per flag (one second apart); each check reports ``last_result_unverified`` = flag."""
+    times = [100.0 + i for i in range(len(unverified_flags))]
+    with patch("time.monotonic", side_effect=times):
+        for flag in unverified_flags:
+            detector.fire_detector.last_result_unverified = flag
+            await detector._handle_fire_detection(fire_in_frame=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("flags", "expected_unverified"),
+    [
+        ([True, True], True),  # every check in the window unverified
+        ([False, True], False),  # verified at the start, the closing check unverified
+        ([True, False], False),  # the closing check verified
+    ],
+    ids=["all_unverified", "verified_then_unverified", "unverified_then_verified"],
+)
+async def test_alert_is_unverified_only_if_no_check_in_the_window_was_verified(
+    detector: StreamFireDetector, flags: list[bool], expected_unverified: bool
+) -> None:
+    """The alert carries ``unverified=True`` only when no fire check of the debounce window was verified."""
+    await _debounced_fire(detector, flags)
+
+    detector.on_fire_action.assert_awaited_once()
+    assert detector.on_fire_action.await_args.kwargs.get("unverified", False) is expected_unverified
+
+
+@pytest.mark.asyncio
+async def test_verified_check_does_not_leak_into_the_next_window(detector: StreamFireDetector) -> None:
+    """A window reset by a no-fire check forgets an earlier verified check."""
+    with patch("time.monotonic", side_effect=[100.0, 100.5, 101.0, 102.0]):
+        detector.fire_detector.last_result_unverified = False
+        await detector._handle_fire_detection(fire_in_frame=True)  # verified, window starts
+        await detector._handle_fire_detection(fire_in_frame=False)  # window reset before the debounce ends
+        detector.fire_detector.last_result_unverified = True
+        await detector._handle_fire_detection(fire_in_frame=True)  # new window, unverified
+        await detector._handle_fire_detection(fire_in_frame=True)  # debounce reached, still unverified
+
+    detector.on_fire_action.assert_awaited_once()
+    assert detector.on_fire_action.await_args.kwargs.get("unverified") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [True, False])
+async def test_zero_debounce_uses_the_single_check(detector: StreamFireDetector, mock_settings: MagicMock, flag: bool) -> None:
+    """With no debounce the alert's label is that of the one triggering check (unchanged behaviour)."""
+    mock_settings.fire_detected_debounce_seconds = 0.0
+    await _debounced_fire(detector, [flag])
+
+    assert detector.on_fire_action.await_args.kwargs.get("unverified", False) is flag

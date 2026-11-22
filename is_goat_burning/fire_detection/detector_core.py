@@ -83,6 +83,8 @@ class StreamFireDetector:
         self.fire_is_currently_detected = False
         self._potential_fire_start_time: float | None = None
         self._potential_fire_end_time: float | None = None
+        # Whether any fire check in the current fire-debounce window was verified (#171).
+        self._window_verified = False
 
     @classmethod
     async def create(
@@ -180,18 +182,19 @@ class StreamFireDetector:
                 yield frame
                 frame_counter -= frames_between_step
 
-    async def _signal_fire(self, frame: object = None) -> None:
+    async def _signal_fire(self, frame: object = None, unverified: bool = False) -> None:
         """Runs the on-fire callback, flagging fires reported while the verifier is unavailable (#169).
 
         Args:
             frame: The raw frame of the detection that completed the debounce; a host copy is passed on as ``frame=``
                 (#177). Omitted when there is none or it cannot be copied.
+            unverified: Whether the alert is unverified (no fire check of the debounce window was verified, #171).
         """
         kwargs: dict[str, Any] = {}
         copy = None if frame is None else _host_copy(frame)
         if copy is not None:
             kwargs["frame"] = copy
-        if getattr(self.fire_detector, "last_result_unverified", False) is True:
+        if unverified:
             logger.warning("Fire detected WITHOUT verification (verifier unavailable); sending an unverified alert.")
             kwargs["unverified"] = True
         await self.on_fire_action(**kwargs)
@@ -217,12 +220,15 @@ class StreamFireDetector:
             # Start or continue debounce for fire detection
             if self._potential_fire_start_time is None:
                 self._potential_fire_start_time = now
+                self._window_verified = False
+            # The alert is unverified only if no fire check in the debounce window was verified (#171).
+            self._window_verified |= getattr(self.fire_detector, "last_result_unverified", False) is not True
 
             if now - self._potential_fire_start_time >= settings.fire_detected_debounce_seconds:
                 self.fire_is_currently_detected = True
                 self._potential_fire_start_time = None  # Clear timer
                 self.signal_handler.fire_detected()
-                await self._signal_fire(frame)
+                await self._signal_fire(frame, unverified=not self._window_verified)
         else:
             self._potential_fire_start_time = None  # Reset any pending fire signal
             if not self.fire_is_currently_detected:

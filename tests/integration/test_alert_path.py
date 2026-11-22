@@ -27,7 +27,6 @@ from is_goat_burning.config import VideoSettings
 from is_goat_burning.fire_detection.detector_core import StreamFireDetector
 from is_goat_burning.on_fire_actions import OnceAction
 from is_goat_burning.on_fire_actions import SendToDiscord
-from is_goat_burning.on_fire_actions.send_to_discord import UNVERIFIED_NOTE
 
 FIRE_SEQUENCE = [True, True, True, False, False, True]
 
@@ -112,7 +111,7 @@ async def _run_alert_path(app: Application, unverified: bool) -> StreamFireDetec
 @pytest.mark.timeout(10)
 @pytest.mark.parametrize("unverified", [False, True])
 async def test_fire_frames_reach_discord_with_frame_and_unverified_flag(
-    app_settings: Settings,  # noqa: ARG001
+    app_settings: Settings,
     webhook: AsyncMock,
     unverified: bool,
 ) -> None:
@@ -127,7 +126,8 @@ async def test_fire_frames_reach_discord_with_frame_and_unverified_flag(
         _session, _url, payload, image = call.args
         assert isinstance(image, bytes)
         assert image[:2] == b"\xff\xd8"  # JPEG
-        assert (UNVERIFIED_NOTE in payload["content"]) is unverified
+        # The note text comes from UNVERIFIED_ALERT_NOTE through the app's action wiring (#171).
+        assert (f"[UNVERIFIED] {app_settings.unverified_alert_note}" in payload["content"]) is unverified
 
 
 @pytest.mark.asyncio

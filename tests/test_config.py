@@ -275,6 +275,17 @@ def test_verifier_failure_policy_defaults(monkeypatch: MonkeyPatch) -> None:
     assert settings.gemini.timeout_seconds == 10.0
 
 
+def test_unverified_alert_note_default_and_env(monkeypatch: MonkeyPatch) -> None:
+    """UNVERIFIED_ALERT_NOTE defaults to the English sentence and is read from the environment (#171)."""
+    monkeypatch.delenv("UNVERIFIED_ALERT_NOTE", raising=False)
+    assert Settings(_env_file=None, source="mock://source").unverified_alert_note.startswith("The fire verifier is unavailable")
+    monkeypatch.setenv("UNVERIFIED_ALERT_NOTE", "Weryfikator niedostępny.")
+    assert Settings(_env_file=None, source="mock://source").unverified_alert_note == "Weryfikator niedostępny."
+    monkeypatch.setenv("UNVERIFIED_ALERT_NOTE", "n" * 501)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, source="mock://source")
+
+
 def test_verifier_failure_policy_is_read_from_env(monkeypatch: MonkeyPatch) -> None:
     """Verifies the policy, error threshold and Gemini timeout are read from the environment."""
     monkeypatch.setenv("VERIFIER_FAILURE_POLICY", "suppress")

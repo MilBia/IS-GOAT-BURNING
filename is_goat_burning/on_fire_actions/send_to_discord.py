@@ -24,7 +24,8 @@ HTTP_SERVER_ERROR = 500
 DISCORD_MESSAGE_LIMIT = 2000
 FRAME_MAX_WIDTH = 1280
 FRAME_JPEG_QUALITY = 85
-UNVERIFIED_NOTE = "\n\n[UNVERIFIED] The fire verifier is unavailable; this alert comes from the local camera detector only."
+UNVERIFIED_PREFIX = "\n\n[UNVERIFIED] "
+UNVERIFIED_NOTE = "The fire verifier is unavailable; this alert comes from the local camera detector only."
 
 
 def _host(url: str) -> str:
@@ -70,6 +71,8 @@ class SendToDiscord:
         base_delay (float): Delay before the first retry; doubles each retry.
         max_delay (float): Upper bound for any single wait between attempts.
         attach_frame (bool): If True, a frame passed to the call is attached to the message as a JPEG.
+        unverified_note (str): Appended as ``[UNVERIFIED] <note>`` to an alert sent while the fire verifier was
+            unavailable.
     """
 
     webhooks: list[str]
@@ -80,6 +83,7 @@ class SendToDiscord:
     base_delay: float = 1.0
     max_delay: float = 30.0
     attach_frame: bool = True
+    unverified_note: str = UNVERIFIED_NOTE
 
     def __post_init__(self) -> None:
         """Prepares the data payload after the instance is initialized."""
@@ -88,10 +92,11 @@ class SendToDiscord:
         }
 
     def _payload(self, unverified: bool) -> dict[str, str]:
-        """Returns the JSON payload; an unverified alert gets `UNVERIFIED_NOTE` appended (kept within the limit)."""
+        """Returns the JSON payload; an unverified alert gets the note appended (kept within the limit)."""
         if not unverified:
             return self.data
-        return {"content": self.message[: DISCORD_MESSAGE_LIMIT - len(UNVERIFIED_NOTE)] + UNVERIFIED_NOTE}
+        note = UNVERIFIED_PREFIX + self.unverified_note
+        return {"content": self.message[: DISCORD_MESSAGE_LIMIT - len(note)] + note}
 
     async def _retry_after(self, response: ClientResponse) -> float | None:
         """Extracts the server-requested wait (seconds) from a 429 response.
@@ -169,7 +174,7 @@ class SendToDiscord:
         """Sends messages concurrently to all configured webhooks.
 
         Args:
-            unverified: If True, `UNVERIFIED_NOTE` is appended so the recipient can tell an alert
+            unverified: If True, `unverified_note` is appended so the recipient can tell an alert
                 sent while the fire verifier was unavailable from a verified one.
             frame: The frame that triggered the alert. Attached as a JPEG when `attach_frame` is set; if it
                 cannot be encoded the text alert is sent without it.
