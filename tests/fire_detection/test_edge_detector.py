@@ -19,7 +19,6 @@ from is_goat_burning.fire_detection.edge_detector import CONSECUTIVE_ERRORS_BEFO
 from is_goat_burning.fire_detection.edge_detector import CvDnnBackend
 from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
 from is_goat_burning.fire_detection.edge_detector import EdgeModelError
-from is_goat_burning.fire_detection.edge_detector import OnnxRuntimeBackend
 from is_goat_burning.fire_detection.edge_detector import OpenVinoBackend
 from is_goat_burning.fire_detection.edge_detector import classifier_fire_probability
 from is_goat_burning.fire_detection.edge_detector import preprocess
@@ -34,9 +33,9 @@ from is_goat_burning.fire_detection.edge_detector import select_backend
     [
         (Accelerator.CPU, False, False, "cv2dnn", Accelerator.CPU),
         (Accelerator.CPU, True, True, "cv2dnn", Accelerator.CPU),
-        (Accelerator.CUDA, True, False, "onnxruntime", Accelerator.CUDA),
+        (Accelerator.CUDA, True, False, "cv2dnn", Accelerator.CUDA),
         (Accelerator.OPENCL, False, True, "cv2dnn", Accelerator.OPENCL),
-        (Accelerator.AUTO, True, True, "onnxruntime", Accelerator.CUDA),
+        (Accelerator.AUTO, True, True, "cv2dnn", Accelerator.CUDA),
         (Accelerator.AUTO, False, True, "cv2dnn", Accelerator.CPU),  # opencl is never auto-selected
         (Accelerator.AUTO, False, False, "cv2dnn", Accelerator.CPU),
         (Accelerator.OPENVINO, False, False, "openvino", Accelerator.OPENVINO),
@@ -71,7 +70,7 @@ def test_ncs2_is_rejected_by_settings():
 def test_constructor_cuda_unavailable_raises(tmp_path, monkeypatch):
     model = tmp_path / "m.onnx"
     model.write_bytes(b"x")
-    monkeypatch.setattr(edge_detector, "onnxruntime_has_cuda", lambda: False)
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: False)
     with pytest.raises(EdgeModelError, match="cuda"):
         EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=Accelerator.CUDA))
 
@@ -376,12 +375,6 @@ def test_cvdnn_non_positive_declared_dims_skip_check(tmp_path, monkeypatch, dims
     CvDnnBackend(model, Accelerator.CPU, input_size=8)
 
 
-@pytest.mark.parametrize("shape", [(1, 3, -1, -1), (1, 3, 0, 0)])
-def test_onnxruntime_non_positive_dims_skip_check(monkeypatch, shape):
-    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=shape)
-    OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
-
-
 def test_read_onnx_input_shape_overlong_varint_is_masked_to_64_bits(tmp_path):
     # 10th byte 0x7F would overflow 64 bits; the value must wrap, not become a huge positive "static" dim.
     bad_varint = b"\xff" * 9 + b"\x7f"
@@ -422,59 +415,66 @@ def test_warm_up_rejects_unusable_output():
         detector._warm_up("m.onnx")
 
 
-# --- fake onnxruntime ---
+# --- CUDA (cv2.dnn) ---
 
 
-def _fake_ort(monkeypatch, providers, active=None, shape=(1, 3, 8, 8)):
-    ort = types.ModuleType("onnxruntime")
-    calls = {}
+@pytest.mark.parametrize(
+    ("targets", "expected"),
+    [
+        ((), False),  # pip wheel, or a CUDA build without a device / driver (count -1)
+        (("cpu-only",), False),
+        (("cuda",), True),
+        (("cuda", "cuda_fp16"), True),
+    ],
+)
+def test_cuda_available_dnn_targets(monkeypatch, targets, expected):
+    """Only the dnn CUDA target counts: a CUDA build without cuDNN sees the device but offers no target."""
+    dnn = edge_detector.cv2.dnn
+    names = {"cpu-only": dnn.DNN_TARGET_CPU, "cuda": dnn.DNN_TARGET_CUDA, "cuda_fp16": dnn.DNN_TARGET_CUDA_FP16}
+    calls = []
 
-    class Session:
-        def __init__(self, path, providers=None):
-            calls["providers"] = providers
+    def fake_targets(backend):
+        calls.append(backend)
+        return tuple(names[t] for t in targets)
 
-        def get_providers(self):
-            return active if active is not None else calls["providers"]
-
-        def get_inputs(self):
-            return [types.SimpleNamespace(name="x", shape=list(shape))]
-
-        def run(self, _names, feed):
-            calls["feed"] = feed
-            return [np.array([[0.0, 1.0]], dtype=np.float32)]
-
-    ort.InferenceSession = Session
-    ort.get_available_providers = lambda: providers
-    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
-    return ort, calls
-
-
-def test_onnxruntime_backend_cpu_loads_and_predicts(monkeypatch):
-    _, calls = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
-    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
-    assert calls["providers"] == ["CPUExecutionProvider"]
-    blob = np.zeros((1, 3, 8, 8), np.float32)
-    assert backend.predict(blob).shape == (1, 2)
-    assert calls["feed"]["x"] is blob
+    monkeypatch.setattr(dnn, "getAvailableTargets", fake_targets)
+    assert edge_detector.cuda_available() is expected
+    assert calls == [dnn.DNN_BACKEND_CUDA]
 
 
-def test_onnxruntime_backend_cuda_provider_order(monkeypatch):
-    _, calls = _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"])
-    backend = OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
-    assert calls["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    assert backend.accelerator == Accelerator.CUDA
+def test_cuda_available_without_cuda_constants(monkeypatch):
+    monkeypatch.delattr(edge_detector.cv2.dnn, "DNN_BACKEND_CUDA")
+    assert edge_detector.cuda_available() is False
 
 
-def test_onnxruntime_backend_cuda_provider_missing(monkeypatch):
-    _fake_ort(monkeypatch, ["CPUExecutionProvider"])
-    with pytest.raises(EdgeModelError, match="CUDAExecutionProvider"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
+def test_cuda_available_probe_error(monkeypatch):
+    monkeypatch.setattr(
+        edge_detector.cv2.dnn, "getAvailableTargets", MagicMock(side_effect=edge_detector.cv2.error("no driver"))
+    )
+    assert edge_detector.cuda_available() is False
 
 
-def test_onnxruntime_cuda_not_active_raises(monkeypatch):
-    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
-    with pytest.raises(edge_detector.CudaNotActiveError, match="not the active"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CUDA)
+def test_cuda_available_real_pip_wheel_is_false():
+    """Sanity check on this host's OpenCV (pip wheels and CI have no dnn CUDA target)."""
+    if edge_detector.cv2.dnn.getAvailableTargets(edge_detector.cv2.dnn.DNN_BACKEND_CUDA):
+        pytest.skip("this OpenCV offers dnn CUDA targets")
+    assert edge_detector.cuda_available() is False
+
+
+def test_cvdnn_cuda_branch_sets_backend_and_target(monkeypatch):
+    net = MagicMock()
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: net)
+    CvDnnBackend("m.onnx", Accelerator.CUDA)
+    net.setPreferableBackend.assert_called_once_with(edge_detector.cv2.dnn.DNN_BACKEND_CUDA)
+    net.setPreferableTarget.assert_called_once_with(edge_detector.cv2.dnn.DNN_TARGET_CUDA)
+
+
+def test_cvdnn_cpu_branch_sets_backend_and_target(monkeypatch):
+    net = MagicMock()
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: net)
+    CvDnnBackend("m.onnx", Accelerator.CPU)
+    net.setPreferableBackend.assert_called_once_with(edge_detector.cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget.assert_called_once_with(edge_detector.cv2.dnn.DNN_TARGET_CPU)
 
 
 def _tiny_model(tmp_path):
@@ -483,85 +483,87 @@ def _tiny_model(tmp_path):
     return model
 
 
-def test_auto_falls_back_to_cvdnn_cpu_when_cuda_inactive(tmp_path, monkeypatch):
-    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
+class _RecordingCvDnn(CvDnnBackend):
+    """Real ``CvDnnBackend`` that records its accelerator and fails on CUDA (no NVIDIA hardware in tests)."""
+
+    built: list[Accelerator] = []
+
+    def __init__(self, model_path, accelerator, *, input_size=None):
+        type(self).built.append(accelerator)
+        if accelerator == Accelerator.CUDA:
+            raise EdgeModelError("CUDA backend failed")
+        super().__init__(model_path, accelerator, input_size=input_size)
+
+
+@pytest.mark.parametrize("accelerator", [Accelerator.AUTO, Accelerator.CUDA])
+def test_cuda_selected_when_device_present(tmp_path, monkeypatch, accelerator):
+    """auto and explicit cuda build the cv2.dnn CUDA backend when OpenCV reports a device."""
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: True)
+    net = MagicMock()
+    net.forward.return_value = np.array([[0.0, 1.0]], np.float32)
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda _p: net)
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    detector = EdgeInferenceDetector(EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=accelerator, input_size=8))
+    assert isinstance(detector._backend, CvDnnBackend)
+    net.setPreferableBackend.assert_called_once_with(edge_detector.cv2.dnn.DNN_BACKEND_CUDA)
+    assert mock_logger.info.call_args.args[1:3] == ("cv2dnn", Accelerator.CUDA)
+    mock_logger.warning.assert_not_called()
+
+
+def test_auto_without_cuda_device_uses_cpu(tmp_path, monkeypatch):
+    """No CUDA device is the normal CPU case: auto picks the CPU silently (no WARNING)."""
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: False)
     mock_logger = MagicMock()
     monkeypatch.setattr(edge_detector, "logger", mock_logger)
     detector = EdgeInferenceDetector(
         EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.AUTO, input_size=8)
     )
     assert isinstance(detector._backend, CvDnnBackend)
+    mock_logger.warning.assert_not_called()
+    assert mock_logger.info.call_args.args[1:3] == ("cv2dnn", Accelerator.CPU)
+
+
+def test_auto_falls_back_to_cpu_when_cuda_backend_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: True)
+    monkeypatch.setattr(edge_detector, "CvDnnBackend", _RecordingCvDnn)
+    monkeypatch.setattr(_RecordingCvDnn, "built", [])
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.AUTO, input_size=8)
+    )
+    assert _RecordingCvDnn.built == [Accelerator.CUDA, Accelerator.CPU]
+    assert isinstance(detector._backend, CvDnnBackend)
     mock_logger.warning.assert_called_once()
-    ready = mock_logger.info.call_args
-    assert ready.args[1:3] == ("cv2dnn", Accelerator.CPU)
+    assert mock_logger.info.call_args.args[1:3] == ("cv2dnn", Accelerator.CPU)
 
 
-def test_explicit_cuda_raises_when_inactive(tmp_path, monkeypatch):
-    _fake_ort(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"], active=["CPUExecutionProvider"])
-    with pytest.raises(EdgeModelError, match="cuda"):
+def test_auto_falls_back_to_cpu_when_cuda_warm_up_fails(tmp_path, monkeypatch):
+    """CUDA errors in cv2.dnn often surface only at the first forward pass (the warm-up)."""
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: True)
+    real_read = edge_detector.cv2.dnn.readNetFromONNX
+    cuda_net = MagicMock()
+    cuda_net.forward.side_effect = edge_detector.cv2.error("CUDA: out of memory")
+    nets = iter([cuda_net])
+    monkeypatch.setattr(edge_detector.cv2.dnn, "readNetFromONNX", lambda p: next(nets, None) or real_read(p))
+    mock_logger = MagicMock()
+    monkeypatch.setattr(edge_detector, "logger", mock_logger)
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.AUTO, input_size=8)
+    )
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.info.call_args.args[1:3] == ("cv2dnn", Accelerator.CPU)
+    assert detector._backend._net is not cuda_net
+
+
+def test_explicit_cuda_raises_when_cuda_backend_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(edge_detector, "cuda_available", lambda: True)
+    monkeypatch.setattr(edge_detector, "CvDnnBackend", _RecordingCvDnn)
+    monkeypatch.setattr(_RecordingCvDnn, "built", [])
+    with pytest.raises(EdgeModelError, match="cuda requested but unusable"):
         EdgeInferenceDetector(EdgeSettings(model_path=str(_tiny_model(tmp_path)), accelerator=Accelerator.CUDA, input_size=8))
-
-
-def test_onnxruntime_input_shape_mismatch(monkeypatch):
-    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=(1, 3, 224, 224))
-    with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
-
-
-def test_onnxruntime_dynamic_shape_is_accepted(monkeypatch):
-    _fake_ort(monkeypatch, ["CPUExecutionProvider"], shape=(1, 3, "h", "w"))
-    OnnxRuntimeBackend("m.onnx", Accelerator.CPU, input_size=8)
-
-
-def test_onnxruntime_import_error(monkeypatch):
-    monkeypatch.setitem(sys.modules, "onnxruntime", None)
-    with pytest.raises(EdgeModelError, match="onnxruntime"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
-
-
-def test_import_onnxruntime_disables_telemetry_before_import(monkeypatch):
-    """ORT_DISABLE_TELEMETRY must be set before onnxruntime is imported; the API call afterwards is not enough (#207)."""
-    seen = {}
-
-    class Finder:
-        def find_spec(self, name, path=None, target=None):
-            if name == "onnxruntime":
-                seen["env_at_import"] = edge_detector.os.environ.get("ORT_DISABLE_TELEMETRY")
-                raise ImportError("stop here")
-            return
-
-    monkeypatch.delenv("ORT_DISABLE_TELEMETRY")  # set and restored by the autouse fixture in tests/conftest.py
-    monkeypatch.delitem(sys.modules, "onnxruntime", raising=False)
-    monkeypatch.setattr(sys, "meta_path", [Finder(), *sys.meta_path])
-    with pytest.raises(ImportError):
-        edge_detector._import_onnxruntime()
-    assert seen["env_at_import"] == "1"
-    assert edge_detector.onnxruntime_has_cuda() is False  # the probe goes through the helper too
-    with pytest.raises(EdgeModelError, match="onnxruntime"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
-
-
-def test_import_onnxruntime_returns_the_module_and_overrides_user_value(monkeypatch):
-    ort, _ = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
-    monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "0")  # an explicit opt-in is overridden
-    assert edge_detector._import_onnxruntime() is ort
-    assert edge_detector.os.environ["ORT_DISABLE_TELEMETRY"] == "1"
-
-
-def test_onnxruntime_session_failure(monkeypatch):
-    ort, _ = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
-    ort.InferenceSession = MagicMock(side_effect=RuntimeError("bad model"))
-    with pytest.raises(EdgeModelError, match="Failed to load"):
-        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
-
-
-def test_onnxruntime_has_cuda_probe(monkeypatch):
-    _fake_ort(monkeypatch, ["CUDAExecutionProvider"])
-    assert edge_detector.onnxruntime_has_cuda() is True
-    _fake_ort(monkeypatch, ["CPUExecutionProvider"])
-    assert edge_detector.onnxruntime_has_cuda() is False
-    monkeypatch.setitem(sys.modules, "onnxruntime", None)
-    assert edge_detector.onnxruntime_has_cuda() is False
+    assert _RecordingCvDnn.built == [Accelerator.CUDA]  # no silent CPU fallback
 
 
 def test_opencl_available_probe(monkeypatch):

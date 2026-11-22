@@ -1,8 +1,8 @@
 """Latency benchmark of ONNX classifiers across inference backends.
 
 Backends (each optional, skipped with a note when unavailable): cv2.dnn CPU, cv2.dnn OpenCL / OpenCL FP16,
-onnxruntime CPU and OpenVINO CPU / GPU. Reports median and p95 latency plus the max abs output difference
-versus onnxruntime CPU on the same random input, as a Markdown table.
+cv2.dnn CUDA and OpenVINO CPU / GPU. Reports median and p95 latency plus the max abs output difference
+versus cv2.dnn CPU (1 thread) on the same random input, as a Markdown table.
 
 Usage:
     python -m tools.edge_model.bench model.onnx [model2.onnx ...] --runs 40 --warmup 5 --threads 1 4
@@ -26,10 +26,10 @@ class Result:
     """One benchmark row.
 
     Attributes:
-        backend: Backend label, e.g. ``ort-cpu/4thr``.
+        backend: Backend label, e.g. ``cv2.dnn-cpu/4thr``.
         median_ms: Median latency in milliseconds, or None when skipped.
         p95_ms: 95th percentile latency in milliseconds, or None when skipped.
-        max_diff: Max abs output difference versus ORT CPU, or None.
+        max_diff: Max abs output difference versus cv2.dnn CPU, or None.
         note: Skip or error note.
     """
 
@@ -74,6 +74,23 @@ def _run(label: str, factory: Callable[[], Runner], ref: np.ndarray | None, args
         return Result(label, note=f"ERR {type(exc).__name__}: {str(exc).splitlines()[0][:120] if str(exc) else ''}")
 
 
+def _cv2_runner(path: Path, x: np.ndarray, backend: int, target: int, threads: int) -> Runner:
+    """Builds a cv2.dnn runner for one backend/target pair."""
+    import cv2
+
+    cv2.setNumThreads(threads)
+    # OpenCV 5.1 removed the classic engine; the new graph engine ignores OpenCL targets (runs on the CPU).
+    net = cv2.dnn.readNetFromONNX(str(path))
+    net.setPreferableBackend(backend)
+    net.setPreferableTarget(target)
+
+    def fn() -> np.ndarray:
+        net.setInput(x)
+        return net.forward()
+
+    return fn
+
+
 def bench_model(path: Path, args: argparse.Namespace) -> tuple[tuple[int, ...], list[Result]]:
     """Benchmark one model on every available backend.
 
@@ -83,74 +100,54 @@ def bench_model(path: Path, args: argparse.Namespace) -> tuple[tuple[int, ...], 
 
     Returns:
         Tuple of (input shape, list of results).
+
+    Raises:
+        SystemExit: If the model does not declare a 4-D input.
     """
-    from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
+    import cv2
 
-    ort = _import_onnxruntime()  # telemetry disabled (#207)
+    from is_goat_burning.fire_detection.edge_detector import read_onnx_input_shape
 
-    probe = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-    inp = probe.get_inputs()[0]
-    shape = tuple(d if isinstance(d, int) else 1 for d in inp.shape)
+    declared = read_onnx_input_shape(path) or []
+    if len(declared) != 4:
+        raise SystemExit(f"{path}: cannot read a 4-D input shape (got {declared})")
+    shape = tuple(d if isinstance(d, int) and d > 0 else 1 for d in declared)
     x = np.random.default_rng(0).random(shape, dtype=np.float32)
-    results: list[Result] = []
-
-    def ort_factory(threads: int) -> Callable[[], Runner]:
-        def make() -> Runner:
-            so = ort.SessionOptions()
-            so.intra_op_num_threads = threads
-            sess = ort.InferenceSession(str(path), so, providers=["CPUExecutionProvider"])
-            return lambda: sess.run(None, {inp.name: x})[0]
-
-        return make
-
-    ref = np.asarray(ort_factory(1)()()).copy()
-    ref_note = f"ref output max abs = {np.abs(ref).max():.2e}"
-    for th in args.threads:
-        results.append(_run(f"ort-cpu/{th}thr", ort_factory(th), ref, args))
-
+    ref = np.asarray(_cv2_runner(path, x, cv2.dnn.DNN_BACKEND_OPENCV, cv2.dnn.DNN_TARGET_CPU, 1)()).copy()
+    results = [Result("(reference: cv2.dnn-cpu/1thr)", note=f"ref output max abs = {np.abs(ref).max():.2e}")]
     results.extend(_bench_cv2(path, x, ref, args))
     results.extend(_bench_openvino(path, x, ref, args))
-    results.insert(0, Result("(reference)", note=ref_note))
     return shape, results
 
 
 def _bench_cv2(path: Path, x: np.ndarray, ref: np.ndarray, args: argparse.Namespace) -> list[Result]:
-    """Benchmark cv2.dnn on CPU and (if present) OpenCL targets."""
-    try:
-        import cv2
-    except ImportError:
-        return [Result("cv2.dnn", note="skipped: opencv not importable")]
+    """Benchmark cv2.dnn on CPU and (if present) OpenCL and CUDA targets."""
+    import cv2
 
-    def factory(target: int, threads: int) -> Callable[[], Runner]:
-        def make() -> Runner:
-            cv2.setNumThreads(threads)
-            # OpenCV 5.1 removed the classic engine; the new graph engine ignores OpenCL targets (runs on the CPU).
-            net = cv2.dnn.readNetFromONNX(str(path))
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            net.setPreferableTarget(target)
+    from is_goat_burning.fire_detection.edge_detector import cuda_available
 
-            def fn() -> np.ndarray:
-                net.setInput(x)
-                return net.forward()
+    def factory(backend: int, target: int, threads: int) -> Callable[[], Runner]:
+        return lambda: _cv2_runner(path, x, backend, target, threads)
 
-            return fn
-
-        return make
-
+    cpu, ocv = cv2.dnn.DNN_TARGET_CPU, cv2.dnn.DNN_BACKEND_OPENCV
     out: list[Result] = []
     for th in args.threads:
-        out.append(_run(f"cv2.dnn-cpu/{th}thr", factory(cv2.dnn.DNN_TARGET_CPU, th), ref, args))
+        out.append(_run(f"cv2.dnn-cpu/{th}thr", factory(ocv, cpu, th), ref, args))
     have_ocl = bool(cv2.ocl.haveOpenCL())
     if have_ocl:
         cv2.ocl.setUseOpenCL(True)
         have_ocl = bool(cv2.ocl.useOpenCL())
+    top = max(args.threads)
     if not have_ocl:
         out.append(Result("cv2.dnn-opencl", note="skipped: no OpenCL device (cv2.ocl.haveOpenCL false)"))
     else:
         dev = cv2.ocl.Device.getDefault().name()
-        top = max(args.threads)
-        out.append(_run(f"cv2.dnn-opencl ({dev})", factory(cv2.dnn.DNN_TARGET_OPENCL, top), ref, args))
-        out.append(_run(f"cv2.dnn-opencl-fp16 ({dev})", factory(cv2.dnn.DNN_TARGET_OPENCL_FP16, top), ref, args))
+        out.append(_run(f"cv2.dnn-opencl ({dev})", factory(ocv, cv2.dnn.DNN_TARGET_OPENCL, top), ref, args))
+        out.append(_run(f"cv2.dnn-opencl-fp16 ({dev})", factory(ocv, cv2.dnn.DNN_TARGET_OPENCL_FP16, top), ref, args))
+    if cuda_available():
+        out.append(_run("cv2.dnn-cuda", factory(cv2.dnn.DNN_BACKEND_CUDA, cv2.dnn.DNN_TARGET_CUDA, top), ref, args))
+    else:
+        out.append(Result("cv2.dnn-cuda", note="skipped: OpenCV reports no cv2.dnn CUDA target"))
     return out
 
 
@@ -201,7 +198,7 @@ def to_markdown(name: str, shape: tuple[int, ...], results: list[Result]) -> str
     lines = [
         f"### {name} (input {list(shape)})",
         "",
-        "| backend | median ms | p95 ms | max abs diff vs ORT CPU | note |",
+        "| backend | median ms | p95 ms | max abs diff vs cv2.dnn CPU | note |",
         "|---|---:|---:|---:|---|",
     ]
     for r in results:

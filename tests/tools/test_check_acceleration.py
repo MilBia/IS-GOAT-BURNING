@@ -22,17 +22,6 @@ def _block_import(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
 
-def test_probe_onnxruntime_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    _block_import(monkeypatch, "onnxruntime")
-    assert ca.probe_onnxruntime() == {"version": None, "providers": None}
-
-
-def test_probe_onnxruntime_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = SimpleNamespace(__version__="9.9", get_available_providers=lambda: ["CPUExecutionProvider"])
-    monkeypatch.setitem(sys.modules, "onnxruntime", fake)
-    assert ca.probe_onnxruntime() == {"version": "9.9", "providers": ["CPUExecutionProvider"]}
-
-
 def test_probe_cv2_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     _block_import(monkeypatch, "cv2")
     info = ca.probe_cv2()
@@ -77,21 +66,19 @@ def test_format_report_layout() -> None:
         "opencl": {"have": False, "use": False, "device": None},
         "cuda_devices": None,
     }
-    ort_info = {"version": None, "providers": None}
-    report = ca.format_report(cv2_info, ort_info, "engine=cv2dnn accelerator=cpu")
+    report = ca.format_report(cv2_info, "engine=cv2dnn accelerator=cpu")
     assert "cv2 version: 5.0.0" in report
     assert "dnn DNN_BACKEND_OPENCV: DNN_TARGET_CPU" in report
     assert "haveOpenCL=False useOpenCL=False" in report
-    assert "onnxruntime: not installed" in report
+    assert "onnx" not in report.lower()
     assert "EDGE__ACCELERATOR=auto -> engine=cv2dnn accelerator=cpu" in report
     assert "benchmark" not in report.lower()
 
 
 def test_format_report_benchmarks() -> None:
     cv2_info = {"version": None, "error": "cv2 not installed"}
-    ort_info = {"version": "1.0", "providers": ["CPUExecutionProvider"]}
     benchmarks = {"cpu": {"ok": True, "median_ms": 12.34}, "cuda": {"ok": False, "error": "EdgeModelError: no cuda"}}
-    report = ca.format_report(cv2_info, ort_info, "x", benchmarks)
+    report = ca.format_report(cv2_info, "x", benchmarks)
     assert "cv2: cv2 not installed" in report
     assert "cpu: ok, median 12.3 ms" in report
     assert "cuda: error: EdgeModelError: no cuda" in report
@@ -105,7 +92,6 @@ def test_benchmark_accelerator_reports_missing_model_as_error(tmp_path) -> None:
 
 def test_main_exits_zero_and_prints(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ca, "probe_cv2", lambda: {"version": None, "error": "cv2 not installed"})
-    monkeypatch.setattr(ca, "probe_onnxruntime", lambda: {"version": None, "providers": None})
     monkeypatch.setattr(ca, "probe_auto_selection", lambda: "engine=cv2dnn accelerator=cpu")
     lines: list[str] = []
     assert ca.main([], out=lines.append) == 0
@@ -118,7 +104,7 @@ def test_probe_cv2_without_dnn_module_does_not_raise(monkeypatch: pytest.MonkeyP
     info = ca.probe_cv2()
     assert info["version"] == "4.0"
     assert "probe failed" in info["error"]
-    assert "probe failed" in ca.format_report(info, {"version": None, "providers": None}, "x")
+    assert "probe failed" in ca.format_report(info, "x")
 
 
 def test_main_never_raises_on_unexpected_probe_error(monkeypatch: pytest.MonkeyPatch) -> None:

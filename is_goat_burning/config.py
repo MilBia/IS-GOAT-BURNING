@@ -302,7 +302,7 @@ class Accelerator(StrEnum):
     Attributes:
         AUTO: Detect the best available backend at runtime.
         CPU: Generic CPU execution (fallback for any host).
-        CUDA: NVIDIA GPU acceleration.
+        CUDA: NVIDIA GPU acceleration via ``cv2.dnn`` (needs OpenCV built with CUDA).
         OPENCL: OpenCL acceleration (AMD / Intel integrated GPUs).
         OPENVINO: OpenVINO runtime on the CPU (optional ``openvino`` extra).
         OPENVINO_GPU: OpenVINO runtime on an Intel integrated GPU (optional ``openvino`` extra).

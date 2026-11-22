@@ -116,8 +116,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
           pip install --no-deps -r requirements-openvino.txt
-          # CPU wheel of the pinned onnxruntime-gpu version (CI only, not a project dependency)
-          pip install "onnxruntime==$(sed -n 's/^onnxruntime-gpu==//p' requirements-edge-gpu.txt)"
 
       - name: Allow unprivileged network namespaces (unshare -rn)
         run: |
