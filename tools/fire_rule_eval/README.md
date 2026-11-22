@@ -53,7 +53,8 @@ by default). `--clip-seconds` (600) and `--interval-seconds` (3600, start to sta
 N attempts. A failed clip (resolve, ffmpeg, feature step) is logged and skipped; a video is deleted only when every
 requested feature step stored rows. Stream copy keeps the native ~30 fps: 1 fps would be enough for `extract`, but `flicker`
 needs the real frame rate. `extract` / `flicker` skip manifest entries whose video is gone and keep their stored features;
-`report` needs only the feature files (and at least one positive clip: `scan` your positives into the same manifest).
+`report` needs only the feature files; on a negatives-only manifest recall shows as `n/a` and the best point is the most
+sensitive zero-alarm parameter.
 Videos, manifests and features stay local (not in git); URLs are never logged, but the resolved (token-bearing) URL is
 visible in the process list while ffmpeg runs, so record on a single-user host.
 

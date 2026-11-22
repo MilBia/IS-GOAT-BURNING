@@ -171,11 +171,14 @@ def best_safe_point(points: list[Point]) -> Point | None:
     """Returns the point with the highest recall among those with zero negative alarms.
 
     Ties are broken towards the most conservative parameter that attains the same recall, which leaves
-    the largest margin to the false-positive region.
+    the largest margin to the false-positive region. Without positive clips (recall is NaN) it returns
+    the most sensitive (smallest) zero-alarm parameter, so negatives-only manifests still report.
     """
     safe = [p for p in points if p.neg_alarm_checks == 0]
     if not safe:
         return None
+    if np.isnan(safe[0].pos_recall):
+        return safe[0]
     best = max(p.pos_recall for p in safe)
     candidates = [p for p in safe if p.pos_recall >= best - 1e-12]
     return candidates[len(candidates) // 2]
@@ -196,6 +199,11 @@ def margin_to_first_false_alarm(point: Point, points: list[Point]) -> float | No
 HEADROOM = 2.0
 
 
+def _recall(value: float) -> str:
+    """Formats a recall, ``n/a`` when there are no positive clips."""
+    return "n/a" if np.isnan(value) else f"{value:.2f}"
+
+
 def headroom_recall(points: list[Point], factor: float) -> str:
     """Recall at the first grid value at least ``factor`` times the largest value that alarms on negatives."""
     alarming = [p.param for p in points if p.neg_alarm_checks > 0]
@@ -205,7 +213,7 @@ def headroom_recall(points: list[Point], factor: float) -> str:
     robust = [p for p in points if p.param >= target and p.neg_alarm_checks == 0]
     if not robust:
         return "out of grid"
-    return f"{robust[0].pos_recall:.2f} (p={robust[0].param:.4g})"
+    return f"{_recall(robust[0].pos_recall)} (p={robust[0].param:.4g})"
 
 
 AGREEMENT_THRESHOLDS = (0.0005, 0.001, 0.002, 0.005, 0.01)
@@ -265,7 +273,7 @@ def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RU
         margin = margin_to_first_false_alarm(best, points)
         margin_text = "no false alarm in grid" if margin is None else f"x{margin:.2f}"
         lines.append(
-            f"| {rule.name} | {best.param:.4g} | {best.pos_recall:.2f} | {best.pos_clips_detected}/{best.pos_clips} | "
+            f"| {rule.name} | {best.param:.4g} | {_recall(best.pos_recall)} | {best.pos_clips_detected}/{best.pos_clips} | "
             f"{best.neg_alarm_checks}/{best.neg_checks} | {best.neg_first_alarms}/{best.neg_clips} | {margin_text} | "
             f"{headroom_recall(points, HEADROOM)} | {best.hard_clips_alarmed}/{best.hard_clips} |"
         )
@@ -278,7 +286,7 @@ def render_markdown(clips: list[Clip], rules: tuple[Rule, ...] | list[Rule] = RU
     prod = evaluate(production, production.production_value or 0.1, clips)
     lines.append(
         f"\n### Production default (`deployed`, p={production.production_value})\n\n"
-        f"Positive recall {prod.pos_recall:.2f} ({prod.pos_clips_detected}/{prod.pos_clips} clips detected); "
+        f"Positive recall {_recall(prod.pos_recall)} ({prod.pos_clips_detected}/{prod.pos_clips} clips detected); "
         f"steady-state negative alarms {prod.neg_alarm_checks}/{prod.neg_checks} checks "
         f"in {prod.neg_clips_alarmed}/{prod.neg_clips} clips; "
         f"first-check (colour only) alarms {prod.neg_first_alarms}/{prod.neg_clips} clips; "
