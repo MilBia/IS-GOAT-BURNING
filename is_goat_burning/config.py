@@ -304,12 +304,16 @@ class Accelerator(StrEnum):
         CPU: Generic CPU execution (fallback for any host).
         CUDA: NVIDIA GPU acceleration.
         OPENCL: OpenCL acceleration (AMD / Intel integrated GPUs).
+        OPENVINO: OpenVINO runtime on the CPU (optional ``openvino`` extra).
+        OPENVINO_GPU: OpenVINO runtime on an Intel integrated GPU (optional ``openvino`` extra).
     """
 
     AUTO = "auto"
     CPU = "cpu"
     CUDA = "cuda"
     OPENCL = "opencl"
+    OPENVINO = "openvino"
+    OPENVINO_GPU = "openvino_gpu"
 
 
 class EdgeSettings(BaseModel):

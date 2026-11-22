@@ -64,9 +64,12 @@ pip-compile --output-file=requirements.txt pyproject.toml
 pip-compile --extra=cpu --output-file=requirements-cpu.txt pyproject.toml
 pip-compile --extra=dev --extra=cpu --output-file=requirements-dev.txt pyproject.toml
 pip-compile --extra=edge-gpu --output-file=requirements-edge-gpu.txt pyproject.toml  # optional, hybrid_edge on CUDA (bare-metal)
+pip-compile --extra=openvino --unsafe-package=openvino-telemetry --output-file=requirements-openvino.txt pyproject.toml  # optional, hybrid_edge on OpenVINO (bare-metal)
 ```
 
-For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured latency) see the [Hardware Acceleration Guide](docs/HARDWARE_ACCELERATION.md).
+`requirements-openvino.txt` deliberately leaves out `openvino-telemetry` (a dependency of `openvino` that would send usage data). Install it on top of the base install (`pip install .[cpu]`), fully pinned without dependency resolution: `pip install --no-deps -r requirements-openvino.txt` (`pip check` then reports the missing `openvino-telemetry`, which is expected). `pip install .[openvino]` would pull `openvino-telemetry` back in; the app still neutralises it in code.
+
+For the offline `hybrid_edge` verifier (models, CUDA/OpenCL/OpenVINO setup, measured latency) see the [Hardware Acceleration Guide](docs/HARDWARE_ACCELERATION.md).
 
 ## CONFIGURATION
 
@@ -99,6 +102,7 @@ For the offline `hybrid_edge` verifier (models, CUDA/OpenCL setup, measured late
 | | | |
 | **Detection Strategy** | | |
 | `DETECTION_STRATEGY` | Strategy to use: `classic` (HSV), `gemini` (AI), `hybrid_cloud` (HSV + Gemini), `hybrid_edge` (HSV + local offline classifier, needs `EDGE__MODEL_PATH`; falls back to the local detector (classic rule, subject to `VERIFIER_FAILURE_POLICY`) if the model fails to load), `gemini_decision` (Decisions API) or `hybrid_decision` (HSV + Decisions API). | `"classic"` |
+| `EDGE__ACCELERATOR` | `hybrid_edge` inference backend: `auto`, `cpu`, `cuda`, `opencl`, `openvino` (CPU) or `openvino_gpu` (Intel iGPU); the OpenVINO values need OpenVINO (`pip install --no-deps -r requirements-openvino.txt`) and also accept an IR `.xml` model. `EDGE__CONFIDENCE_THRESHOLD` is specific to the model variant and device. See the [Hardware Acceleration Guide](docs/HARDWARE_ACCELERATION.md). | `"auto"` |
 | `GEMINI__API_KEY` | Google Gemini API Key (required if strategy is `gemini`). | `""` |
 | `GEMINI__MODEL` | Gemini model to use. | `"gemini-3.5-flash-lite"` |
 | `GEMINI__PROMPT` | Prompt for the AI model. | `"Analyze this image..."` |

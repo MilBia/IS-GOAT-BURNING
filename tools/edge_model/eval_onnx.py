@@ -15,13 +15,15 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 
+from is_goat_burning.fire_detection.edge_detector import _import_onnxruntime
 from tools.edge_model.evaluate import pick_threshold
 from tools.edge_model.evaluate import report
 from tools.edge_model.train import MEAN
 from tools.edge_model.train import STD
 from tools.edge_model.train import load_manifest
+
+ort = _import_onnxruntime()  # telemetry disabled (#207)
 
 
 def score(sess: ort.InferenceSession, rows: list[dict], bs: int = 1) -> np.ndarray:

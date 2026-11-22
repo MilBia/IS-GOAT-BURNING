@@ -1,7 +1,8 @@
 """Offline fire verification with a local image classifier (``hybrid_edge`` building block).
 
-Backends: ``cv2.dnn`` (default, CPU; experimental OpenCL) and ONNX Runtime (CUDA). ``auto`` uses ONNX Runtime CUDA
-only when it is actually active and otherwise ``cv2.dnn`` on the CPU; an explicit ``cuda`` never falls back.
+Backends: ``cv2.dnn`` (default, CPU; experimental OpenCL), ONNX Runtime (CUDA) and OpenVINO (CPU or Intel iGPU, only
+when explicitly requested). ``auto`` uses ONNX Runtime CUDA only when it is actually active and otherwise ``cv2.dnn`` on
+the CPU; an explicit ``cuda`` never falls back.
 """
 
 import asyncio
@@ -9,8 +10,11 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from dataclasses import dataclass
 import math
+import os
 from pathlib import Path
+import sys
 import threading
+import types
 from typing import Protocol
 
 import cv2
@@ -66,12 +70,33 @@ class BackendPlan:
     """Resolved inference engine selection.
 
     Attributes:
-        engine: ``"cv2dnn"`` or ``"onnxruntime"``.
+        engine: ``"cv2dnn"``, ``"onnxruntime"`` or ``"openvino"``.
         accelerator: The concrete (never ``auto``) accelerator.
     """
 
     engine: str
     accelerator: Accelerator
+
+
+def _import_onnxruntime() -> types.ModuleType:
+    """Imports ``onnxruntime`` with its telemetry disabled (#207).
+
+    Since 1.32 the Linux wheels ship Microsoft 1DS telemetry: on import they persist a device id under
+    ``~/.cache/Microsoft/DeveloperTools/.onnxruntime`` and upload events to ``mobile.events.data.microsoft.com``.
+    ``onnxruntime.disable_telemetry_events()`` called right after the import does not stop that upload (tested), the
+    ``ORT_DISABLE_TELEMETRY`` environment variable read at import does. Setting it here configures a third-party
+    library, it is not application configuration; it only helps if onnxruntime has not been imported yet.
+
+    Returns:
+        The ``onnxruntime`` module.
+
+    Raises:
+        ImportError: If onnxruntime is not installed.
+    """
+    os.environ["ORT_DISABLE_TELEMETRY"] = "1"  # always, even over an explicit user value
+    import onnxruntime
+
+    return onnxruntime
 
 
 def onnxruntime_has_cuda() -> bool:
@@ -81,7 +106,7 @@ def onnxruntime_has_cuda() -> bool:
         ``True`` if ``CUDAExecutionProvider`` is available.
     """
     try:
-        import onnxruntime as ort
+        ort = _import_onnxruntime()
     except ImportError:
         return False
     return _CUDA_PROVIDER in ort.get_available_providers()
@@ -103,7 +128,8 @@ def select_backend(accelerator: Accelerator, *, cuda_available: bool, opencl_ava
     """Maps the configured accelerator to an inference engine (pure function).
 
     ``auto`` selects CUDA (ONNX Runtime) when available and CPU (``cv2.dnn``) otherwise. OpenCL is never
-    auto-selected because ``cv2.dnn`` OpenCL gave no gain and was unreliable in the #73 research.
+    auto-selected because ``cv2.dnn`` OpenCL gave no gain and was unreliable in the #73 research. OpenVINO is never
+    auto-selected either (optional package; its availability, including the iGPU, is checked by ``OpenVinoBackend``).
 
     Args:
         accelerator: The configured accelerator.
@@ -130,6 +156,8 @@ def select_backend(accelerator: Accelerator, *, cuda_available: bool, opencl_ava
         if not opencl_available:
             raise EdgeModelError("EDGE__ACCELERATOR=opencl requested but OpenCV reports no usable OpenCL runtime.")
         return BackendPlan("cv2dnn", Accelerator.OPENCL)
+    if accelerator in (Accelerator.OPENVINO, Accelerator.OPENVINO_GPU):
+        return BackendPlan("openvino", accelerator)
     raise EdgeModelError(f"Unsupported EDGE__ACCELERATOR value: {accelerator!r}")
 
 
@@ -375,7 +403,7 @@ class OnnxRuntimeBackend:
         """
         self.accelerator = accelerator
         try:
-            import onnxruntime as ort
+            ort = _import_onnxruntime()
         except ImportError as e:
             raise EdgeModelError(
                 "The 'onnxruntime' package is required for this accelerator (install onnxruntime or onnxruntime-gpu)."
@@ -410,6 +438,96 @@ class OnnxRuntimeBackend:
         return np.asarray(self._session.run(None, {self._input_name: blob})[0])
 
 
+def _openvino_input_shape(partial_shape) -> list[int | str] | None:
+    """Converts an OpenVINO ``PartialShape`` to the shape list used by ``_check_declared_input_size``.
+
+    Args:
+        partial_shape: The model input's ``PartialShape``.
+
+    Returns:
+        One entry per dimension (``int`` for static, ``"?"`` for dynamic), or ``None`` if the rank is dynamic.
+    """
+    if partial_shape.rank.is_dynamic:
+        return None
+    return [dim.get_length() if dim.is_static else "?" for dim in partial_shape]
+
+
+def _block_openvino_telemetry() -> None:
+    """Makes ``openvino_telemetry`` unimportable so ``import openvino`` sends nothing (#207).
+
+    ``openvino`` depends on ``openvino-telemetry`` and, unless the user opted out in ``~/intel``, ``import openvino``
+    sends a usage event to Google Analytics from a ``multiprocessing`` child (a resident forkserver on Python 3.14).
+    Every ``openvino`` import of that package is wrapped in ``try/except ImportError`` and falls back to its own no-op
+    ``openvino.tools.ovc.telemetry_stub``, so a ``None`` entry in ``sys.modules`` disables it without touching the
+    environment or the home directory. It must run before the first ``import openvino`` and is left in place for the
+    process lifetime (later lazy imports inside ``openvino`` must hit the stub too).
+    """
+    sys.modules["openvino_telemetry"] = None
+
+
+class OpenVinoBackend:
+    """OpenVINO backend (CPU or Intel iGPU); ``openvino`` is imported lazily (optional ``openvino`` extra).
+
+    Compiled with ``PERFORMANCE_HINT=LATENCY`` (single request); on the CPU also ``NUM_STREAMS=1`` and OpenVINO's
+    default thread count. Each device runs its default inference precision (f32 on most CPUs, f16 on the iGPU).
+
+    OpenVINO telemetry is disabled: see ``_block_openvino_telemetry``.
+    """
+
+    def __init__(self, model_path: Path, accelerator: Accelerator, *, input_size: int | None = None) -> None:
+        """Loads and compiles the model.
+
+        Args:
+            model_path: Path to the ``.onnx`` model or OpenVINO IR ``.xml`` (with its ``.bin`` next to it).
+            accelerator: ``OPENVINO`` (CPU) or ``OPENVINO_GPU`` (Intel iGPU).
+            input_size: Expected square input side; compared with the model's static input dims when given.
+
+        Raises:
+            EdgeModelError: If openvino is missing, the iGPU is not available, the model cannot be loaded or compiled
+                or its input size does not match ``input_size``.
+        """
+        _block_openvino_telemetry()
+        try:
+            import openvino as ov
+        except ImportError as e:
+            raise EdgeModelError(
+                f"The 'openvino' package is required for EDGE__ACCELERATOR={accelerator} "
+                "(pip install --no-deps -r requirements-openvino.txt)."
+            ) from e
+        device = "GPU" if accelerator == Accelerator.OPENVINO_GPU else "CPU"
+        config: dict[str, object] = {"PERFORMANCE_HINT": "LATENCY"}
+        if device == "CPU":
+            config["NUM_STREAMS"] = 1
+        try:
+            core = ov.Core()
+            if device == "GPU" and not any(d == "GPU" or d.startswith("GPU.") for d in core.available_devices):
+                raise EdgeModelError(
+                    f"EDGE__ACCELERATOR=openvino_gpu requested but OpenVINO reports no GPU device "
+                    f"(available: {core.available_devices}); check the Intel compute runtime and /dev/dri access."
+                )
+            model = core.read_model(str(model_path))
+            shape = _openvino_input_shape(model.input(0).get_partial_shape())
+            _check_declared_input_size(model_path, shape, input_size)
+            compiled = core.compile_model(model, device, config)
+        except EdgeModelError:
+            raise
+        except Exception as e:
+            raise EdgeModelError(f"Failed to load model '{model_path}' with OpenVINO ({device}): {e}") from e
+        self._request = compiled.create_infer_request()
+        self._output = compiled.output(0)
+
+    def predict(self, blob: np.ndarray) -> np.ndarray:
+        """Runs inference.
+
+        Args:
+            blob: ``float32`` NCHW input.
+
+        Returns:
+            A copy of the first model output (the request's output buffer is reused by the next call).
+        """
+        return np.array(self._request.infer({0: blob})[self._output], copy=True)
+
+
 def _create_backend(
     plan: BackendPlan, model_path: Path, input_size: int, *, cpu_fallback: bool
 ) -> tuple[EdgeBackend, BackendPlan]:
@@ -436,6 +554,8 @@ def _create_backend(
                 raise EdgeModelError(f"EDGE__ACCELERATOR=cuda requested but unusable: {e}") from e
             logger.warning("ONNX Runtime CUDA could not be activated (%s); falling back to cv2.dnn on the CPU.", e)
             plan = BackendPlan("cv2dnn", Accelerator.CPU)
+    if plan.engine == "openvino":
+        return OpenVinoBackend(model_path, plan.accelerator, input_size=input_size), plan
     return CvDnnBackend(model_path, plan.accelerator, input_size=input_size), plan
 
 
@@ -449,7 +569,7 @@ class EdgeInferenceDetector:
 
     With ``EDGE__ACCELERATOR=auto`` the ONNX Runtime CUDA backend is preferred; if CUDA is listed but does not
     activate, the detector falls back to ``cv2.dnn`` on the CPU (WARNING). An explicit ``cuda`` fails with
-    ``EdgeModelError`` instead.
+    ``EdgeModelError`` instead, as do ``openvino`` / ``openvino_gpu`` when the package or the iGPU is missing.
     """
 
     def __init__(
@@ -475,7 +595,7 @@ class EdgeInferenceDetector:
         self._consecutive_errors = 0
         #: ``P(fire)`` of the last successful ``verify()`` (None before it and after a failed call).
         self.last_probability: float | None = None
-        self._lock = threading.Lock()  # cv2.dnn Net is not thread-safe; a cancelled to_thread keeps running
+        self._lock = threading.Lock()  # backends are not thread-safe; a cancelled to_thread keeps running
         if backend is not None:
             self._backend = backend
             return

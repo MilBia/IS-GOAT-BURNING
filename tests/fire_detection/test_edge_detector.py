@@ -1,6 +1,7 @@
 """Tests for the EdgeInferenceDetector, its preprocessing, post-processing and backend selection."""
 
 import asyncio
+import importlib.util
 import struct
 import sys
 import threading
@@ -19,6 +20,7 @@ from is_goat_burning.fire_detection.edge_detector import CvDnnBackend
 from is_goat_burning.fire_detection.edge_detector import EdgeInferenceDetector
 from is_goat_burning.fire_detection.edge_detector import EdgeModelError
 from is_goat_burning.fire_detection.edge_detector import OnnxRuntimeBackend
+from is_goat_burning.fire_detection.edge_detector import OpenVinoBackend
 from is_goat_burning.fire_detection.edge_detector import classifier_fire_probability
 from is_goat_burning.fire_detection.edge_detector import preprocess
 from is_goat_burning.fire_detection.edge_detector import read_onnx_input_shape
@@ -37,6 +39,8 @@ from is_goat_burning.fire_detection.edge_detector import select_backend
         (Accelerator.AUTO, True, True, "onnxruntime", Accelerator.CUDA),
         (Accelerator.AUTO, False, True, "cv2dnn", Accelerator.CPU),  # opencl is never auto-selected
         (Accelerator.AUTO, False, False, "cv2dnn", Accelerator.CPU),
+        (Accelerator.OPENVINO, False, False, "openvino", Accelerator.OPENVINO),
+        (Accelerator.OPENVINO_GPU, False, False, "openvino", Accelerator.OPENVINO_GPU),
     ],
 )
 def test_select_backend(accelerator, cuda, opencl, engine, resolved):
@@ -515,6 +519,35 @@ def test_onnxruntime_import_error(monkeypatch):
         OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
 
 
+def test_import_onnxruntime_disables_telemetry_before_import(monkeypatch):
+    """ORT_DISABLE_TELEMETRY must be set before onnxruntime is imported; the API call afterwards is not enough (#207)."""
+    seen = {}
+
+    class Finder:
+        def find_spec(self, name, path=None, target=None):
+            if name == "onnxruntime":
+                seen["env_at_import"] = edge_detector.os.environ.get("ORT_DISABLE_TELEMETRY")
+                raise ImportError("stop here")
+            return
+
+    monkeypatch.delenv("ORT_DISABLE_TELEMETRY")  # set and restored by the autouse fixture in tests/conftest.py
+    monkeypatch.delitem(sys.modules, "onnxruntime", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [Finder(), *sys.meta_path])
+    with pytest.raises(ImportError):
+        edge_detector._import_onnxruntime()
+    assert seen["env_at_import"] == "1"
+    assert edge_detector.onnxruntime_has_cuda() is False  # the probe goes through the helper too
+    with pytest.raises(EdgeModelError, match="onnxruntime"):
+        OnnxRuntimeBackend("m.onnx", Accelerator.CPU)
+
+
+def test_import_onnxruntime_returns_the_module_and_overrides_user_value(monkeypatch):
+    ort, _ = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
+    monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "0")  # an explicit opt-in is overridden
+    assert edge_detector._import_onnxruntime() is ort
+    assert edge_detector.os.environ["ORT_DISABLE_TELEMETRY"] == "1"
+
+
 def test_onnxruntime_session_failure(monkeypatch):
     ort, _ = _fake_ort(monkeypatch, ["CPUExecutionProvider"])
     ort.InferenceSession = MagicMock(side_effect=RuntimeError("bad model"))
@@ -617,3 +650,201 @@ async def test_verify_returns_verdict():
     backend = MagicMock()
     backend.predict.return_value = np.array([[0.0, np.log(3.0)]])  # P = 0.75
     assert await _detector(backend).verify(np.zeros((8, 8, 3), np.uint8)) is True
+
+
+# --- fake openvino ---
+
+
+class _FakeDim:
+    def __init__(self, value):
+        self.is_static = isinstance(value, int)
+        self._value = value
+
+    def get_length(self):
+        return self._value
+
+
+class _FakePartialShape:
+    def __init__(self, dims):
+        self._dims = None if dims is None else [_FakeDim(d) for d in dims]
+        self.rank = types.SimpleNamespace(is_dynamic=dims is None)
+
+    def __iter__(self):
+        return iter(self._dims)
+
+
+def _isolate_ov_telemetry(monkeypatch):
+    """Starts with openvino_telemetry absent and restores the original entry after the test.
+
+    ``setitem`` first, so monkeypatch records the key even when it was absent and also undoes the ``None`` block that
+    ``OpenVinoBackend`` installs (``delitem(raising=False)`` alone records nothing for an absent key).
+    """
+    monkeypatch.setitem(sys.modules, "openvino_telemetry", None)
+    monkeypatch.delitem(sys.modules, "openvino_telemetry")
+
+
+def _fake_ov(monkeypatch, devices=("CPU",), shape=(1, 3, 8, 8), output=((0.0, 1.0),)):
+    ov = types.ModuleType("openvino")
+    calls = {}
+
+    class Request:
+        def infer(self, inputs):
+            calls["inputs"] = inputs
+            return {"out0": np.array(output, dtype=np.float32)}
+
+    class Compiled:
+        def create_infer_request(self):
+            return Request()
+
+        def output(self, index):
+            return f"out{index}"
+
+    class Model:
+        def input(self, _index):
+            return types.SimpleNamespace(get_partial_shape=lambda: _FakePartialShape(shape))
+
+    class Core:
+        available_devices = list(devices)
+
+        def read_model(self, path):
+            calls["path"] = path
+            return Model()
+
+        def compile_model(self, model, device, config):
+            calls["compile"] = (device, config)
+            return Compiled()
+
+    ov.Core = Core
+    monkeypatch.setitem(sys.modules, "openvino", ov)
+    _isolate_ov_telemetry(monkeypatch)
+    return ov, calls
+
+
+def test_openvino_backend_cpu_loads_and_predicts(monkeypatch):
+    _, calls = _fake_ov(monkeypatch)
+    backend = OpenVinoBackend("m.xml", Accelerator.OPENVINO, input_size=8)
+    assert calls["path"] == "m.xml"
+    assert calls["compile"] == ("CPU", {"PERFORMANCE_HINT": "LATENCY", "NUM_STREAMS": 1})
+    blob = np.zeros((1, 3, 8, 8), np.float32)
+    output = backend.predict(blob)
+    assert calls["inputs"][0] is blob
+    assert classifier_fire_probability(output) == pytest.approx(1.0 / (1.0 + np.exp(-1.0)))
+
+
+def test_openvino_backend_gpu_device_and_config(monkeypatch):
+    _, calls = _fake_ov(monkeypatch, devices=("CPU", "GPU"))
+    OpenVinoBackend("m.onnx", Accelerator.OPENVINO_GPU, input_size=8)
+    assert calls["compile"] == ("GPU", {"PERFORMANCE_HINT": "LATENCY"})  # default (f16) precision
+
+
+def test_openvino_backend_accepts_indexed_gpu(monkeypatch):
+    _, calls = _fake_ov(monkeypatch, devices=("CPU", "GPU.0", "GPU.1"))
+    OpenVinoBackend("m.onnx", Accelerator.OPENVINO_GPU)
+    assert calls["compile"][0] == "GPU"
+
+
+def test_openvino_backend_gpu_unavailable_raises(monkeypatch):
+    _, calls = _fake_ov(monkeypatch, devices=("CPU",))
+    with pytest.raises(EdgeModelError, match="no GPU device"):
+        OpenVinoBackend("m.onnx", Accelerator.OPENVINO_GPU)
+    assert "compile" not in calls  # never silently compiled for the CPU
+
+
+def test_openvino_backend_input_shape_mismatch(monkeypatch):
+    _fake_ov(monkeypatch, shape=(1, 3, 224, 224))
+    with pytest.raises(EdgeModelError, match="EDGE__INPUT_SIZE"):
+        OpenVinoBackend("m.xml", Accelerator.OPENVINO, input_size=8)
+
+
+@pytest.mark.parametrize("shape", [(1, 3, "?", "?"), None], ids=["dynamic_dims", "dynamic_rank"])
+def test_openvino_backend_dynamic_shape_is_accepted(monkeypatch, shape):
+    _, calls = _fake_ov(monkeypatch, shape=shape)
+    OpenVinoBackend("m.xml", Accelerator.OPENVINO, input_size=8)
+    assert "compile" in calls
+
+
+def test_openvino_import_error(monkeypatch):
+    monkeypatch.setitem(sys.modules, "openvino", None)
+    _isolate_ov_telemetry(monkeypatch)
+    with pytest.raises(EdgeModelError, match="openvino"):
+        OpenVinoBackend("m.xml", Accelerator.OPENVINO)
+
+
+def test_openvino_telemetry_is_blocked_before_importing_openvino(monkeypatch):
+    """openvino falls back to its no-op telemetry stub when openvino_telemetry cannot be imported (#207)."""
+    seen = {}
+
+    class Finder:
+        def find_spec(self, name, path=None, target=None):
+            if name == "openvino":
+                seen["telemetry_at_import"] = sys.modules.get("openvino_telemetry", "missing")
+                raise ImportError("stop here")
+            return
+
+    monkeypatch.delitem(sys.modules, "openvino", raising=False)
+    _isolate_ov_telemetry(monkeypatch)
+    monkeypatch.setattr(sys, "meta_path", [Finder(), *sys.meta_path])
+    with pytest.raises(EdgeModelError, match="openvino"):
+        OpenVinoBackend("m.xml", Accelerator.OPENVINO)
+    assert seen["telemetry_at_import"] is None
+    with pytest.raises(ImportError):
+        import openvino_telemetry  # noqa: F401
+
+
+def test_openvino_read_failure(monkeypatch):
+    ov, _ = _fake_ov(monkeypatch)
+    ov.Core.read_model = MagicMock(side_effect=RuntimeError("bad IR"))
+    with pytest.raises(EdgeModelError, match="Failed to load .*bad IR"):
+        OpenVinoBackend("m.xml", Accelerator.OPENVINO)
+
+
+def test_openvino_predict_returns_a_copy(monkeypatch):
+    shared = np.array([[0.0, 1.0]], dtype=np.float32)
+    _fake_ov(monkeypatch)
+    backend = OpenVinoBackend("m.xml", Accelerator.OPENVINO)
+    backend._request = types.SimpleNamespace(infer=lambda _inputs: {"out0": shared})
+    out = backend.predict(np.zeros((1, 3, 8, 8), np.float32))
+    shared[:] = 0
+    assert out.tolist() == [[0.0, 1.0]]
+
+
+@pytest.mark.asyncio
+async def test_detector_with_openvino_backend_end_to_end(tmp_path, monkeypatch):
+    _fake_ov(monkeypatch, output=((0.0, np.log(3.0)),))  # P(fire) = 0.75
+    model = tmp_path / "m.xml"
+    model.write_bytes(b"<net/>")
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(model), accelerator=Accelerator.OPENVINO, input_size=8, confidence_threshold=0.7)
+    )
+    assert isinstance(detector._backend, OpenVinoBackend)
+    assert await detector.verify(np.zeros((20, 30, 3), np.uint8)) is True
+    assert detector.last_probability == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("accelerator", [Accelerator.OPENVINO, Accelerator.OPENVINO_GPU])
+def test_detector_openvino_missing_raises(tmp_path, monkeypatch, accelerator):
+    monkeypatch.setitem(sys.modules, "openvino", None)
+    _isolate_ov_telemetry(monkeypatch)
+    model = tmp_path / "m.onnx"
+    model.write_bytes(b"x")
+    with pytest.raises(EdgeModelError, match="openvino"):
+        EdgeInferenceDetector(EdgeSettings(model_path=str(model), accelerator=accelerator, input_size=8))
+
+
+@pytest.mark.asyncio
+async def test_real_openvino_tiny_onnx_classifier(tmp_path, monkeypatch):
+    # find_spec, not importorskip: importing openvino here would bypass the telemetry block.
+    if "openvino" not in sys.modules and importlib.util.find_spec("openvino") is None:
+        pytest.skip("openvino is not installed")
+    _isolate_ov_telemetry(monkeypatch)
+    model = tmp_path / "tiny.onnx"
+    model.write_bytes(_build_classifier_onnx(8))
+    detector = EdgeInferenceDetector(
+        EdgeSettings(model_path=str(model), accelerator=Accelerator.OPENVINO, input_size=8, confidence_threshold=0.5)
+    )
+    red = np.zeros((20, 30, 3), np.uint8)
+    red[..., 2] = 255
+    blue = np.zeros((20, 30, 3), np.uint8)
+    blue[..., 0] = 255
+    assert (await detector.detect(red))[0] is True
+    assert (await detector.detect(blue))[0] is False

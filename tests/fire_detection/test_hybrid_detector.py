@@ -7,6 +7,7 @@ CV detector as a gatekeeper and a pluggable verifier (Gemini, Decisions API, edg
 from collections.abc import Generator
 import logging
 from pathlib import Path
+import sys
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -350,6 +351,26 @@ def test_hybrid_edge_fallback_with_corrupt_model(tmp_path: Path, caplog: pytest.
 
     assert _is_fallback(detector)
     assert len(_critical_messages(caplog)) == 1
+
+
+@pytest.mark.parametrize("accelerator", ["openvino", "openvino_gpu"])
+def test_hybrid_edge_fallback_when_openvino_missing(
+    accelerator: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A missing openvino package is a load error: CRITICAL + local-detector fallback (#207)."""
+    model = tmp_path / "model.xml"
+    model.write_bytes(b"<net/>")
+    monkeypatch.setitem(sys.modules, "openvino", None)
+    # setitem first so monkeypatch also undoes the backend's openvino_telemetry block when the key was absent.
+    monkeypatch.setitem(sys.modules, "openvino_telemetry", None)
+    monkeypatch.delitem(sys.modules, "openvino_telemetry")
+    with patch.object(settings, "edge", EdgeSettings(model_path=str(model), accelerator=accelerator)):
+        detector = _create_edge()
+
+    assert _is_fallback(detector)
+    messages = _critical_messages(caplog)
+    assert len(messages) == 1
+    assert "openvino" in messages[0]
 
 
 # --- edge verifier caching across reconnects (#119) ---

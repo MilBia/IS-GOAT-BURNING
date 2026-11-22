@@ -13,19 +13,19 @@ reading the code or documentation only and have not been run on real hardware.
 
 1. The classic local detector (HSV colour mask AND motion mask) runs on every analysed frame as a cheap gatekeeper.
 2. Only when it fires, the frame is passed to the edge verifier: an **image classifier** (fire / no-fire, not an object
-   detector) executed locally with `cv2.dnn` or ONNX Runtime. No network access is needed.
+   detector) executed locally with `cv2.dnn`, ONNX Runtime or OpenVINO. No network access is needed.
 3. The verifier confirms fire when `P(fire) >= EDGE__CONFIDENCE_THRESHOLD`. The existing debounce logic applies afterwards.
 
 A missing or unset `EDGE__MODEL_PATH` (or a path that is not an existing file) is a hard startup error: the `Settings`
 validator raises at settings load and the application does not start. If the model exists but cannot be loaded (corrupt or
-invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `onnxruntime` missing, unexpected errors),
+invalid model, `EDGE__INPUT_SIZE` mismatch, requested accelerator unavailable, `onnxruntime` / `openvino` missing, unexpected errors),
 the detector factory logs a **CRITICAL** message and falls back to the classic local detector (honouring the CUDA/OpenCL
 settings) and applies `VERIFIER_FAILURE_POLICY`: fires are reported **unverified** (`alert_unverified`) or not at all
 (`suppress`). At runtime, inference errors are treated as "no fire", logged at ERROR and escalate to
 CRITICAL after 5 consecutive failures.
 
 The loaded verifier is reused across stream reconnects: the model is read and warmed up once, not on every reconnect.
-It is rebuilt when the model file is replaced (mtime/size change), an `EDGE__*` setting changes, or its last inference failed (a possibly broken session is not reused). A failed load is
+It is rebuilt when the model file is replaced (mtime/size change; for an OpenVINO IR only the `.xml` is checked, so replace or touch it together with the `.bin`), an `EDGE__*` setting changes, or its last inference failed (a possibly broken session is not reused). A failed load is
 never cached, so the next reconnect retries it (and logs the CRITICAL fallback again).
 
 ## Configuration
@@ -33,14 +33,14 @@ never cached, so the next reconnect retries it (and logs the CRITICAL fallback a
 | Variable | Default | Description |
 |---|---|---|
 | `DETECTION_STRATEGY` | `classic` | Set to `hybrid_edge`. |
-| `EDGE__MODEL_PATH` | none (required) | Path to the `.onnx` classifier. Must exist when `hybrid_edge` is selected. |
-| `EDGE__ACCELERATOR` | `auto` | `auto`, `cpu`, `cuda` or `opencl`. See below. |
-| `EDGE__CONFIDENCE_THRESHOLD` | `0.5` | Minimum `P(fire)` (0 to 1) that confirms a fire. |
+| `EDGE__MODEL_PATH` | none (required) | Path to the `.onnx` classifier (with `openvino` / `openvino_gpu` also an OpenVINO IR `.xml`, its `.bin` next to it). Must exist when `hybrid_edge` is selected. |
+| `EDGE__ACCELERATOR` | `auto` | `auto`, `cpu`, `cuda`, `opencl`, `openvino` (OpenVINO, CPU) or `openvino_gpu` (OpenVINO, Intel iGPU). See below. |
+| `EDGE__CONFIDENCE_THRESHOLD` | `0.5` | Minimum `P(fire)` (0 to 1) that confirms a fire. Valid only for the model variant **and** device it was calibrated on (see OpenVINO below). |
 | `EDGE__INPUT_SIZE` | `224` | Side of the square model input; must match the model. |
 
 With `auto`, ONNX Runtime CUDA is tried when `onnxruntime` offers `CUDAExecutionProvider`; if CUDA is not the active
 provider after all, the detector falls back to the `cv2.dnn` CPU engine with a WARNING. Without ONNX Runtime CUDA, `auto`
-uses `cv2.dnn` on the CPU. OpenCL is never auto-selected. An explicit `cuda` that cannot be activated raises
+uses `cv2.dnn` on the CPU. OpenCL and OpenVINO are never auto-selected. An explicit `cuda` that cannot be activated raises
 `EdgeModelError` (and therefore the factory fallback described above), not a silent downgrade.
 
 ### Model contract
@@ -109,8 +109,53 @@ not implemented and unverified. The NVIDIA Container Toolkit and `--gpus all` ar
   minutes auto-tuning, and FP16 was about 70x slower. Expect **no speed-up and possibly silent CPU execution**; the
   application logs a WARNING when this accelerator is selected. Prefer `cpu` unless `tools.check_acceleration` shows a
   real gain.
-- The fastest backend measured on an Intel iGPU was OpenVINO GPU, which is **not integrated** (possible future optional
-  work). The pip OpenCV wheel cannot use OpenVINO either.
+- The fastest backend measured on an Intel iGPU was OpenVINO GPU, available as `EDGE__ACCELERATOR=openvino_gpu` (see
+  below). The pip OpenCV wheel cannot use OpenVINO.
+
+### OpenVINO (`EDGE__ACCELERATOR=openvino` / `openvino_gpu`, #207)
+
+Uses the OpenVINO runtime directly (not through `cv2.dnn`): `openvino` runs on the CPU, `openvino_gpu` on an Intel
+integrated GPU. Never selected by `auto`.
+
+- On top of the base install (`pip install .[cpu]`), install from the lock file without dependency resolution:
+  `pip install --no-deps -r requirements-openvino.txt`
+  (fully pinned, `openvino==2026.4.1`, about +180 MB). It is compiled with `--unsafe-package=openvino-telemetry`, so the
+  telemetry package is **not installed**; openvino then uses its built-in no-op stub. `pip check` reports
+  "openvino 2026.4.1 requires openvino-telemetry, which is not installed": expected. `pip install -e .[openvino]` also
+  works but pulls `openvino-telemetry` back in (the in-code block below still neutralises it). Without `openvino`,
+  selecting either value fails to load (CRITICAL + classic-detector fallback).
+- `EDGE__MODEL_PATH` may be the `.onnx` file or an OpenVINO IR `.xml` (e.g. an INT8 model quantised with NNCF, #152).
+  The input size is read from the model and checked against `EDGE__INPUT_SIZE` as for the other backends.
+- Compiled with `PERFORMANCE_HINT=LATENCY`; on the CPU with one stream and OpenVINO's default thread count (one per
+  physical core). Each device uses its default precision: the CPU's own (f32 on the N100; bf16 on CPUs with native
+  BF16/AMX), **f16 on the iGPU** (whatever the IR weights).
+- `openvino_gpu` needs the Intel compute runtime and access to `/dev/dri` (`render` group). If OpenVINO reports no GPU
+  device, the load fails (fallback as above); it never silently runs on the CPU.
+- **Threshold:** `EDGE__CONFIDENCE_THRESHOLD` belongs to one model variant on one device. INT8 quantisation and iGPU f16
+  shift `P(fire)`: in #152 the INT8 PTQ model on the N100 iGPU needed 0.8469, while the threshold derived from the
+  CPU FP32 model (0.8082) gave 2 false positives on the INT8 model. Recalibrate after changing the model or the device.
+- Measured in #152 (N100, SigLIP2 `p16-224` adapter, INT8 PTQ): median 170 ms on the CPU (4 threads, RSS about 390
+  MiB) and 85 ms on the iGPU, against 401 ms and about 890 MiB with `cv2.dnn` **(measured)**.
+- **Telemetry is disabled by the app.** The `openvino` wheel depends on `openvino-telemetry`, which on
+  `import openvino` would send a usage event with a persistent client id (`~/intel/openvino_ga_cid`) to Google
+  Analytics from a `multiprocessing` child (on Python 3.14 a forkserver that stays resident, about 105 MiB RSS plus a
+  17 MiB resource tracker). Two layers prevent this: the lock-file install above keeps `openvino-telemetry` off disk,
+  and, in case it is installed anyway, before importing `openvino` `OpenVinoBackend` makes `openvino_telemetry` unimportable
+  (`sys.modules` entry set to `None`); `openvino` then uses its own built-in no-op stub. Verified with a temporary
+  `HOME` and no opt-out file: no network attempt, no child process, nothing written to `~/intel`, identical `P(fire)`
+  **(measured)**. No opt-out step is needed. The repository's own OpenVINO benchmark (`tools/edge_model/bench.py`) applies the
+  same block; only external OpenVINO tools such as `ovc` are not covered.
+- **ONNX Runtime telemetry is disabled by the app too.** Since 1.32 the Linux `onnxruntime` / `onnxruntime-gpu` wheels
+  ship Microsoft 1DS telemetry: on import they write a device id and an event queue to
+  `~/.cache/Microsoft/DeveloperTools/.onnxruntime/` and, after a delay, upload to `mobile.events.data.microsoft.com`.
+  `onnxruntime.disable_telemetry_events()` called after the import did **not** stop the upload; the
+  `ORT_DISABLE_TELEMETRY=1` environment variable set before the import did. The app and the `tools/` scripts therefore
+  import onnxruntime only through `edge_detector._import_onnxruntime()`, which always sets it to `1` first
+  (overriding any value of yours). Verified with a temporary `HOME`/`XDG_CACHE_HOME` and an `LD_PRELOAD` hook logging
+  `getaddrinfo`/`connect` over 150 s: without it 10 lookups of the Microsoft endpoint plus the cache files; with it no
+  lookup and no files **(measured)**. This applies to every accelerator, as `auto` probes onnxruntime when installed.
+- Docker: the images do not ship OpenVINO or the Intel GPU compute runtime yet (out of scope of #207); use a
+  bare-metal install.
 
 ## Measured latency (#73, random weights, batch 1, FP32)
 
@@ -149,7 +194,7 @@ Inside a container: `tools/` is copied only into the `*-test` stages, so use a `
 
 The tool prints the OpenCV version, the DNN backend/target pairs OpenCV reports, OpenCL and `cv2.cuda` status, ONNX
 Runtime providers, what `EDGE__ACCELERATOR=auto` resolves to and, with `--model`, `ok`/`error` plus the median latency
-of 20 inferences (preprocessing included: 1080p frame resized and normalised to the input size, so not directly comparable to the model-only #73 numbers) for `auto`, `cpu`, `cuda` and `opencl`. It always exits with 0 (2 for invalid arguments). Treat an
+of 20 inferences (preprocessing included: 1080p frame resized and normalised to the input size, so not directly comparable to the model-only #73 numbers) for `auto`, `cpu`, `cuda`, `opencl`, `openvino` and `openvino_gpu`. It always exits with 0 (2 for invalid arguments). Treat an
 `opencl: ok` result with a latency equal to `cpu` as "running on the CPU".
 
 ## Troubleshooting
@@ -158,6 +203,8 @@ of 20 inferences (preprocessing included: 1080p frame resized and normalised to 
 |---|---|
 | App refuses to start, `EDGE__MODEL_PATH` error | Path unset or not an existing file: hard startup error from the `Settings` validator. |
 | CRITICAL log at startup, classic detector used | Model exists but cannot be loaded (invalid model, wrong `EDGE__INPUT_SIZE`, accelerator or `onnxruntime` unavailable). Read the error line above it; run `tools.check_acceleration --model ...`. |
+| `The 'openvino' package is required ...` | Install it: `pip install --no-deps -r requirements-openvino.txt`. |
+| `openvino_gpu requested but OpenVINO reports no GPU device` | Intel compute runtime missing or no access to `/dev/dri` (add the user to the `render` group); the Docker images do not support it yet. |
 | `EDGE__ACCELERATOR=cuda requires onnxruntime-gpu ...` | Extra not installed (`pip install -e .[edge-gpu]`), or running in the Docker `gpu` image, which is not supported for this (see above). |
 | `CUDA is not the active onnxruntime provider` | CUDA 13 libraries / driver >= 580 missing (`onnxruntime-gpu` 1.32.0 needs them). |
 | `Model ... expects a NxN input but EDGE__INPUT_SIZE=...` | Set `EDGE__INPUT_SIZE` to the model's input side. Checked at startup on both backends from the input shape declared in the ONNX file (parsed directly for `cv2.dnn`); models with a dynamic H/W are not checked, so a wrong size there only surfaces as degraded accuracy. |
