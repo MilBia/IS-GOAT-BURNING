@@ -2,9 +2,12 @@
 
 The reference is the original ONNX on ONNX Runtime CPU (the #151 path); each IR variant runs on OpenVINO CPU with
 ``INFERENCE_PRECISION_HINT=f32`` by default (what the N100 CPU does); ``--device GPU --precision default`` scores the
-iGPU path (f16 compute) on a host with an Intel GPU. Threshold rule of umbrella #149 as in
-``tools/zero_shot_eval/evaluate.py`` (#151): best safe point = lowest threshold with 0 false alarms, rounded up to
-4 decimals; headline recall excludes ``synth*``; leak-free drops both D-Fire categories and recomputes the threshold.
+iGPU path (f16 compute) on a host with an Intel GPU. Note the defaults differ on purpose: this script defaults to
+``--precision f32`` (accuracy of the exact model), ``bench.py`` to ``default`` (what the device does out of the box: f32
+on the N100 CPU, f16 on the iGPU); pass ``--precision default`` here to score the bench's GPU configuration.
+Threshold rule of umbrella #149 as in ``tools/zero_shot_eval/evaluate.py`` (#151): best safe point = lowest threshold
+with 0 false alarms, rounded up to 4 decimals; headline recall excludes ``synth*``; leak-free drops both D-Fire
+categories and recomputes the threshold.
 
 Per variant the Markdown table shows the own safe threshold and recall there, recall and false alarms at the
 reference threshold, the hit difference vs the reference and max |dP(fire)| over all frames. Per-image scores (with image
@@ -51,7 +54,7 @@ def wilson(k: int, n: int) -> tuple[float, float]:
 def fmt(k: int, n: int) -> str:
     """Format k/n with its Wilson interval."""
     lo, hi = wilson(k, n)
-    return f"{k}/{n} = {100 * k / n:.0f}% ({100 * lo:.0f}-{100 * hi:.0f})"
+    return f"{k}/{n} = {100 * k / n:.0f}% ({100 * lo:.0f}-{100 * hi:.0f})" if n else "-"
 
 
 def p_fire(output: np.ndarray) -> float:

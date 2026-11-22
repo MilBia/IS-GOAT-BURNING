@@ -7,7 +7,12 @@ counted, so GPU RSS can be understated. Measures load+compile time, then median 
 inference over ``--runs`` calls cycling through the images, and prints a JSON summary without paths or host names,
 including the full-precision P(fire) per image for CPU-vs-GPU parity (compare two outputs with ``--compare``).
 
-The GPU plugin computes in f16 by default whatever the IR weight precision; ``--precision f32`` forces f32.
+The GPU plugin computes in f16 by default whatever the IR weight precision; ``--precision f32`` forces f32. Unlike
+``evaluate.py`` (default ``f32``), this bench defaults to ``--precision default``, i.e. the device's own choice (f32 on
+the N100 CPU, f16 on the iGPU), because that is what a deployment would run without extra configuration.
+
+``--compare`` checks that both outputs have the same input size, image count and (if present) image file names in the
+same order; outputs written before names were stored only trigger a warning.
 
 Example (in the container from ``Dockerfile.bench``):
     python bench.py --model ov/p16_224_minimal/fp16.xml --images jpgs --device GPU --runs 50
@@ -22,6 +27,7 @@ import os
 from pathlib import Path
 import platform
 import resource
+import sys
 import time
 
 import cv2
@@ -47,8 +53,17 @@ def p_fire(out: np.ndarray) -> float:
 
 
 def compare(a: Path, b: Path) -> None:
-    """Print max |dP(fire)| between two bench JSON outputs (same images)."""
-    pa, pb = (np.array(json.loads(p.read_text())["p_fire"]) for p in (a, b))
+    """Print max |dP(fire)| between two bench JSON outputs after checking they cover the same images."""
+    da, db = (json.loads(p.read_text()) for p in (a, b))
+    for key in ("input_size", "images"):
+        if da[key] != db[key]:
+            raise SystemExit(f"{key} differs: {da[key]} vs {db[key]}")
+    if "image_names" in da and "image_names" in db:
+        if da["image_names"] != db["image_names"]:
+            raise SystemExit(f"image names differ: {da['image_names']} vs {db['image_names']}")
+    else:
+        print("warning: image_names missing in at least one output (old format); order not verified", file=sys.stderr)
+    pa, pb = np.array(da["p_fire"]), np.array(db["p_fire"])
     print(json.dumps({"max_abs_dp_fire": float(np.abs(pa - pb).max()), "images": len(pa)}))
 
 
@@ -72,8 +87,9 @@ def main() -> None:
     import openvino as ov
 
     cv2.setNumThreads(args.threads)
-    frames = [cv2.imread(str(p)) for p in sorted(args.images.glob("*.jp*g"))]
-    frames = [f for f in frames if f is not None]
+    loaded = [(p.name, cv2.imread(str(p))) for p in sorted(args.images.glob("*.jp*g"))]
+    names = [n for n, f in loaded if f is not None]
+    frames = [f for _, f in loaded if f is not None]
     if not frames:
         raise SystemExit("no readable JPEGs in --images")
     rss_before_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -114,6 +130,7 @@ def main() -> None:
                 "threads": args.threads,
                 "input_size": size,
                 "images": len(frames),
+                "image_names": names,
                 "runs": args.runs,
                 "load_s": round(load_s, 2),
                 "median_ms": round(float(np.median(times)), 1),
