@@ -29,8 +29,6 @@ services:
       http_proxy: http://proxy:3128
       https_proxy: http://proxy:3128
       no_proxy: localhost,127.0.0.1,::1
-      # The ffmpeg bundled with the opencv-python 5.1 wheel cannot find the CA bundle in the cpu image (separate fix pending).
-      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
     volumes:
       - ${GOAT_RECORDINGS_DIR:?set GOAT_RECORDINGS_DIR to the recordings directory}:/app/recordings
     extra_hosts:
