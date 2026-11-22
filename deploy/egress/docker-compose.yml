@@ -1,0 +1,84 @@
+# Egress-restricted deployment (#212): the app has no route out; everything goes through an allow-list proxy.
+#
+#   GOAT_ENV_FILE=/path/outside/repo/goat.env GOAT_RECORDINGS_DIR=/path/to/recordings \
+#     docker compose -f deploy/egress/docker-compose.yml up -d --build
+#
+# See docs/runbook.md, section "Egress-restricted deployment".
+
+name: goat-egress
+
+services:
+  app:
+    build:
+      context: ../..
+      target: cpu
+    image: burning_goat_detection
+    container_name: burning_goat_detection_container
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    shm_size: 1g
+    env_file: ${GOAT_ENV_FILE:?set GOAT_ENV_FILE to the env file path}
+    environment:
+      # Lowercase only: ffmpeg (OpenCV capture, segments archiver) reads just these, and uses http_proxy for https too;
+      # yt-dlp, aiohttp and the Gemini client read them as well.
+      http_proxy: http://proxy:3128
+      https_proxy: http://proxy:3128
+      no_proxy: localhost,127.0.0.1,::1
+      # The ffmpeg bundled with the opencv-python 5.1 wheel cannot find the CA bundle in the cpu image (separate fix pending).
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      - ${GOAT_RECORDINGS_DIR:?set GOAT_RECORDINGS_DIR to the recordings directory}:/app/recordings
+    extra_hosts:
+      # Only used with the email profile: the SMTP name resolves to the forwarder, so TLS still checks the real name.
+      - ${EGRESS_SMTP_HOST:-smtp.invalid}:172.31.212.25
+    networks:
+      - internal
+    depends_on:
+      - proxy
+
+  proxy:
+    image: ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+    networks:
+      - internal
+      - egress
+
+  # Optional (docker compose --profile email ...): plain TCP relay to EGRESS_SMTP_HOST:EGRESS_SMTP_PORT only.
+  smtp-relay:
+    profiles: [email]
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.24
+        RUN apk add --no-cache socat
+        USER nobody
+        ENTRYPOINT ["socat"]
+    image: goat-egress-smtp-relay
+    restart: unless-stopped
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0  # lets the unprivileged relay listen on port 25 too
+    command: TCP-LISTEN:${EGRESS_SMTP_PORT:-587},fork,reuseaddr TCP:${EGRESS_SMTP_HOST:-smtp.invalid}:${EGRESS_SMTP_PORT:-587}
+    networks:
+      internal:
+        ipv4_address: 172.31.212.25
+      egress: {}
+
+networks:
+  internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.212.0/24
+  egress: {}

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+import aiohttp
 from aiohttp import ClientTimeout
 from aiohttp import FormData
 import cv2
@@ -331,3 +332,16 @@ async def test_retry_rebuilds_the_form_with_the_image() -> None:
     forms = [c.kwargs["data"] for c in mock_post.call_args_list]
     assert forms[0] is not forms[1]
     assert all("files[0]" in _form_fields(f) for f in forms)
+
+
+@pytest.mark.asyncio
+async def test_send_to_discord_session_honours_proxy_environment() -> None:
+    """Verifies the session reads HTTPS_PROXY / NO_PROXY, so alerts work behind the egress proxy (#212)."""
+    with (
+        patch("is_goat_burning.on_fire_actions.send_to_discord.ClientSession", wraps=aiohttp.ClientSession) as session_cls,
+        patch("aiohttp.ClientSession.post", new_callable=MagicMock) as mock_post,
+    ):
+        mock_post.return_value.__aenter__.return_value.status = 204
+        assert await SendToDiscord(webhooks=["https://discord.com/api/webhooks/123/abc"], message="Test")() is True
+
+    assert session_cls.call_args.kwargs.get("trust_env") is True

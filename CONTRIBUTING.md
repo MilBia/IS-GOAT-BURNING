@@ -63,7 +63,7 @@ pip install --no-deps -r requirements-openvino.txt                        # opti
 PYTHONPATH=. pytest tests/security -v -rs
 ```
 
-Backends that are not installed are skipped (`cv2.dnn` always runs). The negative controls (raw library imports that must be caught) run only when `unshare -rn` works, because they really emit telemetry. If you add a backend or a library that may phone home, add a mode to `tests/security/no_outbound_child.py`.
+Backends that are not installed are skipped (`cv2.dnn` always runs). The negative controls (raw library imports that must be caught) run only when `unshare -rn` works, because they really emit telemetry. If you add a backend or a library that may phone home, add a mode to `tests/security/no_outbound_child.py`. Inside the Docker `*-test` images `unshare -rn` is unavailable, so `tests/security` runs there without the network namespace; the full check runs in the `no-outbound` CI job.
 
 ### 2. Type Hinting
 
