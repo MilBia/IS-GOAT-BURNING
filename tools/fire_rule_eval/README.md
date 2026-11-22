@@ -38,6 +38,25 @@ With `--flicker`, only clips that have both feature sets are reported, the first
 settle) and the `flicker_*` rules plus an incremental-vs-windowed agreement table are added. The source must really be
 ~30 fps: clips recorded at 1 fps (frames repeat) show no flicker by construction. `--no-windowed` skips the slow reference.
 
+### Recording negatives from the live stream (#109)
+
+```bash
+# One 10-minute clip per hour until Ctrl+C; features extracted right after each clip, video then deleted.
+python -m tools.fire_rule_eval record --source "<YouTube URL of the goat stream>" \
+    --out /data/live --manifest /data/live/manifest.json --features /data/live/features \
+    --flicker /data/live/flicker --delete-video
+```
+
+Each clip resolves a fresh stream URL (resolved URLs expire) and is stream-copied with `ffmpeg -c copy` to
+`<out>/<group>_<UTC YYYYmmddTHHMMSSZ>.mp4`, then appended to the manifest like `scan` would (`--label neg`, `--group goat`
+by default). `--clip-seconds` (600) and `--interval-seconds` (3600, start to start) set the cadence; `--count N` stops after
+N attempts. A failed clip (resolve, ffmpeg, feature step) is logged and skipped; a video is deleted only when every
+requested feature step stored rows. Stream copy keeps the native ~30 fps: 1 fps would be enough for `extract`, but `flicker`
+needs the real frame rate. `extract` / `flicker` skip manifest entries whose video is gone and keep their stored features;
+`report` needs only the feature files (and at least one positive clip: `scan` your positives into the same manifest).
+Videos, manifests and features stay local (not in git); URLs are never logged, but the resolved (token-bearing) URL is
+visible in the process list while ffmpeg runs, so record on a single-user host.
+
 `extract` runs at native resolution (`--scale 1.0`) for parity with production; use `--scale` only for quick looks.
 Edit the manifest by hand to add `fire_from_s` / `fire_to_s` for positives where the fire is not visible for the whole clip.
 
