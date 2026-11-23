@@ -379,21 +379,21 @@ class SegmentsBufferStrategy(BufferStrategy):
             start_number: The first ring slot to write (see `_next_segment_number`).
         """
         assert self.context.source_url is not None
-        # Off by default in the system FFmpeg (#228); the CLI rejects the option for non-TLS inputs such as http://.
-        tls_verify = ["-tls_verify", "1"] if self.context.source_url.lower().startswith("https://") else []
+        url = self.context.source_url.lower()
+        # The ffmpeg CLI fails with "Option ... not found" for input options the input does not use, so the HTTP-only
+        # reconnect options are passed only for http(s):// (a local file failed, #232) and -tls_verify (off by default
+        # in the system FFmpeg, #228) only for https://. The RTSP demuxer does not use -rw_timeout either.
+        is_http = url.startswith(("http://", "https://"))
+        reconnect = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"] if is_http else []
+        rw_timeout = [] if url.startswith(("rtsp://", "rtsps://")) else ["-rw_timeout", "15000000"]
+        tls_verify = ["-tls_verify", "1"] if url.startswith("https://") else []
         return [
             "ffmpeg",
             "-nostdin",
             "-loglevel",
             "error",
-            "-reconnect",
-            "1",
-            "-reconnect_streamed",
-            "1",
-            "-reconnect_delay_max",
-            "5",
-            "-rw_timeout",
-            "15000000",
+            *reconnect,
+            *rw_timeout,
             *tls_verify,
             "-i",
             self.context.source_url,

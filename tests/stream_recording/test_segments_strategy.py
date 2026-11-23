@@ -88,6 +88,41 @@ def test_ffmpeg_command_has_no_tls_verify_for_http_sources(context: MagicMock) -
 
 
 @pytest.mark.usefixtures("ring")
+@pytest.mark.parametrize("url", [URL, "http://example.invalid/live.m3u8", "HTTPS://example.invalid/live.m3u8"])
+def test_ffmpeg_command_reconnects_http_sources(context: MagicMock, url: str) -> None:
+    context.source_url = url
+
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command()
+
+    reconnect = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-rw_timeout", "15000000"]
+    assert cmd[4 : 4 + len(reconnect)] == reconnect
+
+
+@pytest.mark.usefixtures("ring")
+def test_ffmpeg_command_has_no_http_options_for_a_local_file(context: MagicMock) -> None:
+    context.source_url = "/videos/goat.ts"
+
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command()
+
+    # The ffmpeg CLI fails with "Option reconnect not found" for inputs that are not http(s) (#232).
+    assert not {"-reconnect", "-reconnect_streamed", "-reconnect_delay_max", "-tls_verify"} & set(cmd)
+    assert cmd[cmd.index("-rw_timeout") + 1] == "15000000"  # accepted by file and http inputs
+    assert cmd[cmd.index("-i") + 1] == "/videos/goat.ts"
+
+
+@pytest.mark.usefixtures("ring")
+@pytest.mark.parametrize("url", ["rtsp://camera.example.org/live", "RTSPS://camera.example.org/live"])
+def test_ffmpeg_command_has_no_io_options_for_rtsp(context: MagicMock, url: str) -> None:
+    context.source_url = url
+
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command()
+
+    # The RTSP demuxer uses none of them, so the ffmpeg CLI would fail with "Option ... not found".
+    assert not {"-reconnect", "-reconnect_streamed", "-reconnect_delay_max", "-rw_timeout", "-tls_verify"} & set(cmd)
+    assert cmd[cmd.index("-i") + 1] == url
+
+
+@pytest.mark.usefixtures("ring")
 def test_add_frame_and_reset_are_noops(context: MagicMock) -> None:
     strategy = SegmentsBufferStrategy(context)
     strategy.add_frame(np.zeros((2, 2, 3), dtype=np.uint8))
