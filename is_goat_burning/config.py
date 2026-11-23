@@ -468,4 +468,8 @@ class Settings(BaseSettings):
 
 # A single, validated instance to be used across the application.
 settings = Settings()
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{settings.stream_inactivity_timeout * 1_000_000}"
+# tls_verify (#228): the system FFmpeg (gpu/opencl images) does not verify HTTPS certificates by default. It only covers the
+# first request (direct URL / playlist from yt-dlp): the HLS demuxer does not forward it to variant playlists, segments or
+# reloads over new connections (fixed upstream when FFmpeg defaults tls_verify to 1, after 8.0). The cpu image's wheel
+# FFmpeg verifies everything.
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"timeout;{settings.stream_inactivity_timeout * 1_000_000}|tls_verify;1"

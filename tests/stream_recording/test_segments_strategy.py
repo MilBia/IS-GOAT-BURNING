@@ -71,6 +71,23 @@ def test_ffmpeg_command_stream_copies_into_a_wrapping_ring(ring: Path, context: 
 
 
 @pytest.mark.usefixtures("ring")
+def test_ffmpeg_command_verifies_tls_for_https_sources(context: MagicMock) -> None:
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command()
+
+    assert cmd[cmd.index("-tls_verify") + 1] == "1"
+    assert cmd.index("-tls_verify") < cmd.index("-i")  # input option: must precede -i
+
+
+@pytest.mark.usefixtures("ring")
+def test_ffmpeg_command_has_no_tls_verify_for_http_sources(context: MagicMock) -> None:
+    context.source_url = "http://example.invalid/live.m3u8"
+
+    cmd = SegmentsBufferStrategy(context).ffmpeg_command()
+
+    assert "-tls_verify" not in cmd  # the ffmpeg CLI fails with "Option tls_verify not found" for non-TLS inputs
+
+
+@pytest.mark.usefixtures("ring")
 def test_add_frame_and_reset_are_noops(context: MagicMock) -> None:
     strategy = SegmentsBufferStrategy(context)
     strategy.add_frame(np.zeros((2, 2, 3), dtype=np.uint8))
