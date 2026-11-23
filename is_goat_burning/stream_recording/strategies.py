@@ -379,6 +379,8 @@ class SegmentsBufferStrategy(BufferStrategy):
             start_number: The first ring slot to write (see `_next_segment_number`).
         """
         assert self.context.source_url is not None
+        # Off by default in the system FFmpeg (#228); the CLI rejects the option for non-TLS inputs such as http://.
+        tls_verify = ["-tls_verify", "1"] if self.context.source_url.lower().startswith("https://") else []
         return [
             "ffmpeg",
             "-nostdin",
@@ -392,6 +394,7 @@ class SegmentsBufferStrategy(BufferStrategy):
             "5",
             "-rw_timeout",
             "15000000",
+            *tls_verify,
             "-i",
             self.context.source_url,
             "-map",

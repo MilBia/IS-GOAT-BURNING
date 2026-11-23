@@ -80,12 +80,13 @@ def test_ffmpeg_capture_options_env_var_is_set_correctly(monkeypatch: MonkeyPatc
     # Act: Reload the module to re-run its top-level statements.
     importlib.reload(config)
     # Assert: Check that the side effect (setting the other env var) happened correctly.
-    expected_value = f"timeout;{int(TEST_TIMEOUT_VAL) * MICROSECONDS_PER_SECOND}"
+    expected_value = f"timeout;{int(TEST_TIMEOUT_VAL) * MICROSECONDS_PER_SECOND}|tls_verify;1"
     assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == expected_value
     # Cleanup: Restore the default value by unsetting the variable and reloading again.
     monkeypatch.delenv("STREAM_INACTIVITY_TIMEOUT")
     importlib.reload(config)
-    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == f"timeout;{DEFAULT_INACTIVITY_TIMEOUT * MICROSECONDS_PER_SECOND}"
+    default_value = f"timeout;{DEFAULT_INACTIVITY_TIMEOUT * MICROSECONDS_PER_SECOND}|tls_verify;1"
+    assert os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] == default_value
 
 
 def test_detection_strategy_hybrid_maps_to_hybrid_cloud(monkeypatch: MonkeyPatch) -> None:
