@@ -280,6 +280,7 @@ Docker allows you to run the application in a consistent and isolated environmen
         ```bash
         docker build --target opencl -t burning_goat_detection .
         ```
+        -   The `opencl` image is based on Ubuntu 26.04 for its Intel compute runtime (recent Intel iGPUs such as Alder Lake-N); see the [Hardware Acceleration Guide](docs/HARDWARE_ACCELERATION.md).
 
 5.  **Run the Docker container:**
 

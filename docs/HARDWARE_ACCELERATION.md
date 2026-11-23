@@ -115,8 +115,15 @@ project (its Linux wheels ship telemetry, and `onnxruntime-gpu` 1.32 needed CUDA
 - Docker: `docker build --target opencl ...`, run with `--device /dev/dri:/dev/dri` and, if the device node is not
   accessible, `--group-add "$(getent group render | cut -d: -f3)"`. `/dev/dri` is never baked into the image.
 - The container needs an OpenCL ICD: the `opencl` stage already installs `ocl-icd-libopencl1`, `clinfo`,
-  `mesa-opencl-icd` and (amd64) `intel-opencl-icd`. `opencl-headers` is only needed to compile OpenCL code, so it is not
-  added to the runtime image.
+  `mesa-opencl-icd` (Mesa rusticl) and (amd64) `intel-opencl-icd`. `opencl-headers` is only needed to compile OpenCL
+  code, so it is not added to the runtime image.
+- The `opencl` image is based on **Ubuntu 26.04** (the `cpu` image stays on 22.04) and ships Ubuntu's Intel compute
+  runtime, `intel-opencl-icd` **26.05.x** (with `libigc2` / `libigdfcl2` / `libigdgmm12`; not pinned, it follows the 26.04
+  archive at build time), which supports Gen12+ iGPUs
+  such as Alder Lake-N (N100). The 22.04 runtime (22.14) listed no OpenCL device on such iGPUs, so OpenCV silently ran on
+  the CPU (#223). Gen8-Gen11 iGPUs need Ubuntu's separate `intel-opencl-icd-legacy` package, which the image does not
+  install. Check the device with
+  `python3 -c "import cv2; print(cv2.ocl.Device.getDefault().name())"` (empty output: no usable device).
 - **Honest caveat (measured, #73):** `cv2.dnn` OpenCL is unreliable on OpenCV 5.0.0. The new graph engine silently ignores
   `DNN_TARGET_OPENCL*` and runs on the CPU; the classic engine fails to compile a kernel, falls back to the CPU, can spend
   minutes auto-tuning, and FP16 was about 70x slower. OpenCV 5.1 (all images, #214) removed the classic engine, so
