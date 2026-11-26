@@ -108,5 +108,5 @@ websockets==17.4
     # via google-genai
 yarl==1.25.1
     # via aiohttp
-yt-dlp==2026.10.26
+yt-dlp==2026.11.23
     # via IS-GOAT-BURNING (pyproject.toml)
